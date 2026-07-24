@@ -1047,10 +1047,15 @@ router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
 });
 
 router.get("/providers", requireAdmin, async (_req, res) => {
-  const { rows } = await pool.query(
-    "SELECT * FROM stt_providers ORDER BY id ASC",
-  );
-  return res.json(rows.map(normalizeProvider));
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM stt_providers ORDER BY id ASC",
+    );
+    return res.json(rows.map(normalizeProvider));
+  } catch (error) {
+    console.error("Admin providers list error:", error.message);
+    return res.status(500).json({ error: "Không tải được nhà cung cấp" });
+  }
 });
 
 router.put(
@@ -1058,49 +1063,99 @@ router.put(
   requireAdmin,
   requireSuperAdmin,
   async (req, res) => {
-    const body = req.body || {};
-    const isDefault = Boolean(body.is_default);
-    const apiKey = normalizeProviderApiKey(body.api_key);
-    if (isDefault) {
-      await pool.query("UPDATE stt_providers SET is_default = FALSE");
+    const client = await pool.connect();
+    try {
+      const providerId = Number.parseInt(req.params.id, 10);
+      if (!Number.isFinite(providerId) || providerId <= 0) {
+        return res.status(400).json({ error: "ID nhà cung cấp không hợp lệ" });
+      }
+
+      const body = req.body || {};
+      const name = String(body.name || "").trim();
+      const endpoint = String(body.endpoint || "").trim().replace(/\/$/, "");
+      const routingMode = String(body.routing_mode || "auto");
+      const routingRules =
+        body.routing_rules &&
+        typeof body.routing_rules === "object" &&
+        !Array.isArray(body.routing_rules)
+          ? body.routing_rules
+          : {};
+      const failoverProviderId = body.failover_provider_id
+        ? Number.parseInt(String(body.failover_provider_id), 10)
+        : null;
+      const costPerMinute = Number(body.cost_per_minute_usd || 0);
+      const isDefault = Boolean(body.is_default);
+      const apiKey = normalizeProviderApiKey(body.api_key);
+
+      if (!name) {
+        return res.status(400).json({ error: "Tên nhà cung cấp không hợp lệ" });
+      }
+      if (!/^https?:\/\//i.test(endpoint)) {
+        return res.status(400).json({ error: "Endpoint provider phải là URL http/https" });
+      }
+      if (!["manual", "auto", "rule_based"].includes(routingMode)) {
+        return res.status(400).json({ error: "Chế độ định tuyến không hợp lệ" });
+      }
+      if (body.failover_provider_id && !Number.isFinite(failoverProviderId)) {
+        return res.status(400).json({ error: "ID provider dự phòng không hợp lệ" });
+      }
+      if (!Number.isFinite(costPerMinute) || costPerMinute < 0) {
+        return res.status(400).json({ error: "Chi phí provider không hợp lệ" });
+      }
+
+      await client.query("BEGIN");
+      if (isDefault) {
+        await client.query("UPDATE stt_providers SET is_default = FALSE");
+      }
+      const { rows } = await client.query(
+        `UPDATE stt_providers
+       SET name = $1,
+           endpoint = $2,
+           enabled = $3,
+           is_default = $4,
+           routing_mode = $5,
+           routing_rules = $6::jsonb,
+           failover_provider_id = $7,
+           cost_per_minute_usd = $8,
+           api_key_encrypted = COALESCE($9, api_key_encrypted),
+           updated_at = NOW()
+       WHERE id = $10
+       RETURNING *`,
+        [
+          name,
+          endpoint,
+          Boolean(body.enabled),
+          isDefault,
+          routingMode,
+          JSON.stringify(routingRules),
+          failoverProviderId,
+          costPerMinute,
+          apiKey,
+          providerId,
+        ],
+      );
+      if (!rows[0]) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Không tìm thấy provider" });
+      }
+      await writeAudit({
+        actorRow: req.admin,
+        action: "provider.update",
+        targetType: "settings",
+        targetId: rows[0].code,
+        details: normalizeProvider(rows[0]),
+      });
+      await client.query("COMMIT");
+      return res.json(normalizeProvider(rows[0]));
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      console.error("Admin provider update error:", error.message);
+      return res
+        .status(500)
+        .json({ error: error.message || "Không lưu được nhà cung cấp" });
+    } finally {
+      client.release();
     }
-    const { rows } = await pool.query(
-      `UPDATE stt_providers
-     SET name = $1,
-         endpoint = $2,
-         enabled = $3,
-         is_default = $4,
-         routing_mode = $5,
-         routing_rules = $6::jsonb,
-         failover_provider_id = NULLIF($7, '')::integer,
-         cost_per_minute_usd = $8,
-         api_key_encrypted = COALESCE($9, api_key_encrypted),
-         updated_at = NOW()
-     WHERE id = $10
-     RETURNING *`,
-      [
-        String(body.name || "").trim(),
-        String(body.endpoint || "").trim(),
-        Boolean(body.enabled),
-        isDefault,
-        String(body.routing_mode || "auto"),
-        JSON.stringify(body.routing_rules || {}),
-        body.failover_provider_id || "",
-        Number(body.cost_per_minute_usd || 0),
-        apiKey,
-        req.params.id,
-      ],
-    );
-    if (!rows[0])
-      return res.status(404).json({ error: "Không tìm thấy provider" });
-    await writeAudit({
-      actorRow: req.admin,
-      action: "provider.update",
-      targetType: "settings",
-      targetId: rows[0].code,
-      details: normalizeProvider(rows[0]),
-    });
-    return res.json(normalizeProvider(rows[0]));
   },
 );
 

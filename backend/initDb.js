@@ -933,7 +933,7 @@ async function initDatabase() {
       "https://api.assemblyai.com/v2",
       process.env.TRANSCRIPTION_PROVIDER === "assemblyai",
       encryptProviderSecret(process.env.VBEE_API_KEY || process.env.AIMP_API_KEY),
-      process.env.VBEE_API_BASE_URL || "https://uat-api.vbeelabs.ai",
+      process.env.VBEE_API_BASE_URL || "https://api-voice-uat.vbeelabs.ai",
       process.env.TRANSCRIPTION_PROVIDER === "vbee",
     ],
   );

@@ -68,15 +68,15 @@ Nếu muốn dùng Vbee STT:
 ```env
 TRANSCRIPTION_PROVIDER=vbee
 VBEE_API_KEY=your_vbee_stt_api_key_here
-VBEE_API_BASE_URL=https://uat-api.vbeelabs.ai
-VBEE_TRANSCRIBE_PATH=/api/v1/audio/transcriptions
-VBEE_MODEL=vbee-stt
+VBEE_API_BASE_URL=https://api-voice-uat.vbeelabs.ai
+VBEE_TRANSCRIBE_PATH=/v1/audio/transcriptions
+VBEE_MODEL=chunkformer
 VBEE_RESPONSE_FORMAT=json
 VBEE_RESULT_PATH_TEMPLATE=/v1/transcribe/{id}
 VBEE_LANGUAGE=vi
 ```
 
-Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định giống cURL của Vbee: field `file`, `model=vbee-stt`, `response_format=json`, header `Authorization: Bearer <apiKey>`. Endpoint submit hiện tại là `https://uat-api.vbeelabs.ai/api/v1/audio/transcriptions`. Bạn có thể cấu hình bằng base/path như trên, hoặc nhập full URL này vào Admin CMS > Nhà cung cấp API. Nếu response path khác mặc định, cấu hình thêm `VBEE_ID_PATH`, `VBEE_STATUS_PATH`, `VBEE_TEXT_PATH`, `VBEE_WORDS_PATH`.
+Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định theo tài liệu Vbee Voice API: field `file`, `model=chunkformer`, `language=vi`, `response_format=json`, header `Authorization: Bearer <apiKey>`. Endpoint submit UAT là `https://api-voice-uat.vbeelabs.ai/v1/audio/transcriptions`. Bạn có thể cấu hình bằng base/path như trên, hoặc nhập full URL này vào Admin CMS > Nhà cung cấp API. Nếu response path khác mặc định, cấu hình thêm `VBEE_ID_PATH`, `VBEE_STATUS_PATH`, `VBEE_TEXT_PATH`, `VBEE_WORDS_PATH`.
 
 ### Tách vocal cho bài hát
 
@@ -195,9 +195,9 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | DEEPGRAM_MODEL | Model Deepgram | nova-3 |
 | DEEPGRAM_LANGUAGE | Mã ngôn ngữ Deepgram | vi |
 | VBEE_API_KEY | API key Vbee STT | your_vbee_stt_api_key |
-| VBEE_API_BASE_URL | Endpoint gốc Vbee STT | https://uat-api.vbeelabs.ai |
-| VBEE_TRANSCRIBE_PATH | Path submit file STT Vbee | /api/v1/audio/transcriptions |
-| VBEE_MODEL | Model STT gửi lên Vbee | vbee-stt |
+| VBEE_API_BASE_URL | Endpoint gốc Vbee STT | https://api-voice-uat.vbeelabs.ai |
+| VBEE_TRANSCRIBE_PATH | Path submit file STT Vbee | /v1/audio/transcriptions |
+| VBEE_MODEL | Model STT gửi lên Vbee | chunkformer |
 | VBEE_RESPONSE_FORMAT | Định dạng response Vbee | json |
 | VBEE_RESULT_PATH_TEMPLATE | Path poll kết quả, dùng `{id}` cho job id | /v1/transcribe/{id} |
 | VBEE_TEXT_PATH | Dot path tới transcript nếu response Vbee không dùng `text`/`transcript` mặc định | data.text |

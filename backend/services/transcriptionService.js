@@ -52,11 +52,11 @@ const DEEPGRAM_RETRY_DELAY_MS = Number.parseInt(
   10,
 );
 const VBEE_API_BASE_URL = (
-  process.env.VBEE_API_BASE_URL || "https://uat-api.vbeelabs.ai"
+  process.env.VBEE_API_BASE_URL || "https://api-voice-uat.vbeelabs.ai"
 ).replace(/\/$/, "");
 const VBEE_TRANSCRIBE_PATH =
   process.env.VBEE_TRANSCRIBE_PATH ||
-  "/api/v1/audio/transcriptions";
+  "/v1/audio/transcriptions";
 const VBEE_RESULT_PATH_TEMPLATE =
   process.env.VBEE_RESULT_PATH_TEMPLATE || "/v1/transcribe/{id}";
 const VBEE_POLL_INTERVAL_MS = Number.parseInt(
@@ -424,6 +424,30 @@ function normalizeProviderEndpoint(provider, endpoint) {
     .replace(/\/$/, "");
 }
 
+function getProviderKeySource() {
+  const value = String(process.env.PROVIDER_KEY_SOURCE || "cms")
+    .trim()
+    .toLowerCase();
+  return ["env", "cms", "cms_fallback_env", "env_fallback_cms"].includes(value)
+    ? value
+    : "cms";
+}
+
+function resolveProviderApiKey(provider, encryptedCmsKey) {
+  const cmsKey = decryptProviderSecret(encryptedCmsKey);
+  const envKey = getEnvApiKey(provider);
+  switch (getProviderKeySource()) {
+    case "env":
+      return envKey;
+    case "env_fallback_cms":
+      return envKey || cmsKey;
+    case "cms_fallback_env":
+    case "cms":
+    default:
+      return cmsKey || envKey;
+  }
+}
+
 async function getCmsTranscriptionProvider() {
   try {
     const { rows } = await pool.query(
@@ -439,7 +463,7 @@ async function getCmsTranscriptionProvider() {
     return {
       provider,
       endpoint: normalizeProviderEndpoint(provider, row.endpoint),
-      apiKey: decryptProviderSecret(row.api_key_encrypted) || getEnvApiKey(provider),
+      apiKey: resolveProviderApiKey(provider, row.api_key_encrypted),
       source: "cms",
     };
   } catch (error) {
@@ -534,10 +558,7 @@ async function readResponseBody(response) {
     if (!response.ok) {
       throw createHttpError(
         response.status,
-        body.error?.message ||
-          body.error ||
-          body.message ||
-          `Provider API lỗi ${response.status}`,
+        getProviderErrorMessage(body, response.status),
       );
     }
     return body;
@@ -551,6 +572,15 @@ async function readResponseBody(response) {
     );
   }
   return text;
+}
+
+function getProviderErrorMessage(body, status) {
+  if (body?.error?.message) return body.error.message;
+  if (typeof body?.error === "string") return body.error;
+  if (typeof body?.detail === "string") return body.detail;
+  if (Array.isArray(body?.detail)) return JSON.stringify(body.detail);
+  if (body?.message) return body.message;
+  return `Provider API lỗi ${status}`;
 }
 
 async function sonixRequest(providerConfig, pathname, options = {}) {
@@ -1108,13 +1138,14 @@ async function submitVbeeTranscription({
     }),
     filename,
   );
-  form.append(process.env.VBEE_MODEL_FIELD || "model", process.env.VBEE_MODEL || "vbee-stt");
+  form.append(process.env.VBEE_MODEL_FIELD || "model", process.env.VBEE_MODEL || "chunkformer");
   form.append(
     process.env.VBEE_RESPONSE_FORMAT_FIELD || "response_format",
     process.env.VBEE_RESPONSE_FORMAT || "json",
   );
-  if (process.env.VBEE_LANGUAGE_FIELD) {
-    form.append(process.env.VBEE_LANGUAGE_FIELD, normalizeVbeeLanguage(language));
+  const languageField = process.env.VBEE_LANGUAGE_FIELD || "language";
+  if (languageField) {
+    form.append(languageField, normalizeVbeeLanguage(language));
   }
   if (process.env.VBEE_FILENAME_FIELD) {
     form.append(process.env.VBEE_FILENAME_FIELD, filename);
