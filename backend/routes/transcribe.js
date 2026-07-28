@@ -8,6 +8,7 @@ const {
   assertTranscriptionProviderReady,
   probeMediaFile,
   resolveStoredAudioPath,
+  translateAudioWithAssemblyAI,
 } = require("../services/transcriptionService");
 const {
   getQuotaStatus,
@@ -42,7 +43,11 @@ const {
   getYoutubeMetadata,
 } = require("../services/youtubeImportService");
 const { requireAuth } = require("../middleware/auth");
-const { uploadLimiter, urlImportLimiter } = require("../middleware/security");
+const {
+  translationLimiter,
+  uploadLimiter,
+  urlImportLimiter,
+} = require("../middleware/security");
 const { writeSecurityAudit } = require("../services/securityAuditService");
 
 const router = express.Router();
@@ -807,6 +812,138 @@ router.post("/text", requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/transcribe/:id/translate - dịch lại transcript cũ qua chuỗi dự phòng.
+router.post(
+  "/:id/translate",
+  requireAuth,
+  translationLimiter,
+  async (req, res) => {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "ID không hợp lệ" });
+    }
+
+    let transcript;
+    try {
+      const { rows } = await pool.query(
+        `SELECT transcript.id, transcript.filename, transcript.text,
+                transcript.audio_filename, transcript.source_language,
+                transcript.translation_target_language,
+                transcript.transcription_provider,
+                transcript.provider_request_id,
+                COALESCE(job.audio_mode, 'speech') AS audio_mode
+         FROM transcriptions transcript
+         LEFT JOIN transcription_jobs job
+           ON job.transcription_id = transcript.id
+         WHERE transcript.id = $1 AND transcript.user_id = $2`,
+        [id, req.user.id],
+      );
+      transcript = rows[0];
+      if (!transcript) {
+        return res.status(404).json({ error: "Không tìm thấy transcript" });
+      }
+      if (!String(transcript.text || "").trim()) {
+        return res
+          .status(409)
+          .json({ error: "Transcript chưa có văn bản để dịch" });
+      }
+
+      const targetLanguage = normalizeTranslateTarget(
+        req.body.targetLanguage ||
+          req.body.translateTo ||
+          transcript.translation_target_language,
+      );
+      if (!targetLanguage) {
+        return res.status(400).json({
+          error: "Vui lòng chọn ngôn ngữ cần dịch",
+        });
+      }
+
+      const sourceLanguage = normalizeLanguageCode(
+        transcript.source_language,
+        "auto",
+      );
+      const assemblyTranscriptId =
+        transcript.transcription_provider === "assemblyai"
+          ? transcript.provider_request_id || ""
+          : "";
+      const translation = await translateTranscript({
+        text: transcript.text,
+        sourceLanguage,
+        targetLanguage,
+        assemblyTranscriptId,
+        assemblyTranslate: assemblyTranscriptId
+          ? undefined
+          : async ({ targetLanguage: assemblyTargetLanguage }) => {
+              if (!transcript.audio_filename) {
+                throw new Error(
+                  "Bản ghi không còn audio gốc để AssemblyAI dịch lại.",
+                );
+              }
+              const audioPath = resolveStoredAudioPath(
+                transcript.audio_filename,
+              );
+              if (!fs.existsSync(audioPath)) {
+                throw new Error(
+                  "File audio gốc không còn tồn tại trên server.",
+                );
+              }
+              const buffer = await fs.promises.readFile(audioPath);
+              return translateAudioWithAssemblyAI({
+                file: {
+                  buffer,
+                  originalname:
+                    transcript.filename || transcript.audio_filename,
+                  mimetype: "application/octet-stream",
+                },
+                language: sourceLanguage,
+                audioMode: transcript.audio_mode,
+                targetLanguage: assemblyTargetLanguage,
+              });
+            },
+      });
+
+      await pool.query(
+        `UPDATE transcriptions
+         SET translated_text = $3,
+             translation_target_language = $4,
+             translation_provider = $5,
+             translation_error = NULL
+         WHERE id = $1 AND user_id = $2`,
+        [
+          id,
+          req.user.id,
+          translation.text,
+          translation.targetLanguage,
+          translation.provider,
+        ],
+      );
+      return res.json({ translation });
+    } catch (error) {
+      const message =
+        error.message || "Không dịch được transcript sang ngôn ngữ đã chọn.";
+      if (transcript) {
+        await pool
+          .query(
+            `UPDATE transcriptions
+             SET translation_error = $3
+             WHERE id = $1 AND user_id = $2`,
+            [id, req.user.id, message],
+          )
+          .catch(() => {});
+      }
+      const statusCode = Number(error.statusCode);
+      return res
+        .status(
+          Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
+            ? statusCode
+            : 502,
+        )
+        .json({ error: message });
+    }
+  },
+);
+
 // POST /api/transcribe/:id/audio-access - cấp URL ngắn hạn để trình duyệt stream audio.
 router.post("/:id/audio-access", requireAuth, async (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
@@ -909,17 +1046,65 @@ router.get("/:id/audio", requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/transcribe/:id — cập nhật nội dung văn bản
+// PATCH /api/transcribe/:id — cập nhật nội dung và timestamp đã chỉnh sửa.
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
-  const { text } = req.body;
+  const { text, words } = req.body;
   if (typeof text !== "string" || text.length > 2_000_000)
     return res.status(400).json({ error: "Thiếu trường text" });
+  let normalizedWords = null;
+  if (words !== undefined) {
+    if (!Array.isArray(words) || words.length > 100_000) {
+      return res.status(400).json({ error: "Danh sách timestamp không hợp lệ" });
+    }
+    normalizedWords = [];
+    for (const word of words) {
+      const wordText = String(word?.text || "").trim();
+      const start = Number(word?.start);
+      const end = Number(word?.end);
+      if (
+        !wordText ||
+        wordText.length > 500 ||
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        start < 0 ||
+        end < start
+      ) {
+        return res
+          .status(400)
+          .json({ error: "Một timestamp trong transcript không hợp lệ" });
+      }
+      normalizedWords.push({
+        text: wordText,
+        start,
+        end,
+        speaker:
+          word.speaker === null || word.speaker === undefined
+            ? null
+            : String(word.speaker).slice(0, 100),
+        confidence: Number.isFinite(Number(word.confidence))
+          ? Number(word.confidence)
+          : null,
+      });
+    }
+  }
   try {
     const { rowCount, rows } = await pool.query(
-      "UPDATE transcriptions SET text = $1 WHERE id = $2 AND user_id = $3 RETURNING id, text",
-      [text, id, req.user.id],
+      `UPDATE transcriptions
+       SET text = $1,
+           words = CASE
+             WHEN $4::jsonb IS NULL THEN words
+             ELSE $4::jsonb
+           END
+       WHERE id = $2 AND user_id = $3
+       RETURNING id, text, words`,
+      [
+        text,
+        id,
+        req.user.id,
+        normalizedWords === null ? null : JSON.stringify(normalizedWords),
+      ],
     );
     if (rowCount === 0)
       return res.status(404).json({ error: "Không tìm thấy bản ghi" });

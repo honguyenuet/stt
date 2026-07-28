@@ -785,7 +785,7 @@ function RecordPage() {
                       ? "Upgrade to Record"
                       : micStatus === "blocked"
                         ? "Microphone bị chặn"
-                        : "Start Recording"}
+                        : "Bắt đầu ghi âm"}
                   </button>
                   <p className="max-w-xl text-base leading-7 text-muted-foreground">
                     {quota?.isLimitReached
@@ -811,36 +811,6 @@ function RecordPage() {
               {recordingNotice}
             </p>
           )}
-
-          <div className="mt-8 flex flex-col items-center gap-4 text-center">
-            {status === "idle" && (
-              <>
-                <div className="flex items-center justify-center">
-                  <button
-                    onClick={() => void startRecording()}
-                    disabled={
-                      quota?.isLimitReached ||
-                      micStatus === "blocked" ||
-                      micStatus === "unsupported"
-                    }
-                    className="inline-flex items-center gap-3 rounded-full bg-primary px-6 py-3 text-base font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Mic className="h-6 w-6" />
-                    {quota?.isLimitReached
-                      ? "Nâng cấp để ghi âm"
-                      : micStatus === "blocked"
-                        ? "Microphone bị chặn"
-                        : "Bắt đầu ghi âm"}
-                  </button>
-                </div>
-                <p className="max-w-xl text-base leading-7 text-muted-foreground">
-                  {quota?.isLimitReached
-                    ? "Free đã hết thời lượng. Nâng cấp Premium để ghi âm tiếp."
-                    : "Microphone đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
-                </p>
-              </>
-            )}
-          </div>
 
           <div className="mt-0 flex flex-col items-center gap-2 text-center">
             {status === "requesting" && (

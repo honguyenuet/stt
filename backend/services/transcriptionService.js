@@ -1745,11 +1745,19 @@ async function transcribeWithSonix({
 function getAssemblySpeechModels() {
   const configured = String(process.env.ASSEMBLYAI_SPEECH_MODELS || "")
     .split(",")
-    .map((model) => model.trim())
+    .map((model) => model.trim().toLowerCase())
     .filter(Boolean);
-  return configured.length > 0
-    ? configured
-    : ["universal-3-pro", "universal-2"];
+  const requested =
+    configured.length > 0
+      ? configured
+      : ["universal-3-5-pro", "universal-2"];
+  return Array.from(
+    new Set(
+      requested.map((model) =>
+        model === "universal-3-pro" ? "universal-3-5-pro" : model,
+      ),
+    ),
+  );
 }
 
 function buildAssemblyTranscriptParams({
@@ -1917,6 +1925,32 @@ async function transcribeWithAssemblyAI({
       : null,
     translationError,
   };
+}
+
+async function translateAudioWithAssemblyAI({
+  file,
+  language = "auto",
+  audioMode = "speech",
+  targetLanguage,
+}) {
+  const result = await executeProviderWithResilience("assemblyai", () =>
+    transcribeWithAssemblyAI({
+      file,
+      speakerLabels: false,
+      language,
+      audioMode: normalizeAudioMode(audioMode),
+      dictionaryKeywords: [],
+      targetLanguage,
+    }),
+  );
+  if (!String(result.translation?.text || "").trim()) {
+    throw createHttpError(
+      502,
+      result.translationError ||
+        "AssemblyAI chưa trả về nội dung bản dịch.",
+    );
+  }
+  return result.translation;
 }
 
 const PROVIDER_DISPLAY_NAMES = {
@@ -2184,7 +2218,35 @@ async function transcribeFile({
         text: result.text,
         sourceLanguage: result.detectedLanguage || sourceLanguage,
         targetLanguage,
+        assemblyTranscriptId:
+          result.provider === "assemblyai" ? result.providerId : "",
+        assemblyTranslate:
+          result.provider === "assemblyai"
+            ? undefined
+            : async ({ targetLanguage: assemblyTargetLanguage }) => {
+                const assemblyResult = await executeProviderWithResilience(
+                  "assemblyai",
+                  () =>
+                    transcribeWithAssemblyAI({
+                      file,
+                      speakerLabels,
+                      language: sourceLanguage,
+                      audioMode: normalizeAudioMode(audioMode),
+                      dictionaryKeywords,
+                      targetLanguage: assemblyTargetLanguage,
+                    }),
+                );
+                if (!assemblyResult.translation?.text) {
+                  throw createHttpError(
+                    502,
+                    assemblyResult.translationError ||
+                      "AssemblyAI chưa trả về nội dung bản dịch.",
+                  );
+                }
+                return assemblyResult.translation;
+              },
       });
+      translationError = null;
     } catch (error) {
       const fallbackError =
         error.message || "Không dịch được transcript sang ngôn ngữ đã chọn.";
@@ -2327,6 +2389,7 @@ module.exports = {
   assertTranscriptionProviderReady,
   probeMediaFile,
   resolveStoredAudioPath,
+  translateAudioWithAssemblyAI,
   transcribeFile,
   transcribeAndSave,
 };

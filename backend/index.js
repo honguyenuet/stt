@@ -138,6 +138,6 @@ initDatabase()
     });
   })
   .catch((error) => {
-    console.error("Không thể khởi tạo database:", error.message);
+    console.error("Không thể khởi động backend:", error.message);
     process.exit(1);
   });

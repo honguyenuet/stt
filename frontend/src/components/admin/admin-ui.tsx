@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
 import { logoutAdmin, readAdminSession } from "@/lib/admin/admin-auth";
 import {
   jobStatusLabel,
@@ -104,15 +105,17 @@ function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-[#f7f4ec] text-[#21104a]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-[#e4ddcf] bg-white lg:block">
-        <div className="flex h-16 items-center gap-3 border-b border-[#e4ddcf] px-5">
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#ffcb05]">
-            <Shield className="h-5 w-5" />
-          </span>
+        <Link
+          to="/dashboard"
+          aria-label="Về Không gian làm việc"
+          className="flex h-16 items-center gap-3 border-b border-[#e4ddcf] px-5 transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#ffcb05]"
+        >
+          <VbeeBrandLogo size="compact" className="h-9" />
           <div>
             <p className="text-sm font-black">Vbee CMS</p>
             <p className="text-xs text-[#756894]">Cổng quản trị</p>
           </div>
-        </div>
+        </Link>
         <nav className="space-y-1 p-3">
           {navItems.map((item) => {
             const Icon = item.icon;
