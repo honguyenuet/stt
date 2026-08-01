@@ -237,12 +237,12 @@ function ApiPage() {
 
   const curlSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en"`;
+    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en" \\\n  -F "callbackUrl=https://example.com/webhooks/vbee" \\\n  -F "callbackSecret=replace-with-at-least-16-characters"`;
   }, [createdKey]);
 
   const jsSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `const formData = new FormData();\nformData.append("audio", file);\nformData.append("speakerLabels", "true");\nformData.append("language", "auto");\nformData.append("translateTo", "en");\n\nconst res = await fetch("${API_URL}/api/v1/transcribe", {\n  method: "POST",\n  headers: { "x-api-key": "${key}" },\n  body: formData,\n});\n\nconst data = await res.json();\nconsole.log(data.text);\nconsole.log(data.translation?.text);`;
+    return `const formData = new FormData();\nformData.append("audio", file);\nformData.append("speakerLabels", "true");\nformData.append("language", "auto");\nformData.append("translateTo", "en");\nformData.append("callbackUrl", "https://example.com/webhooks/vbee");\nformData.append("callbackSecret", "replace-with-at-least-16-characters");\n\nconst res = await fetch("${API_URL}/api/v1/transcribe", {\n  method: "POST",\n  headers: { "x-api-key": "${key}" },\n  body: formData,\n});\n\nconst data = await res.json();\nconsole.log(data.jobId);\n// Vbee gửi transcription.completed hoặc transcription.failed đến callbackUrl.`;
   }, [createdKey]);
 
   if (isLoading || (!user && !token)) {
@@ -317,7 +317,11 @@ function ApiPage() {
                 {[
                   [ShieldCheck, "Key bảo mật", "Lưu hash SHA-256"],
                   [FileAudio, "Tải âm thanh lên", "MP3, WAV, M4A, MP4"],
-                  [Zap, "Nhà cung cấp linh hoạt", "Deepgram, AssemblyAI, Google STT"],
+                  [
+                    Zap,
+                    "Webhook kết quả",
+                    "Ký HMAC SHA-256 qua X-Vbee-Signature",
+                  ],
                 ].map(([Icon, title, desc]) => (
                   <div
                     key={String(title)}

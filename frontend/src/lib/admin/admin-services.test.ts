@@ -5,7 +5,12 @@ import {
   formatFileSize,
   validateQuotaAdjustment,
 } from "./formatters";
-import { loginAdmin, readAdminSession } from "./admin-auth";
+import {
+  exchangeAdminSession,
+  loginAdmin,
+  readAdminSession,
+  validateAdminSession,
+} from "./admin-auth";
 import { listUsers } from "./users-service";
 import {
   listTranscriptionJobs,
@@ -90,6 +95,53 @@ describe("admin utilities", () => {
 
     await loginAdmin("superadmin@vbee.local", "admin123");
     expect(readAdminSession()?.user.role).toBe("super_admin");
+  });
+
+  it("exchanges an authenticated Vbee session for a CMS session", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          token: "cms-token",
+          expiresAt: Date.now() + 60_000,
+          user: {
+            id: "5",
+            name: "Vbee Admin",
+            email: "admin@example.com",
+            role: "super_admin",
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await exchangeAdminSession("vbee-access-token");
+
+    expect(readAdminSession()?.token).toBe("cms-token");
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer vbee-access-token");
+  });
+
+  it("validates an existing CMS session before opening admin routes", async () => {
+    seedSession();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          user: {
+            id: "admin_test",
+            name: "Test Admin",
+            email: "admin@test.local",
+            role: "super_admin",
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await validateAdminSession();
+
+    expect(result.user.role).toBe("super_admin");
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer test-token");
   });
 });
 
@@ -181,5 +233,37 @@ describe("admin services", () => {
     await expect(
       listUsers({ page: 1, limit: 10, search: "", role: "all", status: "all" }),
     ).rejects.toThrow("Phiên admin đã hết hạn");
+  });
+
+  it("keeps the CMS session when the current role is forbidden", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ error: "Bạn không có quyền thực hiện thao tác này" }, false, 403),
+        ),
+      ),
+    );
+
+    await expect(
+      listUsers({ page: 1, limit: 10, search: "", role: "all", status: "all" }),
+    ).rejects.toThrow("Bạn không có quyền thực hiện thao tác này");
+    expect(readAdminSession()?.token).toBe("test-token");
+  });
+
+  it("clears the CMS session when its token is no longer valid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ error: "Token admin đã hết hạn" }, false, 401),
+        ),
+      ),
+    );
+
+    await expect(
+      listUsers({ page: 1, limit: 10, search: "", role: "all", status: "all" }),
+    ).rejects.toThrow("Token admin đã hết hạn");
+    expect(readAdminSession()).toBeNull();
   });
 });

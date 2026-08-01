@@ -2,20 +2,30 @@ require("../config/env");
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const path = require("path");
 const fs = require("fs");
 const pool = require("../db");
 const { encryptProviderSecret } = require("../services/providerSecrets");
-const { UPLOADS_DIR } = require("../services/transcriptionService");
+const { checkProviderHealth } = require("../services/providerHealthService");
+const { resolveStoredAudioPath } = require("../services/transcriptionService");
+const {
+  getAdminSettings,
+  saveAdminSettings,
+} = require("../services/adminSettingsService");
+const {
+  updateManagedUserRole,
+  updateManagedUserStatus,
+} = require("../services/adminUserService");
 const {
   cancelTranscriptionJobForUser,
   kickTranscriptionWorker,
+  retryTranscriptionJobForAdmin,
 } = require("../services/transcriptionQueue");
 const {
   ADMIN_ROLES,
   getEffectiveAdminRole,
   isAdminAccountActive,
 } = require("../services/adminAccess");
+const { requireAuth } = require("../middleware/auth");
 const { loginLimiter } = require("../middleware/security");
 
 const router = express.Router();
@@ -23,6 +33,12 @@ const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 const ADMIN_TOKEN_TTL = "8h";
 
 const MUTATION_ROLES = new Set(["super_admin", "admin"]);
+
+function createAdminError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
 
 function generateToken(user) {
   const adminRole = getEffectiveAdminRole(user);
@@ -169,6 +185,28 @@ function normalizeManagedUser(row) {
   };
 }
 
+function createAdminSession(user) {
+  const adminRole = getEffectiveAdminRole(user);
+  if (!adminRole) return null;
+  const sessionUser = { ...user, admin_role: adminRole };
+  return {
+    token: generateToken(sessionUser),
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+    user: normalizeAdminUser(sessionUser),
+  };
+}
+
+async function getManagedUserById(userId) {
+  const { rows } = await pool.query(
+    `${userSelectSql()}
+     WHERE u.id = $1
+     GROUP BY u.id
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ? normalizeManagedUser(rows[0]) : null;
+}
+
 function normalizeJob(row) {
   const status = row.status || "completed";
   return {
@@ -231,33 +269,6 @@ function normalizeFile(row) {
   };
 }
 
-function defaultAdminSettings() {
-  return {
-    max_file_size_mb: Number.parseInt(process.env.MAX_UPLOAD_MB || "500", 10),
-    max_file_duration_minutes: 180,
-    supported_formats: ["mp3", "wav", "m4a", "mp4", "mov"],
-    supported_languages: ["vi", "en", "ja", "ko", "zh"],
-    max_retry_attempts: 3,
-    default_quota_minutes: 30,
-    storage_policy: "keep_transcripts_and_media",
-    data_retention_days: 365,
-    system_parameters: {
-      queue_concurrency: Number.parseInt(
-        process.env.TRANSCRIPTION_QUEUE_CONCURRENCY || "1",
-        10,
-      ),
-      queue_retention_ms: Number.parseInt(
-        process.env.TRANSCRIPTION_QUEUE_RETENTION_MS || "3600000",
-        10,
-      ),
-    },
-    notification_config: {
-      usage_alert_email: true,
-      failure_alert_email: false,
-    },
-  };
-}
-
 router.post("/auth/login", loginLimiter, async (req, res) => {
   try {
     const email = String(req.body.email || "")
@@ -291,16 +302,32 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [
       user.id,
     ]);
-    const sessionUser = { ...user, admin_role: adminRole };
-    const session = {
-      token: generateToken(sessionUser),
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-      user: normalizeAdminUser(sessionUser),
-    };
+    const session = createAdminSession({ ...user, admin_role: adminRole });
     return res.json(session);
   } catch (error) {
     console.error("Admin login error:", error);
     return res.status(500).json({ error: "Không đăng nhập được admin" });
+  }
+});
+
+router.post("/auth/exchange", requireAuth, async (req, res) => {
+  try {
+    if (!isAdminAccountActive(req.user)) {
+      return res.status(403).json({ error: "Tài khoản quản trị đã bị khóa" });
+    }
+    const session = createAdminSession(req.user);
+    if (!session) {
+      return res
+        .status(403)
+        .json({ error: "Tài khoản chưa được cấp quyền truy cập CMS" });
+    }
+    await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [
+      req.user.id,
+    ]);
+    return res.json(session);
+  } catch (error) {
+    console.error("Admin session exchange error:", error);
+    return res.status(500).json({ error: "Không thể mở phiên quản trị" });
   }
 });
 
@@ -473,16 +500,40 @@ router.patch(
       if (!["active", "suspended"].includes(status)) {
         return res.status(400).json({ error: "Status không hợp lệ" });
       }
-      const { rows } = await pool.query(
-        `UPDATE users
-         SET status = $1,
-             account_status = CASE WHEN $1 = 'active' THEN 'active' ELSE 'blocked' END
-         WHERE id = $2
-         RETURNING id, first_name, last_name, email, admin_role, status,
-           role, account_status, quota_seconds, created_at, last_login_at`,
-        [status, req.params.id],
+      if (
+        status === "suspended" &&
+        String(req.params.id) === String(req.admin.id)
+      ) {
+        return res
+          .status(400)
+          .json({ error: "Bạn không thể khóa chính tài khoản đang đăng nhập" });
+      }
+      if (status === "suspended") {
+        const target = await pool.query(
+          `SELECT admin_role FROM users WHERE id = $1`,
+          [req.params.id],
+        );
+        if (target.rows[0]?.admin_role === "super_admin") {
+          const activeSuperAdmins = await pool.query(
+            `SELECT COUNT(*)::integer AS count
+             FROM users
+             WHERE admin_role = 'super_admin'
+               AND status = 'active'
+               AND account_status = 'active'`,
+          );
+          if (Number(activeSuperAdmins.rows[0]?.count || 0) <= 1) {
+            return res.status(400).json({
+              error: "Không thể khóa quản trị viên cao nhất cuối cùng",
+            });
+          }
+        }
+      }
+      const updatedUser = await updateManagedUserStatus(
+        pool,
+        req.params.id,
+        status,
       );
-      if (!rows[0])
+      if (!updatedUser)
         return res.status(404).json({ error: "Không tìm thấy user" });
       await writeAudit({
         actorRow: req.admin,
@@ -491,8 +542,7 @@ router.patch(
         targetId: req.params.id,
         details: { status },
       });
-      rows[0].used_seconds = 0;
-      return res.json(normalizeManagedUser(rows[0]));
+      return res.json(await getManagedUserById(updatedUser.id));
     } catch (error) {
       console.error("Admin update user status error:", error);
       return res.status(500).json({ error: "Không cập nhật được user" });
@@ -509,16 +559,40 @@ router.patch(
       const role = String(req.body.role || "");
       if (!ADMIN_ROLES.has(role))
         return res.status(400).json({ error: "Role không hợp lệ" });
-      const { rows } = await pool.query(
-        `UPDATE users
-         SET admin_role = $1,
-             role = CASE WHEN $1 IN ('admin', 'super_admin') THEN $1 ELSE 'user' END
-         WHERE id = $2
-         RETURNING id, first_name, last_name, email, admin_role, status,
-           role, account_status, quota_seconds, created_at, last_login_at`,
-        [role, req.params.id],
+      if (
+        role !== "super_admin" &&
+        String(req.params.id) === String(req.admin.id)
+      ) {
+        return res.status(400).json({
+          error: "Bạn không thể tự hạ quyền của tài khoản đang đăng nhập",
+        });
+      }
+      if (role !== "super_admin") {
+        const target = await pool.query(
+          "SELECT admin_role FROM users WHERE id = $1",
+          [req.params.id],
+        );
+        if (target.rows[0]?.admin_role === "super_admin") {
+          const superAdmins = await pool.query(
+            `SELECT COUNT(*)::integer AS count
+             FROM users
+             WHERE admin_role = 'super_admin'
+               AND status = 'active'
+               AND account_status = 'active'`,
+          );
+          if (Number(superAdmins.rows[0]?.count || 0) <= 1) {
+            return res.status(400).json({
+              error: "Hệ thống phải còn ít nhất một quản trị viên cao nhất",
+            });
+          }
+        }
+      }
+      const updatedUser = await updateManagedUserRole(
+        pool,
+        req.params.id,
+        role,
       );
-      if (!rows[0])
+      if (!updatedUser)
         return res.status(404).json({ error: "Không tìm thấy user" });
       await writeAudit({
         actorRow: req.admin,
@@ -527,8 +601,7 @@ router.patch(
         targetId: req.params.id,
         details: { role },
       });
-      rows[0].used_seconds = 0;
-      return res.json(normalizeManagedUser(rows[0]));
+      return res.json(await getManagedUserById(updatedUser.id));
     } catch (error) {
       console.error("Admin update user role error:", error);
       return res.status(500).json({ error: "Không cập nhật được role" });
@@ -543,8 +616,12 @@ router.post(
   async (req, res) => {
     try {
       const deltaMinutes = Number(req.body.deltaMinutes);
-      const reason = String(req.body.reason || "").trim();
-      if (!Number.isFinite(deltaMinutes) || deltaMinutes === 0) {
+      const reason = String(req.body.reason || "").trim().slice(0, 500);
+      if (
+        !Number.isFinite(deltaMinutes) ||
+        deltaMinutes === 0 ||
+        Math.abs(deltaMinutes) > 100_000
+      ) {
         return res.status(400).json({ error: "Quota thay đổi phải khác 0" });
       }
       if (!reason)
@@ -552,23 +629,25 @@ router.post(
           .status(400)
           .json({ error: "Vui lòng nhập lý do điều chỉnh quota" });
 
-      const current = await pool.query(
-        "SELECT quota_seconds FROM users WHERE id = $1",
-        [req.params.id],
-      );
-      if (!current.rows[0])
-        return res.status(404).json({ error: "Không tìm thấy user" });
-      const nextSeconds =
-        Number(current.rows[0].quota_seconds || 0) +
-        Math.round(deltaMinutes * 60);
-      if (nextSeconds < 0)
-        return res.status(400).json({ error: "Quota không được âm" });
-
       const { rows } = await pool.query(
-        `UPDATE users SET quota_seconds = $1 WHERE id = $2
-       RETURNING id, first_name, last_name, email, admin_role, status, quota_seconds, created_at, last_login_at`,
-        [nextSeconds, req.params.id],
+        `UPDATE users
+         SET quota_seconds = quota_seconds + $1
+         WHERE id = $2
+           AND quota_seconds + $1 >= 0
+         RETURNING id, first_name, last_name, email, admin_role, status,
+           quota_seconds, created_at, last_login_at`,
+        [Math.round(deltaMinutes * 60), req.params.id],
       );
+      if (!rows[0]) {
+        const exists = await pool.query("SELECT id FROM users WHERE id = $1", [
+          req.params.id,
+        ]);
+        return res.status(exists.rows[0] ? 400 : 404).json({
+          error: exists.rows[0]
+            ? "Quota không được âm"
+            : "Không tìm thấy user",
+        });
+      }
       await writeAudit({
         actorRow: req.admin,
         action: "quota.adjust",
@@ -576,8 +655,7 @@ router.post(
         targetId: req.params.id,
         details: { delta_minutes: deltaMinutes, reason },
       });
-      rows[0].used_seconds = 0;
-      return res.json(normalizeManagedUser(rows[0]));
+      return res.json(await getManagedUserById(rows[0].id));
     } catch (error) {
       console.error("Admin quota error:", error);
       return res.status(500).json({ error: "Không điều chỉnh được quota" });
@@ -642,69 +720,34 @@ router.post(
   requireMutation,
   async (req, res) => {
     const id = String(req.params.jobId).replace(/^job_/, "");
-    const { rows } = await pool.query(
-      `SELECT t.*, q.id AS queue_job_id, u.first_name, u.last_name, u.email
-       FROM transcriptions t
-       JOIN users u ON u.id = t.user_id
-       LEFT JOIN transcription_jobs q ON q.transcription_id = t.id
-       WHERE t.id = $1`,
-      [id],
-    );
-    const job = rows[0];
-    if (!job) return res.status(404).json({ error: "Không tìm thấy job" });
-    if (job.status === "completed") {
-      return res
-        .status(400)
-        .json({ error: "Không thể retry job đã hoàn thành" });
-    }
-    if (!job.queue_job_id) {
-      return res.status(409).json({
-        error: "Job cũ không còn bản ghi hàng đợi để chạy lại.",
-      });
-    }
-    const client = await pool.connect();
-    let updated;
     try {
-      await client.query("BEGIN");
-      updated = await client.query(
-        `UPDATE transcriptions
-         SET status = 'queued', error_message = NULL, completed_at = NULL
-         WHERE id = $1
-         RETURNING *`,
-        [id],
+      const result = await retryTranscriptionJobForAdmin(id);
+      void kickTranscriptionWorker();
+      await writeAudit({
+        actorRow: req.admin,
+        action: "transcription.retry",
+        targetType: "transcription",
+        targetId: req.params.jobId,
+        details: {
+          previous_status: result.original.status,
+          queue_job_id: result.queueJobId,
+          recreated_queue_job: result.recreatedQueueJob,
+        },
+      });
+      return res.json(
+        normalizeJob({
+          ...result.transcription,
+          first_name: result.original.first_name,
+          last_name: result.original.last_name,
+          email: result.original.email,
+        }),
       );
-      await client.query(
-        `UPDATE transcription_jobs
-         SET status = 'queued', progress = 0, attempts = 0,
-             cancel_requested = FALSE, error_message = NULL,
-             available_at = NOW(), locked_at = NULL, lock_token = NULL,
-             started_at = NULL, completed_at = NULL, updated_at = NOW()
-         WHERE id = $1`,
-        [job.queue_job_id],
-      );
-      await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
+      console.error("Admin retry job error:", error);
+      return res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Không thể chạy lại job" });
     }
-    kickTranscriptionWorker();
-    await writeAudit({
-      actorRow: req.admin,
-      action: "transcription.retry",
-      targetType: "transcription",
-      targetId: req.params.jobId,
-      details: { previous_status: job.status },
-    });
-    return res.json(
-      normalizeJob({
-        ...updated.rows[0],
-        first_name: job.first_name,
-        last_name: job.last_name,
-        email: job.email,
-      }),
-    );
   },
 );
 
@@ -827,9 +870,16 @@ router.get("/files/:fileId/media", requireAdmin, async (req, res) => {
   );
   if (!rows[0]?.audio_filename)
     return res.status(404).json({ error: "Không có file media" });
-  const filePath = path.join(UPLOADS_DIR, rows[0].audio_filename);
+  let filePath;
+  try {
+    filePath = resolveStoredAudioPath(rows[0].audio_filename);
+  } catch {
+    return res.status(400).json({ error: "Đường dẫn media không hợp lệ" });
+  }
   if (!fs.existsSync(filePath))
     return res.status(404).json({ error: "File media không tồn tại" });
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Content-Disposition", "inline");
   return res.sendFile(filePath);
 });
 
@@ -849,8 +899,13 @@ router.delete(
     );
     if (!result.rows[0])
       return res.status(404).json({ error: "Không tìm thấy file" });
-    if (rows[0]?.audio_filename)
-      fs.unlink(path.join(UPLOADS_DIR, rows[0].audio_filename), () => {});
+    if (rows[0]?.audio_filename) {
+      try {
+        fs.unlink(resolveStoredAudioPath(rows[0].audio_filename), () => {});
+      } catch {
+        // The database record is removed even when the legacy media path is invalid.
+      }
+    }
     await writeAudit({
       actorRow: req.admin,
       action: "file.delete",
@@ -945,23 +1000,11 @@ router.get("/audit-logs", requireAdmin, async (req, res) => {
 });
 
 router.get("/settings", requireAdmin, async (_req, res) => {
-  const { rows } = await pool.query(
-    "SELECT value FROM admin_settings WHERE key = 'global'",
-  );
-  return res.json({ ...defaultAdminSettings(), ...(rows[0]?.value || {}) });
+  return res.json(await getAdminSettings());
 });
 
 router.put("/settings", requireAdmin, requireSuperAdmin, async (req, res) => {
-  const settings = req.body || {};
-  await pool.query(
-    `INSERT INTO admin_settings (key, value, updated_by, updated_at)
-     VALUES ('global', $1::jsonb, $2, NOW())
-     ON CONFLICT (key) DO UPDATE
-       SET value = EXCLUDED.value,
-           updated_by = EXCLUDED.updated_by,
-           updated_at = NOW()`,
-    [JSON.stringify(settings), req.admin.id],
-  );
+  const settings = await saveAdminSettings(req.body || {}, req.admin.id);
   await writeAudit({
     actorRow: req.admin,
     action: "settings.update",
@@ -985,6 +1028,65 @@ function normalizePlan(row) {
     enabled: Boolean(row.enabled),
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+function planInteger(value, field, min, max) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw createAdminError(
+      400,
+      `${field} phải là số nguyên từ ${min} đến ${max}`,
+    );
+  }
+  return parsed;
+}
+
+function normalizePlanUpdate(body, currentPlan) {
+  const billingCycle = String(body.billing_cycle || "monthly")
+    .trim()
+    .toLowerCase();
+  if (!["monthly", "custom"].includes(billingCycle)) {
+    throw createAdminError(400, "Chu kỳ gói phải là monthly hoặc custom");
+  }
+  const name = String(body.name || "").trim();
+  if (!name || name.length > 120) {
+    throw createAdminError(400, "Tên gói phải có từ 1 đến 120 ký tự");
+  }
+  const enabled =
+    currentPlan.code === "free" ? true : Boolean(body.enabled);
+  const price = planInteger(
+    body.price_vnd,
+    "Giá gói",
+    currentPlan.code === "free" ? 0 : 1,
+    2_000_000_000,
+  );
+  if (currentPlan.code === "free" && price !== 0) {
+    throw createAdminError(400, "Gói Free phải có giá bằng 0");
+  }
+  return {
+    name,
+    quotaMinutes: planInteger(
+      body.quota_minutes,
+      "Quota",
+      1,
+      10_000_000,
+    ),
+    priceVnd: price,
+    billingCycle,
+    maxUploadMb: planInteger(
+      body.max_upload_mb,
+      "Dung lượng tải lên",
+      1,
+      2048,
+    ),
+    maxFileDurationMinutes: planInteger(
+      body.max_file_duration_minutes,
+      "Thời lượng file",
+      1,
+      24 * 60,
+    ),
+    enabled,
   };
 }
 
@@ -1018,6 +1120,32 @@ function normalizeProviderApiKey(value) {
   return apiKey ? encryptProviderSecret(apiKey) : null;
 }
 
+function normalizeProviderEndpoint(code, value) {
+  const allowedHosts = {
+    assemblyai: ["assemblyai.com"],
+    deepgram: ["deepgram.com"],
+    sonix: ["sonix.ai"],
+    vbee: ["vbeelabs.ai", "vbee.vn"],
+  };
+  let url;
+  try {
+    url = new URL(String(value || "").trim());
+  } catch {
+    throw createAdminError(400, "Endpoint nhà cung cấp không hợp lệ");
+  }
+  const hostname = url.hostname.toLowerCase();
+  const allowed = (allowedHosts[code] || []).some(
+    (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+  );
+  if (url.protocol !== "https:" || !allowed || url.username || url.password) {
+    throw createAdminError(
+      400,
+      "Endpoint phải dùng HTTPS và đúng tên miền chính thức của provider",
+    );
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+
 router.get("/plans", requireAdmin, async (_req, res) => {
   const { rows } = await pool.query(
     "SELECT * FROM service_plans ORDER BY price_vnd ASC, id ASC",
@@ -1026,7 +1154,14 @@ router.get("/plans", requireAdmin, async (_req, res) => {
 });
 
 router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
-  const body = req.body || {};
+  const current = await pool.query(
+    "SELECT * FROM service_plans WHERE id = $1",
+    [req.params.id],
+  );
+  if (!current.rows[0]) {
+    return res.status(404).json({ error: "Không tìm thấy gói" });
+  }
+  const body = normalizePlanUpdate(req.body || {}, current.rows[0]);
   const { rows } = await pool.query(
     `UPDATE service_plans
      SET name = $1,
@@ -1040,17 +1175,16 @@ router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
      WHERE id = $8
      RETURNING *`,
     [
-      String(body.name || "").trim(),
-      Number(body.quota_minutes || 0),
-      Number(body.price_vnd || 0),
-      String(body.billing_cycle || "monthly"),
-      Number(body.max_upload_mb || 0),
-      Number(body.max_file_duration_minutes || 0),
-      Boolean(body.enabled),
+      body.name,
+      body.quotaMinutes,
+      body.priceVnd,
+      body.billingCycle,
+      body.maxUploadMb,
+      body.maxFileDurationMinutes,
+      body.enabled,
       req.params.id,
     ],
   );
-  if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy gói" });
   await writeAudit({
     actorRow: req.admin,
     action: "plan.update",
@@ -1063,7 +1197,24 @@ router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
 
 router.get("/providers", requireAdmin, async (_req, res) => {
   const { rows } = await pool.query(
-    "SELECT * FROM stt_providers ORDER BY id ASC",
+    `SELECT provider.*,
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN transcript.status = 'completed'
+                   AND transcript.created_at >= DATE_TRUNC('month', NOW())
+                  THEN COALESCE(transcript.duration, 0) / 60.0
+                       * provider.cost_per_minute_usd
+                  ELSE 0
+                END
+              ),
+              0
+            ) AS monthly_cost_usd
+     FROM stt_providers provider
+     LEFT JOIN transcriptions transcript
+       ON LOWER(transcript.transcription_provider) = LOWER(provider.code)
+     GROUP BY provider.id
+     ORDER BY provider.id ASC`,
   );
   return res.json(rows.map(normalizeProvider));
 });
@@ -1074,48 +1225,147 @@ router.put(
   requireSuperAdmin,
   async (req, res) => {
     const body = req.body || {};
-    const isDefault = Boolean(body.is_default);
-    const apiKey = normalizeProviderApiKey(body.api_key);
-    if (isDefault) {
-      await pool.query("UPDATE stt_providers SET is_default = FALSE");
+    const providerId = Number.parseInt(req.params.id, 10);
+    if (!Number.isSafeInteger(providerId) || providerId <= 0) {
+      throw createAdminError(400, "ID nhà cung cấp không hợp lệ");
     }
-    const { rows } = await pool.query(
-      `UPDATE stt_providers
-     SET name = $1,
-         endpoint = $2,
-         enabled = $3,
-         is_default = $4,
-         routing_mode = $5,
-         routing_rules = $6::jsonb,
-         failover_provider_id = NULLIF($7, '')::integer,
-         cost_per_minute_usd = $8,
-         api_key_encrypted = COALESCE($9, api_key_encrypted),
-         updated_at = NOW()
-     WHERE id = $10
-     RETURNING *`,
-      [
-        String(body.name || "").trim(),
-        String(body.endpoint || "").trim(),
-        Boolean(body.enabled),
-        isDefault,
-        String(body.routing_mode || "auto"),
-        JSON.stringify(body.routing_rules || {}),
-        body.failover_provider_id || "",
-        Number(body.cost_per_minute_usd || 0),
-        apiKey,
-        req.params.id,
-      ],
-    );
-    if (!rows[0])
-      return res.status(404).json({ error: "Không tìm thấy provider" });
+    const name = String(body.name || "").trim();
+    if (!name || name.length > 120) {
+      throw createAdminError(400, "Tên provider phải có từ 1 đến 120 ký tự");
+    }
+    const routingMode = String(body.routing_mode || "auto");
+    if (!["manual", "auto", "rule_based"].includes(routingMode)) {
+      throw createAdminError(400, "Chế độ định tuyến không hợp lệ");
+    }
+    const routingRules =
+      body.routing_rules &&
+      typeof body.routing_rules === "object" &&
+      !Array.isArray(body.routing_rules)
+        ? body.routing_rules
+        : {};
+    if (JSON.stringify(routingRules).length > 10_000) {
+      throw createAdminError(400, "Quy tắc định tuyến quá lớn");
+    }
+    const cost = Number(body.cost_per_minute_usd || 0);
+    if (!Number.isFinite(cost) || cost < 0 || cost > 100) {
+      throw createAdminError(400, "Chi phí mỗi phút không hợp lệ");
+    }
+
+    const client = await pool.connect();
+    let updated;
+    try {
+      await client.query("BEGIN");
+      const currentResult = await client.query(
+        "SELECT * FROM stt_providers WHERE id = $1 FOR UPDATE",
+        [providerId],
+      );
+      const current = currentResult.rows[0];
+      if (!current) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Không tìm thấy provider" });
+      }
+
+      const enabled = Boolean(body.enabled);
+      const isDefault = Boolean(body.is_default);
+      if (isDefault && !enabled) {
+        throw createAdminError(
+          400,
+          "Provider mặc định phải ở trạng thái đang bật",
+        );
+      }
+      const endpoint = normalizeProviderEndpoint(current.code, body.endpoint);
+      const failoverId = body.failover_provider_id
+        ? Number.parseInt(body.failover_provider_id, 10)
+        : null;
+      if (failoverId === providerId) {
+        throw createAdminError(
+          400,
+          "Provider không thể dự phòng cho chính nó",
+        );
+      }
+      if (failoverId) {
+        const failover = await client.query(
+          "SELECT id FROM stt_providers WHERE id = $1 AND enabled = TRUE",
+          [failoverId],
+        );
+        if (!failover.rows[0]) {
+          throw createAdminError(
+            400,
+            "Provider dự phòng không tồn tại hoặc đang bị tắt",
+          );
+        }
+      }
+      if (!isDefault && current.is_default) {
+        const replacement = await client.query(
+          `SELECT id FROM stt_providers
+           WHERE id <> $1 AND enabled = TRUE
+           ORDER BY CASE WHEN health_status = 'healthy' THEN 0 ELSE 1 END, id
+           LIMIT 1`,
+          [providerId],
+        );
+        if (!replacement.rows[0]) {
+          throw createAdminError(
+            400,
+            "Hệ thống phải có ít nhất một provider mặc định đang bật",
+          );
+        }
+        await client.query(
+          `UPDATE stt_providers
+           SET is_default = (id = $1)
+           WHERE id IN ($1, $2)`,
+          [replacement.rows[0].id, providerId],
+        );
+      }
+      if (isDefault) {
+        await client.query(
+          "UPDATE stt_providers SET is_default = FALSE WHERE id <> $1",
+          [providerId],
+        );
+      }
+
+      const { rows } = await client.query(
+        `UPDATE stt_providers
+         SET name = $1,
+             endpoint = $2,
+             enabled = $3,
+             is_default = $4,
+             routing_mode = $5,
+             routing_rules = $6::jsonb,
+             failover_provider_id = $7,
+             cost_per_minute_usd = $8,
+             api_key_encrypted = COALESCE($9, api_key_encrypted),
+             updated_at = NOW()
+         WHERE id = $10
+         RETURNING *`,
+        [
+          name,
+          endpoint,
+          enabled,
+          isDefault,
+          routingMode,
+          JSON.stringify(routingRules),
+          failoverId,
+          cost,
+          normalizeProviderApiKey(body.api_key),
+          providerId,
+        ],
+      );
+      updated = rows[0];
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
     await writeAudit({
       actorRow: req.admin,
       action: "provider.update",
       targetType: "settings",
-      targetId: rows[0].code,
-      details: normalizeProvider(rows[0]),
+      targetId: updated.code,
+      details: normalizeProvider(updated),
     });
-    return res.json(normalizeProvider(rows[0]));
+    return res.json(normalizeProvider(updated));
   },
 );
 
@@ -1132,13 +1382,38 @@ router.post(
           .json({ error: "ID nhà cung cấp không hợp lệ" });
       }
 
-      const latency = 120 + Math.floor(Math.random() * 280);
-      const healthStatus = latency > 330 ? "degraded" : "healthy";
+      const providerResult = await pool.query(
+        "SELECT * FROM stt_providers WHERE id = $1 LIMIT 1",
+        [providerId],
+      );
+      const provider = providerResult.rows[0];
+      if (!provider) {
+        return res.status(404).json({ error: "Không tìm thấy nhà cung cấp" });
+      }
+
+      let healthStatus = "healthy";
+      let latency = 0;
+      let healthError = null;
+      try {
+        const health = await checkProviderHealth(provider);
+        latency = health.latencyMs;
+      } catch (error) {
+        healthStatus = "down";
+        latency = Number(error.latencyMs || 0);
+        healthError = String(error.message || "Health check thất bại").slice(
+          0,
+          300,
+        );
+      }
       const { rows } = await pool.query(
         `UPDATE stt_providers
-       SET health_status = $1,
+       SET health_status = $1::varchar,
            avg_latency_ms = $2,
-           success_rate = CASE WHEN $1 = 'healthy' THEN 99.2 ELSE 94.5 END,
+           success_rate = CASE
+             WHEN $1::varchar = 'healthy' THEN
+               CASE WHEN success_rate <= 0 THEN 100 ELSE ROUND((success_rate * 9 + 100) / 10, 2) END
+             ELSE ROUND(success_rate * 0.9, 2)
+           END,
            last_checked_at = NOW(),
            updated_at = NOW()
        WHERE id = $3
@@ -1147,7 +1422,10 @@ router.post(
       );
       if (!rows[0])
         return res.status(404).json({ error: "Không tìm thấy nhà cung cấp" });
-      return res.json(normalizeProvider(rows[0]));
+      return res.json({
+        ...normalizeProvider(rows[0]),
+        health_error: healthError,
+      });
     } catch (error) {
       console.error("Admin provider health error:", error);
       return res
@@ -1263,7 +1541,7 @@ router.get("/reports/export", requireAdmin, async (_req, res) => {
 });
 
 router.get("/system/status", requireAdmin, async (_req, res) => {
-  const [providers, queue] = await Promise.all([
+  const [providers, queue, settings] = await Promise.all([
     pool.query(
       "SELECT code, health_status, enabled FROM stt_providers ORDER BY id ASC",
     ),
@@ -1274,15 +1552,13 @@ router.get("/system/status", requireAdmin, async (_req, res) => {
          COUNT(*) FILTER (WHERE status = 'processing')::integer AS active
        FROM transcription_jobs`,
     ),
+    getAdminSettings(),
   ]);
   return res.json({
     database: "ok",
     backend: "ok",
     transcription_queue: {
-      concurrency: Number.parseInt(
-        process.env.TRANSCRIPTION_QUEUE_CONCURRENCY || "2",
-        10,
-      ),
+      concurrency: settings.system_parameters.queue_concurrency,
       total: Number(queue.rows[0]?.total || 0),
       queued: Number(queue.rows[0]?.queued || 0),
       active: Number(queue.rows[0]?.active || 0),

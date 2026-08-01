@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Eye, EyeOff, LogIn, Mail, LockKeyhole } from "lucide-react";
-import { useAuth } from "@/context/AuthContext";
-import { redirectAfterAuth } from "@/lib/auth-redirect";
+import { useAuth, type User } from "@/context/AuthContext";
+import { getSafeAuthRedirect } from "@/lib/auth-redirect";
 import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
 
@@ -31,6 +31,7 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const { error: urlError, from } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { user, isLoading, setToken } = useAuth();
 
   const [form, setForm] = useState({ email: "", password: "" });
@@ -39,8 +40,14 @@ function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && user) redirectAfterAuth(from);
-  }, [user, isLoading, from]);
+    if (!isLoading && user) {
+      if (user.onboardingCompleted === false) {
+        void navigate({ to: "/onboarding", search: { from } });
+      } else {
+        void navigate({ to: getSafeAuthRedirect(from) });
+      }
+    }
+  }, [user, isLoading, from, navigate]);
 
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -64,15 +71,18 @@ function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: form.email.trim(), password: form.password }),
       });
-      const data = (await res.json()) as { token?: string; error?: string };
+      const data = (await res.json()) as {
+        token?: string;
+        user?: User;
+        error?: string;
+      };
 
       if (!res.ok || !data.token) {
         setFormError(data.error ?? "Đăng nhập thất bại");
         return;
       }
 
-      setToken(data.token);
-      redirectAfterAuth(from);
+      await setToken(data.token, data.user);
     } catch {
       setFormError("Không kết nối được backend. Hãy kiểm tra http://localhost:3001");
     } finally {

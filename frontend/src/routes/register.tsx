@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent, type ChangeEvent } from "react";
-import { useAuth } from "@/context/AuthContext";
-import { redirectAfterAuth } from "@/lib/auth-redirect";
+import { useAuth, type User } from "@/context/AuthContext";
+import { getSafeAuthRedirect } from "@/lib/auth-redirect";
 import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { Zap, Languages, CheckCircle2, ArrowRight, Eye, EyeOff } from "lucide-react";
@@ -41,6 +41,7 @@ export const Route = createFileRoute("/register")({
 
 function RegisterPage() {
   const { error: urlError, from, ref } = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { user, isLoading, setToken } = useAuth();
 
   const [form, setForm] = useState({
@@ -52,8 +53,14 @@ function RegisterPage() {
   const [isSubmitting, setIsSubmitting]       = useState(false);
 
   useEffect(() => {
-    if (!isLoading && user) redirectAfterAuth(from);
-  }, [user, isLoading, from]);
+    if (!isLoading && user) {
+      if (user.onboardingCompleted === false) {
+        void navigate({ to: "/onboarding", search: { from } });
+      } else {
+        void navigate({ to: getSafeAuthRedirect(from) });
+      }
+    }
+  }, [user, isLoading, from, navigate]);
 
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
@@ -78,11 +85,14 @@ function RegisterPage() {
           referralCode: ref,
         }),
       });
-      const data = (await res.json()) as { token?: string; error?: string };
+      const data = (await res.json()) as {
+        token?: string;
+        user?: User;
+        error?: string;
+      };
       if (!res.ok) { setError(data.error ?? "Đăng ký thất bại"); return; }
       if (data.token) {
-        setToken(data.token);
-        redirectAfterAuth(from);
+        await setToken(data.token, data.user);
       }
     } catch {
       setError("Có lỗi xảy ra. Vui lòng thử lại.");

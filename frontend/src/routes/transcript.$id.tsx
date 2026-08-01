@@ -15,8 +15,12 @@ import {
   Clock3,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   FileAudio,
   FileText,
+  Folder,
+  GitMerge,
   Languages,
   Pause,
   Pencil,
@@ -32,12 +36,17 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
-import { languageLabel } from "@/lib/language-options";
+import {
+  TRANSLATION_LANGUAGE_OPTIONS,
+  languageLabel,
+} from "@/lib/language-options";
 import {
   clampSeekTime,
+  confidenceLevel,
   findActiveWordIndex,
   formatPlaybackTime,
   replaceTimedWordInText,
+  summarizeConfidence,
 } from "@/lib/transcript-playback";
 
 const API_URL =
@@ -66,6 +75,7 @@ interface TranscriptDetail {
   processing_seconds: number | null;
   text: string;
   words: TranscriptWord[];
+  speaker_names: Record<string, string>;
   audio_filename: string | null;
   source_language: string | null;
   translated_text: string | null;
@@ -74,6 +84,8 @@ interface TranscriptDetail {
   translation_error: string | null;
   status: "queued" | "processing" | "completed" | "failed" | "cancelled";
   error_message: string | null;
+  folder_id: number | null;
+  folder_name: string | null;
   created_at: string;
 }
 
@@ -91,11 +103,13 @@ interface TranscriptSegment {
 const EditableTimedWord = memo(function EditableTimedWord({
   word,
   active,
+  showConfidence,
   onCommit,
   onSeek,
 }: {
   word: IndexedWord;
   active: boolean;
+  showConfidence: boolean;
   onCommit: (index: number, text: string) => void;
   onSeek: (milliseconds: number) => void;
 }) {
@@ -117,6 +131,16 @@ const EditableTimedWord = memo(function EditableTimedWord({
     if (nextValue !== word.text) onCommit(word.index, nextValue);
   }
 
+  const confidence = confidenceLevel(word.confidence);
+  const reviewClass =
+    showConfidence && confidence === "low"
+      ? "bg-[#ffe0dc] text-[#8f2019] shadow-[inset_0_-2px_0_#ef6a5b]"
+      : showConfidence && confidence === "medium"
+        ? "bg-[#fff1bd] text-[#6f5200] shadow-[inset_0_-2px_0_#e5b900]"
+        : showConfidence && confidence === "high"
+          ? "bg-[#e8f7ee] text-[#23633a]"
+          : "bg-transparent text-[#342752] hover:bg-[#fff3bb]";
+
   return (
     <input
       ref={inputRef}
@@ -125,6 +149,11 @@ const EditableTimedWord = memo(function EditableTimedWord({
       data-word-index={word.index}
       aria-current={active ? "true" : undefined}
       aria-label={`Chỉnh sửa từ ${word.text}`}
+      title={
+        word.confidence == null
+          ? "Nhấn để nghe và chỉnh sửa"
+          : `Độ tin cậy ${Math.round(word.confidence * 100)}%`
+      }
       onChange={(event) => setValue(event.target.value)}
       onClick={() => onSeek(word.start)}
       onBlur={commit}
@@ -144,7 +173,7 @@ const EditableTimedWord = memo(function EditableTimedWord({
       className={`mr-0.5 inline-block h-7 min-w-0 rounded border-0 px-px align-middle text-[15px] leading-7 outline-none transition-colors duration-150 ${
         active
           ? "bg-[#ffcb05] font-black text-[#21104a] shadow-[0_0_0_3px_rgba(255,203,5,.22)]"
-          : "bg-transparent text-[#342752] hover:bg-[#fff3bb] focus:bg-white focus:ring-2 focus:ring-[#ffcb05]"
+          : `${reviewClass} focus:bg-white focus:ring-2 focus:ring-[#ffcb05]`
       }`}
     />
   );
@@ -207,13 +236,16 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
   return segments;
 }
 
-function buildTextFromTimedWords(words: TranscriptWord[]) {
+function buildTextFromTimedWords(
+  words: TranscriptWord[],
+  speakerNames: Record<string, string> = {},
+) {
   return buildSegments(words)
     .map((segment) => {
       const speakerPrefix =
         segment.speaker === null || segment.speaker === undefined
           ? ""
-          : `Người nói ${segment.speaker}: `;
+          : `${speakerLabel(segment.speaker, speakerNames)}: `;
       return `${speakerPrefix}${segment.words
         .map((word) => word.text)
         .join(" ")}`;
@@ -246,9 +278,13 @@ function formatBytes(bytes?: number | null) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function speakerLabel(value: string | number | null) {
+function speakerLabel(
+  value: string | number | null,
+  names: Record<string, string> = {},
+) {
   if (value === null || value === "") return "Nội dung";
   const raw = String(value);
+  if (names[raw]) return names[raw];
   const numberMatch = raw.match(/\d+/);
   if (/speaker/i.test(raw) && numberMatch) {
     return `Người nói ${Number(numberMatch[0]) + 1}`;
@@ -297,6 +333,8 @@ function TranscriptEditorPage() {
   const [copied, setCopied] = useState(false);
   const [translationRetrying, setTranslationRetrying] = useState(false);
   const [translationRetryError, setTranslationRetryError] = useState("");
+  const [translationTarget, setTranslationTarget] = useState("en");
+  const [showConfidence, setShowConfidence] = useState(true);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
@@ -330,6 +368,10 @@ function TranscriptEditorPage() {
             .map((speaker) => String(speaker)),
         ),
       ),
+    [words],
+  );
+  const confidenceSummary = useMemo(
+    () => summarizeConfidence(words),
     [words],
   );
 
@@ -389,7 +431,12 @@ function TranscriptEditorPage() {
       const detail = body as TranscriptDetail;
       detail.words = normalizeWords(detail.words);
       detail.text = String(detail.text || "");
+      detail.speaker_names =
+        detail.speaker_names && typeof detail.speaker_names === "object"
+          ? detail.speaker_names
+          : {};
       setTranscript(detail);
+      setTranslationTarget(detail.translation_target_language || "en");
       setTranslationRetryError("");
       setEditorText(detail.text);
       setSavedText(detail.text);
@@ -500,7 +547,8 @@ function TranscriptEditorPage() {
           currentWords,
           wordIndex,
           nextText,
-        ) ?? buildTextFromTimedWords(nextWords);
+        ) ??
+        buildTextFromTimedWords(nextWords, transcript?.speaker_names);
 
       wordsRef.current = nextWords;
       setTranscript((current) =>
@@ -509,12 +557,12 @@ function TranscriptEditorPage() {
       setEditorText(nextTranscriptText);
       setSaveStatus("unsaved");
     },
-    [],
+    [transcript?.speaker_names],
   );
 
   const saveTranscript = useCallback(
     async (text: string, timedWords = wordsRef.current) => {
-      if (!token || !activeTranscriptId) return;
+      if (!token || !activeTranscriptId) return false;
       saveRequestRef.current?.abort();
       const controller = new AbortController();
       saveRequestRef.current = controller;
@@ -549,8 +597,9 @@ function TranscriptEditorPage() {
           previous ? { ...previous, text } : previous,
         );
         setSaveStatus(editorTextRef.current === text ? "saved" : "unsaved");
+        return true;
       } catch (error) {
-        if (controller.signal.aborted && !timedOut) return;
+        if (controller.signal.aborted && !timedOut) return false;
         setSaveStatus("error");
         setSaveError(
           timedOut
@@ -559,6 +608,7 @@ function TranscriptEditorPage() {
               ? error.message
               : "Không thể lưu thay đổi",
         );
+        return false;
       } finally {
         window.clearTimeout(timer);
         if (saveRequestRef.current === controller) {
@@ -568,6 +618,108 @@ function TranscriptEditorPage() {
     },
     [activeTranscriptId, token],
   );
+
+  async function saveSpeakerName(speaker: string) {
+    if (!token || !activeTranscriptId || !transcript) return;
+    const speakerNames = transcript.speaker_names || {};
+    setSaveStatus("saving");
+    setSaveError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ speakerNames }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        speaker_names?: Record<string, string>;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không thể lưu tên người nói");
+      }
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              speaker_names: body.speaker_names || speakerNames,
+            }
+          : current,
+      );
+      setSaveStatus("saved");
+    } catch (error) {
+      setSaveStatus("error");
+      setSaveError(
+        error instanceof Error ? error.message : "Không thể lưu tên người nói",
+      );
+    }
+  }
+
+  async function updateSpeakerAssignment(
+    sourceSpeaker: string,
+    targetSpeaker: string | null,
+  ) {
+    if (!token || !activeTranscriptId || !transcript) return;
+    const nextWords = words.map((word) =>
+      String(word.speaker) === sourceSpeaker
+        ? { ...word, speaker: targetSpeaker }
+        : word,
+    );
+    const nextNames = { ...transcript.speaker_names };
+    delete nextNames[sourceSpeaker];
+    const nextText = buildTextFromTimedWords(nextWords, nextNames);
+    setSaveStatus("saving");
+    setSaveError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text: nextText,
+            words: nextWords,
+            speakerNames: nextNames,
+          }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không thể cập nhật người nói");
+      }
+      wordsRef.current = nextWords;
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              words: nextWords,
+              text: nextText,
+              speaker_names: nextNames,
+            }
+          : current,
+      );
+      setEditorText(nextText);
+      setSavedText(nextText);
+      setSaveStatus("saved");
+    } catch (error) {
+      setSaveStatus("error");
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Không thể cập nhật người nói",
+      );
+    }
+  }
 
   useEffect(() => {
     if (!transcript || editorText === savedText) return;
@@ -708,7 +860,8 @@ function TranscriptEditorPage() {
     if (
       !token ||
       !transcript ||
-      !transcript.translation_target_language ||
+      !translationTarget ||
+      translationTarget === "none" ||
       translationRetrying
     ) {
       return;
@@ -716,6 +869,12 @@ function TranscriptEditorPage() {
     setTranslationRetrying(true);
     setTranslationRetryError("");
     try {
+      const saved = await saveTranscript(editorText);
+      if (!saved) {
+        throw new Error(
+          "Chưa lưu được transcript mới nhất nên hệ thống chưa bắt đầu dịch.",
+        );
+      }
       const response = await fetch(
         `${API_URL}/api/transcribe/${transcript.id}/translate`,
         {
@@ -725,7 +884,7 @@ function TranscriptEditorPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            targetLanguage: transcript.translation_target_language,
+            targetLanguage: translationTarget,
           }),
         },
       );
@@ -747,7 +906,7 @@ function TranscriptEditorPage() {
               translated_text: body.translation!.text,
               translation_target_language:
                 body.translation!.targetLanguage ||
-                current.translation_target_language,
+                translationTarget,
               translation_provider:
                 body.translation!.provider || current.translation_provider,
               translation_error: null,
@@ -824,7 +983,9 @@ function TranscriptEditorPage() {
       .map((segment, index) => {
         const timing = `${formatCaptionTime(segment.start, separator)} --> ${formatCaptionTime(segment.end, separator)}`;
         const label =
-          segment.speaker == null ? "" : `${speakerLabel(segment.speaker)}: `;
+          segment.speaker == null
+            ? ""
+            : `${speakerLabel(segment.speaker, transcript?.speaker_names)}: `;
         return `${format === "srt" ? `${index + 1}\n` : ""}${timing}\n${label}${joinWords(segment.words)}`;
       })
       .join("\n\n");
@@ -1074,7 +1235,7 @@ function TranscriptEditorPage() {
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
           <section className="overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
-            <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="inline-flex w-fit rounded-md bg-[#f3f0f7] p-1">
                 <button
                   type="button"
@@ -1101,13 +1262,30 @@ function TranscriptEditorPage() {
                   <Pencil className="h-3.5 w-3.5" /> Văn bản thuần
                 </button>
               </div>
-              <p className="text-xs text-[#8a7da1]">
-                {words.length > MAX_SYNC_WORDS
-                  ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
-                  : syncAvailable
-                    ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
-                    : "Bản ghi chưa có timestamp theo từng từ."}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {confidenceSummary.reviewedCount > 0 && (
+                  <button
+                    type="button"
+                    aria-pressed={showConfidence}
+                    onClick={() => setShowConfidence((value) => !value)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#ded5e9] bg-white px-3 py-2 text-xs font-bold text-[#5f4c82] transition hover:border-[#ffcb05]"
+                  >
+                    {showConfidence ? (
+                      <Eye className="h-3.5 w-3.5" />
+                    ) : (
+                      <EyeOff className="h-3.5 w-3.5" />
+                    )}
+                    {showConfidence ? "Ẩn từ cần xem" : "Hiện từ cần xem"}
+                  </button>
+                )}
+                <p className="text-xs text-[#8a7da1]">
+                  {words.length > MAX_SYNC_WORDS
+                    ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
+                    : syncAvailable
+                      ? "Bấm vào từ để nghe đúng vị trí và chỉnh sửa."
+                      : "Bản ghi chưa có timestamp theo từng từ."}
+                </p>
+              </div>
             </div>
 
             {editorMode === "sync" && syncAvailable ? (
@@ -1130,17 +1308,21 @@ function TranscriptEditorPage() {
                           {formatClock(segment.start)}
                         </button>
                         <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
-                          {speakerLabel(segment.speaker)}
+                          {speakerLabel(
+                            segment.speaker,
+                            transcript.speaker_names,
+                          )}
                         </p>
                       </div>
                       <p className="text-[15px] leading-8 text-[#342752]">
                         {segment.words.map((word) => (
                           <EditableTimedWord
                             key={`${word.start}-${word.index}`}
-                            word={word}
-                            active={activeWordIndex === word.index}
-                            onCommit={commitTimedWord}
-                            onSeek={seekTo}
+                           word={word}
+                           active={activeWordIndex === word.index}
+                           showConfidence={showConfidence}
+                           onCommit={commitTimedWord}
+                           onSeek={seekTo}
                           />
                         ))}
                       </p>
@@ -1156,6 +1338,7 @@ function TranscriptEditorPage() {
                       Theo dõi audio khi chỉnh sửa
                     </p>
                     <p
+                      data-typography="content"
                       data-testid="active-word-preview"
                       className="mt-1.5 min-h-7 text-sm leading-7 text-[#574875]"
                     >
@@ -1182,6 +1365,7 @@ function TranscriptEditorPage() {
                   </div>
                 )}
                 <textarea
+                  data-typography="content"
                   value={editorText}
                   onChange={(event) => setEditorText(event.target.value)}
                   aria-label="Nội dung transcript"
@@ -1229,12 +1413,51 @@ function TranscriptEditorPage() {
                     {speakers.length || "Chưa tách"}
                   </dd>
                 </div>
+                <div className="col-span-2">
+                  <dt className="text-[#8a7da1]">Thư mục</dt>
+                  <dd className="mt-1 flex items-center gap-1.5 truncate font-bold">
+                    <Folder className="h-3.5 w-3.5 shrink-0" />
+                    {transcript.folder_name || "Dự án mới"}
+                  </dd>
+                </div>
               </dl>
               <div className="mt-4 flex items-center gap-2 border-t border-[#ece7f2] pt-4 text-xs text-[#756894]">
                 <Clock3 className="h-3.5 w-3.5" />
                 {new Date(transcript.created_at).toLocaleString("vi-VN")}
               </div>
             </section>
+
+            {confidenceSummary.reviewedCount > 0 && (
+              <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
+                <h2 className="flex items-center gap-2 text-sm font-black">
+                  <Eye className="h-4 w-4 text-[#8067aa]" /> Chất lượng nhận dạng
+                </h2>
+                <div className="mt-3 flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-2xl font-black text-[#21104a]">
+                      {Math.round((confidenceSummary.average || 0) * 100)}%
+                    </p>
+                    <p className="mt-1 text-xs text-[#8a7da1]">
+                      Độ tin cậy trung bình
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#ffe0dc] px-2.5 py-1 text-xs font-black text-[#8f2019]">
+                    {confidenceSummary.lowCount} từ cần xem
+                  </span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-bold">
+                  <span className="rounded bg-[#e8f7ee] px-2 py-1 text-[#23633a]">
+                    Tốt ≥ 85%
+                  </span>
+                  <span className="rounded bg-[#fff1bd] px-2 py-1 text-[#6f5200]">
+                    Cần xem 65–84%
+                  </span>
+                  <span className="rounded bg-[#ffe0dc] px-2 py-1 text-[#8f2019]">
+                    Thấp &lt; 65%
+                  </span>
+                </div>
+              </section>
+            )}
 
             <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
               <h2 className="flex items-center gap-2 text-sm font-black">
@@ -1295,16 +1518,75 @@ function TranscriptEditorPage() {
               <h2 className="flex items-center gap-2 text-sm font-black">
                 <Users className="h-4 w-4 text-[#8067aa]" /> Người nói
               </h2>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 space-y-2">
                 {speakers.length ? (
-                  speakers.map((speaker) => (
-                    <span
-                      key={speaker}
-                      className="rounded-full bg-[#f3f0f7] px-3 py-1.5 text-xs font-bold text-[#5f4c82]"
-                    >
-                      {speakerLabel(speaker)}
-                    </span>
-                  ))
+                  speakers.map((speaker) => {
+                    const fallbackLabel = speakerLabel(speaker);
+                    return (
+                      <label
+                        key={speaker}
+                        className="block rounded-md border border-[#e1dbea] bg-[#fbfaf7] px-3 py-2"
+                      >
+                        <span className="block text-[10px] font-black uppercase tracking-[0.08em] text-[#8a7da1]">
+                          {fallbackLabel}
+                        </span>
+                        <input
+                          value={transcript.speaker_names[speaker] || ""}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setTranscript((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    speaker_names: {
+                                      ...current.speaker_names,
+                                      [speaker]: value,
+                                    },
+                                  }
+                                : current,
+                            );
+                          }}
+                          onBlur={() => void saveSpeakerName(speaker)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.currentTarget.blur();
+                            }
+                          }}
+                          maxLength={100}
+                          placeholder={fallbackLabel}
+                          aria-label={`Tên hiển thị cho ${fallbackLabel}`}
+                          className="mt-1 w-full bg-transparent text-xs font-bold text-[#5f4c82] outline-none placeholder:text-[#a99fba]"
+                        />
+                        <div className="mt-2 flex items-center gap-2 border-t border-[#ece7f2] pt-2">
+                          <GitMerge className="h-3.5 w-3.5 shrink-0 text-[#8a7da1]" />
+                          <select
+                            defaultValue=""
+                            aria-label={`Gộp hoặc xóa ${fallbackLabel}`}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              event.currentTarget.value = "";
+                              if (!value) return;
+                              void updateSpeakerAssignment(
+                                speaker,
+                                value === "__clear" ? null : value,
+                              );
+                            }}
+                            className="min-w-0 flex-1 bg-transparent text-[11px] font-bold text-[#5f4c82] outline-none"
+                          >
+                            <option value="">Gộp hoặc xóa nhãn...</option>
+                            {speakers
+                              .filter((target) => target !== speaker)
+                              .map((target) => (
+                                <option key={target} value={target}>
+                                  Gộp vào {speakerLabel(target, transcript.speaker_names)}
+                                </option>
+                              ))}
+                            <option value="__clear">Xóa nhãn người nói</option>
+                          </select>
+                        </div>
+                      </label>
+                    );
+                  })
                 ) : (
                   <p className="text-xs leading-5 text-[#8a7da1]">
                     File này chưa bật nhận diện người nói.
@@ -1317,8 +1599,50 @@ function TranscriptEditorPage() {
               <h2 className="flex items-center gap-2 text-sm font-black">
                 <Languages className="h-4 w-4 text-[#8067aa]" /> Bản dịch
               </h2>
+              <div className="mt-3 space-y-2">
+                <label className="block">
+                  <span className="text-[11px] font-bold text-[#8a7da1]">
+                    Ngôn ngữ đích
+                  </span>
+                  <select
+                    value={translationTarget}
+                    onChange={(event) =>
+                      setTranslationTarget(event.target.value)
+                    }
+                    className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-3 py-2.5 text-xs font-bold text-[#342752] outline-none focus:border-[#ffcb05]"
+                  >
+                    {TRANSLATION_LANGUAGE_OPTIONS.filter(
+                      (option) => option.value !== "none",
+                    ).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void retryTranslation()}
+                  disabled={translationRetrying || !editorText.trim()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#ffcb05] px-3.5 py-2.5 text-xs font-black text-[#21104a] transition hover:bg-[#ffda45] disabled:cursor-wait disabled:opacity-65"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${
+                      translationRetrying ? "animate-spin" : ""
+                    }`}
+                  />
+                  {translationRetrying
+                    ? "Đang lưu và dịch..."
+                    : transcript.translated_text
+                      ? "Cập nhật bản dịch"
+                      : "Tạo bản dịch"}
+                </button>
+                <p className="text-[11px] leading-5 text-[#8a7da1]">
+                  Hệ thống lưu transcript đã chỉnh sửa trước rồi mới dịch.
+                </p>
+              </div>
               {transcript.translated_text ? (
-                <div className="mt-3">
+                <div className="mt-4 border-t border-[#ece7f2] pt-3">
                   <p className="mb-2 text-xs font-bold text-[#8a7da1]">
                     {languageLabel(transcript.translation_target_language)}
                   </p>
@@ -1333,25 +1657,6 @@ function TranscriptEditorPage() {
                       ? "Bản dịch chưa hoàn tất. Hệ thống đã thử các nhà cung cấp dự phòng nhưng chưa nhận được kết quả."
                       : "Transcript này chưa có bản dịch."}
                   </p>
-                  {transcript.translation_target_language && (
-                    <button
-                      type="button"
-                      onClick={() => void retryTranslation()}
-                      disabled={translationRetrying}
-                      className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#ffcb05] px-3.5 py-2 text-xs font-black text-[#21104a] transition hover:bg-[#ffda45] disabled:cursor-wait disabled:opacity-65"
-                    >
-                      <RefreshCw
-                        className={`h-3.5 w-3.5 ${
-                          translationRetrying ? "animate-spin" : ""
-                        }`}
-                      />
-                      {translationRetrying
-                        ? "Đang dịch lại..."
-                        : `Dịch lại sang ${languageLabel(
-                            transcript.translation_target_language,
-                          )}`}
-                    </button>
-                  )}
                   {translationRetryError && (
                     <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-semibold leading-5 text-red-700">
                       Dịch lại chưa thành công. Vui lòng thử lại sau.

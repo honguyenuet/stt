@@ -54,6 +54,7 @@ export interface CheckoutResponse {
 export interface BillingCatalogPlan {
   code: PlanCode;
   label: string;
+  enabled: boolean;
   monthly: { price: number | null; quotaSeconds: number };
   yearly: { price: number | null; quotaSeconds: number };
   limits: {

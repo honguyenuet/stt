@@ -18,6 +18,7 @@ import { Route as ReferralRouteImport } from './routes/referral'
 import { Route as RecordRouteImport } from './routes/record'
 import { Route as RealtimeRouteImport } from './routes/realtime'
 import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
@@ -85,6 +86,11 @@ const RealtimeRoute = RealtimeRouteImport.update({
 const PricingRoute = PricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -214,6 +220,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
@@ -247,6 +254,7 @@ export interface FileRoutesByTo {
   '/forgot-password': typeof ForgotPasswordRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
@@ -282,6 +290,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
+  '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
@@ -318,6 +327,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/history'
     | '/login'
+    | '/onboarding'
     | '/pricing'
     | '/realtime'
     | '/record'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/history'
     | '/login'
+    | '/onboarding'
     | '/pricing'
     | '/realtime'
     | '/record'
@@ -385,6 +396,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/history'
     | '/login'
+    | '/onboarding'
     | '/pricing'
     | '/realtime'
     | '/record'
@@ -420,6 +432,7 @@ export interface RootRouteChildren {
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
+  OnboardingRoute: typeof OnboardingRoute
   PricingRoute: typeof PricingRoute
   RealtimeRoute: typeof RealtimeRoute
   RecordRoute: typeof RecordRoute
@@ -496,6 +509,13 @@ declare module '@tanstack/react-router' {
       path: '/pricing'
       fullPath: '/pricing'
       preLoaderRoute: typeof PricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -703,6 +723,7 @@ const rootRouteChildren: RootRouteChildren = {
   ForgotPasswordRoute: ForgotPasswordRoute,
   HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
+  OnboardingRoute: OnboardingRoute,
   PricingRoute: PricingRoute,
   RealtimeRoute: RealtimeRoute,
   RecordRoute: RecordRoute,

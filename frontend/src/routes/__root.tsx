@@ -3,6 +3,8 @@ import {
   Outlet,
   Link,
   createRootRouteWithContext,
+  useLocation,
+  useNavigate,
   useRouter,
   HeadContent,
   Scripts,
@@ -18,6 +20,10 @@ import {
   X,
 } from "lucide-react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import {
+  isOnboardingProtectedPath,
+  needsOnboarding,
+} from "@/lib/onboarding";
 import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import { VbeeSupportWidget } from "@/components/vbee-support-widget";
 
@@ -326,7 +332,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         },
         {
           rel: "stylesheet",
-          href: "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,500;1,600;1,700;1,800&display=swap",
+          href: "https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,500;1,600;1,700&family=Inter:wght@300..900&family=Lexend:wght@300..800&family=Plus+Jakarta+Sans:wght@300..800&family=Roboto:wght@300..900&display=swap",
         },
       ],
     }),
@@ -357,9 +363,41 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <Outlet />
+        <OnboardingGate>
+          <Outlet />
+        </OnboardingGate>
         <VbeeSupportWidget />
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+function OnboardingGate({ children }: { children: ReactNode }) {
+  const { user, isLoading } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const shouldRedirect =
+    !isLoading &&
+    needsOnboarding(user) &&
+    location.pathname !== "/onboarding" &&
+    isOnboardingProtectedPath(location.pathname);
+
+  useEffect(() => {
+    if (!shouldRedirect) return;
+    void navigate({
+      to: "/onboarding",
+      search: { from: location.pathname },
+      replace: true,
+    });
+  }, [location.pathname, navigate, shouldRedirect]);
+
+  if (shouldRedirect) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#f7f4ec]">
+        <span className="h-9 w-9 animate-spin rounded-full border-2 border-[#ffcb05] border-t-[#21104a]" />
+      </div>
+    );
+  }
+
+  return <>{children}</>;
 }

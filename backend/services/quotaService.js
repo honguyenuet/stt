@@ -1,6 +1,7 @@
 const pool = require("../db");
 const { rewardReferralAfterFirstUsage } = require("./referralService");
 const { syncQuotaAlertState } = require("./quotaAlertService");
+const { getAdminSettings } = require("./adminSettingsService");
 
 const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 2048);
 
@@ -107,7 +108,72 @@ function getPurchasedQuotaSeconds(planName, billingCycle) {
     : config.quotaSeconds;
 }
 
+function mergeRuntimePlanConfig(row, fallback) {
+  if (!row) return { ...fallback, enabled: true, priceVnd: null };
+  const quotaMinutes = Number(row.quota_minutes);
+  const maxUploadMb = Number(row.max_upload_mb);
+  const maxFileDurationMinutes = Number(row.max_file_duration_minutes);
+  return {
+    ...fallback,
+    name: row.code || fallback.name,
+    label: String(row.name || fallback.label),
+    quotaSeconds:
+      Number.isFinite(quotaMinutes) && quotaMinutes > 0
+        ? Math.round(quotaMinutes * 60)
+        : fallback.quotaSeconds,
+    maxUploadMb:
+      Number.isFinite(maxUploadMb) && maxUploadMb > 0
+        ? Math.round(maxUploadMb)
+        : fallback.maxUploadMb,
+    maxFileSeconds:
+      Number.isFinite(maxFileDurationMinutes) && maxFileDurationMinutes > 0
+        ? Math.round(maxFileDurationMinutes * 60)
+        : fallback.maxFileSeconds,
+    enabled: row.enabled !== false,
+    priceVnd:
+      Number.isSafeInteger(Number(row.price_vnd)) && Number(row.price_vnd) >= 0
+        ? Number(row.price_vnd)
+        : null,
+    billingCycle: row.billing_cycle || "monthly",
+  };
+}
+
+async function getRuntimePlanConfig(plan, db = pool) {
+  const planName = normalizePlan(plan);
+  const fallback = getPlanConfig(planName);
+  try {
+    const { rows } = await db.query(
+      `SELECT code, name, quota_minutes, price_vnd, billing_cycle,
+              max_upload_mb, max_file_duration_minutes, enabled
+       FROM service_plans
+       WHERE code = $1`,
+      [planName],
+    );
+    return mergeRuntimePlanConfig(rows[0], fallback);
+  } catch (error) {
+    if (error.code === "42P01") {
+      return mergeRuntimePlanConfig(null, fallback);
+    }
+    throw error;
+  }
+}
+
+async function getRuntimePurchasedQuotaSeconds(
+  planName,
+  billingCycle,
+  db = pool,
+) {
+  const config = await getRuntimePlanConfig(planName, db);
+  return normalizeBillingCycle(billingCycle) === "yearly"
+    ? config.quotaSeconds * 12
+    : config.quotaSeconds;
+}
+
 async function getUserBilling(userId, db = pool) {
+  const [freeConfig, settings] = await Promise.all([
+    getRuntimePlanConfig("free", db),
+    getAdminSettings(db),
+  ]);
   await db.query(
     `UPDATE users
      SET plan = 'free',
@@ -120,7 +186,7 @@ async function getUserBilling(userId, db = pool) {
        AND plan <> 'free'
        AND plan_expires_at IS NOT NULL
        AND plan_expires_at <= NOW()`,
-    [userId, PLAN_CONFIG.free.quotaSeconds],
+    [userId, freeConfig.quotaSeconds],
   );
 
   const { rows } = await db.query(
@@ -133,7 +199,8 @@ async function getUserBilling(userId, db = pool) {
   if (!rows[0]) throw createHttpError(404, "Không tìm thấy người dùng");
 
   const planName = normalizePlan(rows[0].plan);
-  const config = getPlanConfig(planName);
+  const config = await getRuntimePlanConfig(planName, db);
+  const globalMaxFileSeconds = settings.max_file_duration_minutes * 60;
   return {
     userId,
     plan: planName,
@@ -149,9 +216,18 @@ async function getUserBilling(userId, db = pool) {
     cancelAtPeriodEnd: Boolean(rows[0].plan_cancel_at_period_end),
     cancellationRequestedAt: rows[0].plan_cancellation_requested_at,
     limits: {
-      maxUploadMb: Math.min(config.maxUploadMb, SYSTEM_MAX_UPLOAD_MB),
-      maxRecordSeconds: config.maxRecordSeconds,
-      maxFileSeconds: config.maxFileSeconds,
+      maxUploadMb: Math.min(
+        config.maxUploadMb,
+        settings.max_file_size_mb,
+        SYSTEM_MAX_UPLOAD_MB,
+      ),
+      maxRecordSeconds: Math.min(
+        config.maxRecordSeconds,
+        globalMaxFileSeconds,
+      ),
+      maxFileSeconds: Math.min(config.maxFileSeconds, globalMaxFileSeconds),
+      supportedFormats: settings.supported_formats,
+      supportedLanguages: settings.supported_languages,
     },
   };
 }
@@ -189,17 +265,48 @@ async function getTopUpCreditStatus(userId, db = pool) {
   };
 }
 
-async function getReservedSeconds(userId, excludeJobId = null, db = pool) {
+async function getReservedSeconds(
+  userId,
+  excludeJobId = null,
+  db = pool,
+  excludeBatchId = null,
+) {
   const values = [userId];
-  const excludeClause =
+  const excludeJobClause =
     excludeJobId === null || excludeJobId === undefined
       ? ""
-      : ` AND id <> $${values.push(excludeJobId)}`;
+      : ` AND job.id <> $${values.push(excludeJobId)}`;
+  const excludeBatchClause = excludeBatchId
+    ? ` AND batch.id::text <> $${values.push(String(excludeBatchId))}`
+    : "";
   const { rows } = await db.query(
-    `SELECT COALESCE(SUM(expected_duration_seconds), 0)::float AS reserved_seconds
-     FROM transcription_jobs
-     WHERE user_id = $1
-       AND status IN ('queued', 'processing')${excludeClause}`,
+    `WITH normal_reservations AS (
+       SELECT COALESCE(job.expected_duration_seconds, 0)::float AS seconds
+       FROM transcription_jobs job
+       WHERE job.user_id = $1
+         AND job.status IN ('queued', 'processing')
+         AND job.cancel_requested = FALSE
+         AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
+         ${excludeJobClause}
+     ),
+     multitrack_reservations AS (
+       SELECT COALESCE(MAX(job.expected_duration_seconds), 0)::float AS seconds
+       FROM transcription_batches batch
+       JOIN transcription_jobs job
+         ON job.payload->>'batchId' = batch.id::text
+        AND job.payload->>'batchKind' = 'multitrack'
+       WHERE batch.user_id = $1
+         AND batch.status IN ('queued', 'processing', 'merging')
+         AND job.cancel_requested = FALSE
+         ${excludeBatchClause}
+       GROUP BY batch.id
+     )
+     SELECT COALESCE(SUM(reservation.seconds), 0)::float AS reserved_seconds
+     FROM (
+       SELECT seconds FROM normal_reservations
+       UNION ALL
+       SELECT seconds FROM multitrack_reservations
+     ) reservation`,
     values,
   );
   return Math.max(0, Math.ceil(Number(rows[0]?.reserved_seconds || 0)));
@@ -207,12 +314,17 @@ async function getReservedSeconds(userId, excludeJobId = null, db = pool) {
 
 async function getQuotaStatus(
   userId,
-  { excludeJobId = null, db = pool } = {},
+  { excludeJobId = null, excludeBatchId = null, db = pool } = {},
 ) {
   const billing = await getUserBilling(userId, db);
   const usedSeconds = await getUsageSeconds(userId, db);
   const topUp = await getTopUpCreditStatus(userId, db);
-  const reservedSeconds = await getReservedSeconds(userId, excludeJobId, db);
+  const reservedSeconds = await getReservedSeconds(
+    userId,
+    excludeJobId,
+    db,
+    excludeBatchId,
+  );
   const baseRemainingSeconds = Math.max(0, billing.quotaSeconds - usedSeconds);
   const rawRemainingSeconds = baseRemainingSeconds + topUp.remainingSeconds;
   const remainingSeconds = Math.max(0, rawRemainingSeconds - reservedSeconds);
@@ -250,9 +362,13 @@ async function validateBeforeTranscription({
   file,
   source = "upload",
   expectedDurationSeconds = null,
+  reservationBatchId = null,
   db = pool,
 }) {
-  const quota = await getQuotaStatus(userId, { db });
+  const quota = await getQuotaStatus(userId, {
+    excludeBatchId: reservationBatchId,
+    db,
+  });
   await syncQuotaAlertState({ userId, quota, source, db });
   const fileSizeMb = file?.size ? file.size / 1024 / 1024 : 0;
   const expected =
@@ -304,9 +420,14 @@ async function validateAfterTranscription({
   durationSeconds,
   source = "upload",
   excludeJobId = null,
+  reservationBatchId = null,
   db = pool,
 }) {
-  const quota = await getQuotaStatus(userId, { excludeJobId, db });
+  const quota = await getQuotaStatus(userId, {
+    excludeJobId,
+    excludeBatchId: reservationBatchId,
+    db,
+  });
   const duration = Math.ceil(Number(durationSeconds || 0));
 
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -456,7 +577,14 @@ async function recordQuotaUsage({
 async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly") {
   const planName = normalizePlan(plan);
   const cleanBillingCycle = normalizeBillingCycle(billingCycle);
-  const quotaSeconds = getPurchasedQuotaSeconds(planName, cleanBillingCycle);
+  const config = await getRuntimePlanConfig(planName);
+  if (!config.enabled) {
+    throw createHttpError(400, "Gói cước này hiện không nhận đăng ký mới");
+  }
+  const quotaSeconds = await getRuntimePurchasedQuotaSeconds(
+    planName,
+    cleanBillingCycle,
+  );
   const expiresAt =
     planName === "free"
       ? null
@@ -492,6 +620,10 @@ module.exports = {
   normalizePlan,
   normalizeBillingCycle,
   getPurchasedQuotaSeconds,
+  getRuntimePlanConfig,
+  getRuntimePurchasedQuotaSeconds,
+  mergeRuntimePlanConfig,
+  getReservedSeconds,
   getTopUpCreditStatus,
   getQuotaStatus,
   recordQuotaUsage,

@@ -1,4 +1,5 @@
 import {
+  adminRequest,
   adminPublicRequest,
   clearAdminSession,
   getAdminSession,
@@ -16,6 +17,22 @@ export async function loginAdmin(email: string, password: string) {
   );
   saveAdminSession(session);
   return session;
+}
+
+export async function exchangeAdminSession(authToken: string) {
+  const session = await adminPublicRequest<AdminSession>(
+    "/api/admin/auth/exchange",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+  );
+  saveAdminSession(session);
+  return session;
+}
+
+export async function validateAdminSession() {
+  return adminRequest<{ user: AdminSession["user"] }>("/api/admin/auth/me");
 }
 
 export function logoutAdmin() {

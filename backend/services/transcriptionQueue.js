@@ -11,6 +11,14 @@ const {
 const { createProviderFileUrl } = require("./providerFileAccess");
 const { normalizeFilename } = require("./filenameEncoding");
 const { isInsideStaging } = require("./uploadStorage");
+const { resolveUserFolder } = require("./workspaceFolderService");
+const { deliverCustomerWebhook } = require("./customerWebhookService");
+const { finalizeMultitrackBatch } = require("./multitrackService");
+const { getAdminSettings } = require("./adminSettingsService");
+const {
+  hasSmtpConfig,
+  sendJobFailureAdminAlertEmail,
+} = require("./emailService");
 const {
   recordQuotaUsage,
   validateAfterTranscription,
@@ -60,6 +68,9 @@ let activeWorkers = 0;
 let workerStarted = false;
 let pollTimer = null;
 let cleanupTimer = null;
+let runtimeQueueConcurrency = QUEUE_CONCURRENCY;
+let queueSettingsReadAt = 0;
+let queueSettingsPromise = null;
 
 function createLeaseLostError(jobId) {
   const error = new Error(`Worker khong con quyen xu ly job ${jobId}`);
@@ -84,6 +95,12 @@ async function cleanupExpiredAudioFiles({
   resolveAudioPath = resolveStoredAudioPath,
   unlink = fs.promises.unlink,
   warn = (message) => console.warn(message),
+  retentionDays = {
+    free: FREE_RETENTION_DAYS,
+    standard: STANDARD_RETENTION_DAYS,
+    special: SPECIAL_RETENTION_DAYS,
+    business: BUSINESS_RETENTION_DAYS,
+  },
 } = {}) {
   const { rows } = await db.query(
     `WITH expired_audio AS (
@@ -111,10 +128,10 @@ async function cleanupExpiredAudioFiles({
      )
      SELECT audio_filename FROM cleared_audio`,
     [
-      FREE_RETENTION_DAYS,
-      STANDARD_RETENTION_DAYS,
-      SPECIAL_RETENTION_DAYS,
-      BUSINESS_RETENTION_DAYS,
+      retentionDays.free,
+      retentionDays.standard,
+      retentionDays.special,
+      retentionDays.business,
     ],
   );
   await Promise.all(
@@ -139,6 +156,57 @@ async function cleanupExpiredAudioFiles({
   return rows.length;
 }
 
+async function cleanupManagedStorage({ db = pool } = {}) {
+  const settings = await getAdminSettings(db);
+  const globalRetention = settings.data_retention_days;
+  const queueRetentionMs = settings.system_parameters.queue_retention_ms;
+  const deleteMediaImmediately =
+    settings.storage_policy === "delete_media_keep_transcript";
+  const retentionDays = {
+    free: deleteMediaImmediately
+      ? 0
+      : Math.min(FREE_RETENTION_DAYS, globalRetention),
+    standard: deleteMediaImmediately
+      ? 0
+      : Math.min(STANDARD_RETENTION_DAYS, globalRetention),
+    special: deleteMediaImmediately
+      ? 0
+      : Math.min(SPECIAL_RETENTION_DAYS, globalRetention),
+    business: deleteMediaImmediately
+      ? 0
+      : Math.min(BUSINESS_RETENTION_DAYS, globalRetention),
+  };
+  const deletedMedia = await cleanupExpiredAudioFiles({ db, retentionDays });
+  let deletedTranscripts = 0;
+  const deletedJobsResult = await db.query(
+    `DELETE FROM transcription_jobs job
+     USING transcriptions transcript
+     WHERE transcript.id = job.transcription_id
+       AND job.status IN ('completed', 'failed', 'cancelled')
+       AND COALESCE(job.completed_at, job.updated_at, job.created_at)
+           < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+       AND (job.status <> 'failed' OR transcript.audio_filename IS NULL)`,
+    [queueRetentionMs],
+  );
+
+  if (settings.storage_policy === "delete_all_after_retention") {
+    const result = await db.query(
+      `DELETE FROM transcriptions
+       WHERE status IN ('completed', 'failed', 'cancelled')
+         AND created_at < NOW() - ($1::integer * INTERVAL '1 day')
+       RETURNING id`,
+      [globalRetention],
+    );
+    deletedTranscripts = result.rowCount || result.rows.length;
+  }
+
+  return {
+    deletedMedia,
+    deletedJobs: deletedJobsResult.rowCount || 0,
+    deletedTranscripts,
+  };
+}
+
 function makeStoredFilename(filename) {
   const extension = path
     .extname(String(filename || ""))
@@ -157,6 +225,159 @@ function numberOrNull(value) {
     number <= MAX_REASONABLE_DURATION_SECONDS
     ? Math.ceil(number)
     : null;
+}
+
+function createAdminRetryError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function inferRetrySource(transcription) {
+  const filename = String(transcription?.filename || "").toLowerCase();
+  return filename.endsWith(".webm") || filename.startsWith("recording")
+    ? "recording"
+    : "upload";
+}
+
+function inferRetryAudioMode(transcription) {
+  const context =
+    `${transcription?.filename || ""} ${transcription?.error_message || ""}`.toLowerCase();
+  return /(bài hát|lời hát|vocal|karaoke|acapella|lyrics|song)/u.test(context)
+    ? "song"
+    : "speech";
+}
+
+function inferMimeType(filename) {
+  const extension = path.extname(String(filename || "")).toLowerCase();
+  return (
+    {
+      ".aac": "audio/aac",
+      ".flac": "audio/flac",
+      ".m4a": "audio/mp4",
+      ".mp3": "audio/mpeg",
+      ".mp4": "video/mp4",
+      ".mpeg": "video/mpeg",
+      ".mpga": "audio/mpeg",
+      ".ogg": "audio/ogg",
+      ".wav": "audio/wav",
+      ".webm": "audio/webm",
+    }[extension] || "application/octet-stream"
+  );
+}
+
+async function retryTranscriptionJobForAdmin(
+  transcriptionId,
+  {
+    db = pool,
+    resolveAudioPath = resolveStoredAudioPath,
+    accessAudio = (audioPath) =>
+      fs.promises.access(audioPath, fs.constants.R_OK),
+    loadSettings = getAdminSettings,
+  } = {},
+) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT t.*, q.id AS queue_job_id,
+              u.first_name, u.last_name, u.email
+       FROM transcriptions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN transcription_jobs q ON q.transcription_id = t.id
+       WHERE t.id = $1
+       FOR UPDATE OF t`,
+      [transcriptionId],
+    );
+    const transcription = rows[0];
+    if (!transcription) {
+      throw createAdminRetryError(404, "Không tìm thấy job");
+    }
+    if (transcription.status === "completed") {
+      throw createAdminRetryError(
+        400,
+        "Không thể chạy lại job đã hoàn thành",
+      );
+    }
+    if (!["failed", "cancelled"].includes(transcription.status)) {
+      throw createAdminRetryError(
+        409,
+        "Chỉ có thể chạy lại job lỗi hoặc đã hủy.",
+      );
+    }
+    if (!transcription.audio_filename) {
+      throw createAdminRetryError(
+        409,
+        "File nguồn đã hết thời gian lưu trữ. Người dùng cần tải lại file để chuyển đổi.",
+      );
+    }
+
+    try {
+      await accessAudio(resolveAudioPath(transcription.audio_filename));
+    } catch {
+      throw createAdminRetryError(
+        409,
+        "File nguồn đã hết thời gian lưu trữ hoặc không còn trên máy chủ. Người dùng cần tải lại file.",
+      );
+    }
+
+    const settings = await loadSettings(client);
+    const payload = {
+      mimeType: inferMimeType(transcription.filename),
+      adminRetryRecreated: !transcription.queue_job_id,
+    };
+    const queueJob = await client.query(
+      `INSERT INTO transcription_jobs (
+         user_id, transcription_id, status, progress, source, language, audio_mode,
+         translate_to, speaker_labels, expected_duration_seconds, payload, attempts,
+         max_attempts, cancel_requested, error_message, available_at, locked_at,
+         lock_token, started_at, completed_at, updated_at
+       )
+       VALUES (
+         $1, $2, 'queued', 0, $3, $4, $5, $6, FALSE, $7, $8::jsonb, 0, $9,
+         FALSE, NULL, NOW(), NULL, NULL, NULL, NULL, NOW()
+       )
+       ON CONFLICT (transcription_id) DO UPDATE
+       SET status = 'queued', progress = 0, attempts = 0,
+           max_attempts = EXCLUDED.max_attempts,
+           cancel_requested = FALSE, error_message = NULL,
+           available_at = NOW(), locked_at = NULL, lock_token = NULL,
+           started_at = NULL, completed_at = NULL, updated_at = NOW()
+       RETURNING id`,
+      [
+        transcription.user_id,
+        transcription.id,
+        inferRetrySource(transcription),
+        transcription.source_language || "auto",
+        inferRetryAudioMode(transcription),
+        normalizeQueueTranslationTarget(
+          transcription.translation_target_language,
+        ),
+        numberOrNull(transcription.duration),
+        JSON.stringify(payload),
+        settings.max_retry_attempts,
+      ],
+    );
+    const updated = await client.query(
+      `UPDATE transcriptions
+       SET status = 'queued', error_message = NULL, completed_at = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [transcription.id],
+    );
+    await client.query("COMMIT");
+    return {
+      transcription: updated.rows[0],
+      original: transcription,
+      queueJobId: queueJob.rows[0].id,
+      recreatedQueueJob: !transcription.queue_job_id,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function moveUploadedFile(file, storedPath) {
@@ -191,6 +412,12 @@ async function enqueueTranscriptionJob({
   expectedDurationSeconds = null,
   dictionaryKeywords = [],
   transcriptionSettings = {},
+  folderId = null,
+  batchId = null,
+  batchKind = null,
+  batchTrackIndex = null,
+  batchTrackName = null,
+  customerWebhook = null,
 }) {
   if (!file || (!file.buffer && !file.path)) {
     const error = new Error("Vui lòng chọn file âm thanh");
@@ -212,6 +439,8 @@ async function enqueueTranscriptionJob({
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [2026071601]);
     await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    const adminSettings = await getAdminSettings(client);
+    const folder = await resolveUserFolder(userId, folderId, { db: client });
     const pending = await client.query(
       `SELECT COUNT(*) FILTER (WHERE user_id = $1)::integer AS user_count,
               COUNT(*)::integer AS global_count
@@ -236,18 +465,21 @@ async function enqueueTranscriptionJob({
       file,
       source,
       expectedDurationSeconds: expectedDuration,
+      reservationBatchId:
+        batchKind === "multitrack" ? batchId : null,
       db: client,
     });
     const transcription = await client.query(
       `INSERT INTO transcriptions (
-         user_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
+         user_id, folder_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
          status, error_message
        )
-       VALUES ($1, $2, $3, NULL, NULL, '', '[]'::jsonb, $4, $5, NULL, NULL, NULL, 'queued', NULL)
-       RETURNING id, filename, file_size, audio_filename, created_at`,
+       VALUES ($1, $2, $3, $4, NULL, NULL, '', '[]'::jsonb, $5, $6, NULL, NULL, NULL, 'queued', NULL)
+       RETURNING id, folder_id, filename, file_size, audio_filename, created_at`,
       [
         userId,
+        folder.id,
         file.originalname || "audio.webm",
         Number(file.size || file.buffer?.length || 0),
         storedFilename,
@@ -258,9 +490,9 @@ async function enqueueTranscriptionJob({
     const job = await client.query(
       `INSERT INTO transcription_jobs (
          user_id, transcription_id, status, progress, source, language, audio_mode, translate_to,
-         speaker_labels, expected_duration_seconds, payload
+         speaker_labels, expected_duration_seconds, payload, max_attempts
        )
-       VALUES ($1, $2, 'queued', 0, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       VALUES ($1, $2, 'queued', 0, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
        RETURNING id, status, progress, expected_duration_seconds, created_at`,
       [
         userId,
@@ -275,19 +507,31 @@ async function enqueueTranscriptionJob({
           mimeType: file.mimetype || "audio/webm",
           dictionaryKeywords,
           transcriptionSettings,
+          batchId: batchId || null,
+          batchKind: batchKind || null,
+          batchTrackIndex:
+            batchTrackIndex === null || batchTrackIndex === undefined
+              ? null
+              : Number(batchTrackIndex),
+          batchTrackName: batchTrackName || null,
+          customerWebhook: customerWebhook || null,
         }),
+        adminSettings.max_retry_attempts,
       ],
     );
 
     await client.query("COMMIT");
-    kickTranscriptionWorker();
+    void kickTranscriptionWorker();
 
     return {
       jobId: job.rows[0].id,
       status: job.rows[0].status,
       progress: job.rows[0].progress,
       expectedDurationSeconds: job.rows[0].expected_duration_seconds,
-      transcription: transcription.rows[0],
+      transcription: {
+        ...transcription.rows[0],
+        folder_name: folder.name,
+      },
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -458,10 +702,11 @@ async function completeJob(job, result) {
     const updateTranscript = await client.query(
       `UPDATE transcriptions
        SET duration = $3, processing_seconds = $4, text = $5, words = $6::jsonb,
-            source_language = $7, translated_text = $8, translation_target_language = $9,
-            translation_provider = $10, translation_error = $11,
-            transcription_provider = $12, provider_request_id = $13,
-            provider_attempts = $14::jsonb,
+            segments = $7::jsonb,
+            source_language = $8, translated_text = $9, translation_target_language = $10,
+            translation_provider = $11, translation_error = $12,
+            transcription_provider = $13, provider_request_id = $14,
+            provider_attempts = $15::jsonb,
             status = 'completed', error_message = NULL
        WHERE id = $1 AND user_id = $2
        RETURNING id`,
@@ -472,6 +717,7 @@ async function completeJob(job, result) {
         result.processingSeconds,
         result.text,
         JSON.stringify(result.words || []),
+        JSON.stringify(result.segments || []),
         result.sourceLanguage,
         result.translation?.text || null,
         result.translation?.targetLanguage ||
@@ -487,13 +733,15 @@ async function completeJob(job, result) {
     if (updateTranscript.rowCount === 0) {
       throw new Error(`Khong tim thay transcript cua job ${job.id}`);
     }
-    await recordQuotaUsage({
-      userId: job.user_id,
-      transcriptionId: job.transcription_id,
-      durationSeconds: result.duration,
-      source: job.source,
-      db: client,
-    });
+    if (job.payload?.batchKind !== "multitrack") {
+      await recordQuotaUsage({
+        userId: job.user_id,
+        transcriptionId: job.transcription_id,
+        durationSeconds: result.duration,
+        source: job.source,
+        db: client,
+      });
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -528,7 +776,7 @@ async function failJob(job, error) {
       ],
     );
     if (retry.rowCount === 0) throw createLeaseLostError(job.id);
-    return;
+    return { terminal: false };
   }
 
   const client = await pool.connect();
@@ -556,12 +804,74 @@ async function failJob(job, error) {
       ],
     );
     await client.query("COMMIT");
+    return { terminal: true, message };
   } catch (failureError) {
     await client.query("ROLLBACK").catch(() => {});
     throw failureError;
   } finally {
     client.release();
   }
+}
+
+async function notifyCustomerWebhook(job, status, { result = null, error = null } = {}) {
+  const webhook = job.payload?.customerWebhook;
+  if (!webhook) return;
+  const event = `transcription.${status}`;
+  const payload = {
+    jobId: Number(job.id),
+    transcriptionId: Number(job.transcription_id),
+    status,
+    source: job.source,
+    language: result?.sourceLanguage || job.language || null,
+    duration: result?.duration || null,
+    provider: result?.provider || null,
+    text: result?.text || null,
+    translation: result?.translation || null,
+    error: error ? String(error.message || error).slice(0, 2000) : null,
+  };
+  try {
+    await deliverCustomerWebhook({ webhook, event, payload });
+  } catch (webhookError) {
+    console.error(
+      `Customer webhook for transcription job ${job.id} failed:`,
+      webhookError.message,
+    );
+  }
+}
+
+async function notifyAdminJobFailure(job, error) {
+  const settings = await getAdminSettings();
+  if (
+    !settings.notification_config.failure_alert_email ||
+    !hasSmtpConfig()
+  ) {
+    return;
+  }
+  const recipients = [
+    ...new Set(
+      String(
+        process.env.QUOTA_ALERT_ADMIN_EMAILS ||
+          process.env.ADMIN_EMAILS ||
+          "",
+      )
+        .split(",")
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  if (recipients.length === 0) return;
+  const userResult = await pool.query(
+    "SELECT first_name, last_name, email FROM users WHERE id = $1",
+    [job.user_id],
+  );
+  await sendJobFailureAdminAlertEmail({
+    recipients,
+    job: {
+      ...job,
+      error_message: String(error?.message || error || "Không rõ nguyên nhân"),
+    },
+    user: userResult.rows[0] || null,
+  });
 }
 
 async function processJob(job) {
@@ -616,6 +926,10 @@ async function processJob(job) {
           durationSeconds: expectedDuration || numberOrNull(duration),
           source: job.source,
           excludeJobId: job.id,
+          reservationBatchId:
+            job.payload?.batchKind === "multitrack"
+              ? job.payload?.batchId
+              : null,
         }),
     });
     result.duration =
@@ -643,6 +957,10 @@ async function processJob(job) {
 
     await setJobProgress(job, 90);
     await completeJob(job, result);
+    if (job.payload?.batchKind === "multitrack" && job.payload?.batchId) {
+      await finalizeMultitrackBatch(job.payload.batchId);
+    }
+    await notifyCustomerWebhook(job, "completed", { result });
   } catch (error) {
     if (isLeaseLostError(error)) {
       console.warn(`Transcription job ${job.id} stopped because its lease was lost.`);
@@ -650,7 +968,30 @@ async function processJob(job) {
     }
     console.error(`Transcription job ${job.id} failed:`, error.message);
     try {
-      await failJob(job, error);
+      const failure = await failJob(job, error);
+      if (
+        failure?.terminal &&
+        job.payload?.batchKind === "multitrack" &&
+        job.payload?.batchId
+      ) {
+        await finalizeMultitrackBatch(job.payload.batchId).catch(
+          (finalizeError) => {
+            console.error(
+              `Multitrack batch ${job.payload.batchId} finalize failed:`,
+              finalizeError.message,
+            );
+          },
+        );
+      }
+      if (failure?.terminal) {
+        await notifyCustomerWebhook(job, "failed", { error });
+        await notifyAdminJobFailure(job, error).catch((notificationError) => {
+          console.error(
+            `Admin failure email for job ${job.id} failed:`,
+            notificationError.message,
+          );
+        });
+      }
     } catch (failureError) {
       if (!isLeaseLostError(failureError)) throw failureError;
       console.warn(`Transcription job ${job.id} failure was ignored after lease loss.`);
@@ -700,9 +1041,30 @@ async function runOneWorker() {
   return true;
 }
 
-function kickTranscriptionWorker() {
+async function refreshQueueRuntimeSettings() {
+  if (Date.now() - queueSettingsReadAt < 15_000) return;
+  if (!queueSettingsPromise) {
+    queueSettingsPromise = getAdminSettings()
+      .then((settings) => {
+        runtimeQueueConcurrency =
+          settings.system_parameters.queue_concurrency;
+        queueSettingsReadAt = Date.now();
+      })
+      .catch((error) => {
+        console.error("Cannot refresh CMS queue settings:", error.message);
+        queueSettingsReadAt = Date.now();
+      })
+      .finally(() => {
+        queueSettingsPromise = null;
+      });
+  }
+  await queueSettingsPromise;
+}
+
+async function kickTranscriptionWorker() {
   if (!workerStarted || !isWorkerEnabled()) return;
-  while (activeWorkers < QUEUE_CONCURRENCY) {
+  await refreshQueueRuntimeSettings();
+  while (activeWorkers < runtimeQueueConcurrency) {
     activeWorkers += 1;
     let processedJob = false;
     void runOneWorker()
@@ -714,7 +1076,9 @@ function kickTranscriptionWorker() {
       })
       .finally(() => {
         activeWorkers -= 1;
-        if (processedJob) setImmediate(kickTranscriptionWorker);
+        if (processedJob) {
+          setImmediate(() => void kickTranscriptionWorker());
+        }
       });
   }
 }
@@ -723,19 +1087,20 @@ async function startTranscriptionWorker() {
   if (workerStarted || !isWorkerEnabled()) return;
   workerStarted = true;
   await recoverStaleJobs();
-  await cleanupExpiredAudioFiles();
-  kickTranscriptionWorker();
-  pollTimer = setInterval(kickTranscriptionWorker, QUEUE_POLL_MS);
+  await cleanupManagedStorage();
+  await refreshQueueRuntimeSettings();
+  void kickTranscriptionWorker();
+  pollTimer = setInterval(() => void kickTranscriptionWorker(), QUEUE_POLL_MS);
   pollTimer.unref?.();
   cleanupTimer = setInterval(
-    () => void cleanupExpiredAudioFiles().catch((error) => {
+    () => void cleanupManagedStorage().catch((error) => {
       console.error("Audio retention cleanup error:", error.message);
     }),
     6 * 60 * 60 * 1000,
   );
   cleanupTimer.unref?.();
   console.log(
-    `Transcription queue worker started (concurrency: ${QUEUE_CONCURRENCY})`,
+    `Transcription queue worker started (concurrency: ${runtimeQueueConcurrency})`,
   );
 }
 
@@ -756,9 +1121,11 @@ async function getTranscriptionJobForUser(jobId, userId) {
              transcript.translated_text, transcript.translation_target_language,
               transcript.translation_provider, transcript.translation_error,
               transcript.transcription_provider, transcript.provider_request_id,
-              transcript.provider_attempts
+              transcript.provider_attempts, transcript.folder_id,
+              folder.name AS folder_name
      FROM transcription_jobs job
      JOIN transcriptions transcript ON transcript.id = job.transcription_id
+     LEFT JOIN transcription_folders folder ON folder.id = transcript.folder_id
      WHERE job.id = $1 AND job.user_id = $2`,
     [jobId, userId],
   );
@@ -913,9 +1280,11 @@ async function cancelTranscriptionJobForUser(jobId, userId) {
 module.exports = {
   cancelTranscriptionJobForUser,
   cleanupExpiredAudioFiles,
+  cleanupManagedStorage,
   enqueueTranscriptionJob,
   getTranscriptionJobForUser,
   kickTranscriptionWorker,
+  retryTranscriptionJobForAdmin,
   startTranscriptionWorker,
   stopTranscriptionWorker,
 };

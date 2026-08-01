@@ -109,8 +109,35 @@ async function sendQuotaAdminAlertEmail({ recipients, alert }) {
   return true;
 }
 
+async function sendJobFailureAdminAlertEmail({ recipients, job, user }) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+  const name = `${user?.first_name || ""} ${user?.last_name || ""}`.trim();
+  const errorMessage = String(job.error_message || "Không rõ nguyên nhân");
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: recipients,
+    subject: `[Vbee CMS] Job #${job.id} xử lý thất bại`,
+    text: `Job #${job.id} đã thất bại\nNgười dùng: ${name || "-"} (${user?.email || "-"})\nTệp: ${job.filename || "-"}\nNguồn: ${job.source || "-"}\nLỗi: ${errorMessage}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#21104a;line-height:1.6">
+        <div style="border-top:6px solid #ef4444;border-radius:12px;border:1px solid #e5deef;padding:24px">
+          <p style="margin:0;color:#b91c1c;font-size:12px;font-weight:700;text-transform:uppercase">Vbee CMS</p>
+          <h2>Job #${escapeHtml(job.id)} xử lý thất bại</h2>
+          <p><strong>Người dùng:</strong> ${escapeHtml(name || "-")} (${escapeHtml(user?.email || "-")})</p>
+          <p><strong>Tệp:</strong> ${escapeHtml(job.filename || "-")}</p>
+          <p><strong>Nguồn:</strong> ${escapeHtml(job.source || "-")}</p>
+          <p><strong>Lỗi:</strong> ${escapeHtml(errorMessage)}</p>
+        </div>
+      </div>
+    `,
+  });
+  return true;
+}
+
 module.exports = {
   hasSmtpConfig,
   sendPasswordResetEmail,
+  sendJobFailureAdminAlertEmail,
   sendQuotaAdminAlertEmail,
 };

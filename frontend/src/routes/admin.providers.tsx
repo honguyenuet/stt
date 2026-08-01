@@ -38,6 +38,7 @@ function AdminProvidersPage() {
   const [providers, setProviders] = useState<SpeechProvider[]>([]);
   const [selected, setSelected] = useState<SpeechProvider | null>(null);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [routingRulesDraft, setRoutingRulesDraft] = useState("{}");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const canEdit = session ? canManageSettings(session.user.role) : false;
@@ -61,11 +62,21 @@ function AdminProvidersPage() {
   async function save() {
     if (!selected) return;
     try {
+      const routingRules = JSON.parse(routingRulesDraft || "{}");
+      if (
+        !routingRules ||
+        typeof routingRules !== "object" ||
+        Array.isArray(routingRules)
+      ) {
+        throw new Error("Quy tắc định tuyến phải là một JSON object");
+      }
       const updated = await saveSpeechProvider({
         ...selected,
+        routing_rules: routingRules,
         api_key: apiKeyDraft.trim() || undefined,
       });
       setApiKeyDraft("");
+      setRoutingRulesDraft(JSON.stringify(updated.routing_rules, null, 2));
       setSelected(updated);
       toast.success("Đã lưu nhà cung cấp");
       load();
@@ -162,6 +173,9 @@ function AdminProvidersPage() {
                         onClick={() => {
                           setSelected(provider);
                           setApiKeyDraft("");
+                          setRoutingRulesDraft(
+                            JSON.stringify(provider.routing_rules, null, 2),
+                          );
                         }}
                         className="font-black underline"
                       >
@@ -183,6 +197,7 @@ function AdminProvidersPage() {
                   onClick={() => {
                     setSelected(null);
                     setApiKeyDraft("");
+                    setRoutingRulesDraft("{}");
                   }}
                   className="rounded-md border px-3 py-2 text-sm font-bold"
                 >
@@ -235,17 +250,32 @@ function AdminProvidersPage() {
                   <option value="rule_based">Theo quy tắc</option>
                 </select>
               </label>
-              <Input
-                label="ID nhà cung cấp dự phòng"
-                value={selected.failover_provider_id || ""}
-                disabled={!canEdit}
-                onChange={(value) =>
-                  setSelected({
-                    ...selected,
-                    failover_provider_id: value || null,
-                  })
-                }
-              />
+              <label className="block text-sm font-bold">
+                Nhà cung cấp dự phòng
+                <select
+                  disabled={!canEdit}
+                  value={selected.failover_provider_id || ""}
+                  onChange={(event) =>
+                    setSelected({
+                      ...selected,
+                      failover_provider_id: event.target.value || null,
+                    })
+                  }
+                  className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
+                >
+                  <option value="">Tự động chọn</option>
+                  {providers
+                    .filter(
+                      (provider) =>
+                        provider.id !== selected.id && provider.enabled,
+                    )
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <NumberInput
                 label="Chi phí / phút (USD)"
                 value={selected.cost_per_minute_usd}
@@ -276,9 +306,23 @@ function AdminProvidersPage() {
                 />{" "}
                 Provider mặc định
               </label>
-              <pre className="md:col-span-2 overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
-                {JSON.stringify(selected.routing_rules, null, 2)}
-              </pre>
+              <label className="block text-sm font-bold md:col-span-2">
+                Quy tắc định tuyến JSON
+                <textarea
+                  disabled={!canEdit}
+                  value={routingRulesDraft}
+                  onChange={(event) =>
+                    setRoutingRulesDraft(event.target.value)
+                  }
+                  rows={6}
+                  spellCheck={false}
+                  className="mt-1 w-full rounded-md border border-[#e4ddcf] bg-[#fbf8ef] px-3 py-2 font-mono text-xs disabled:opacity-60"
+                />
+                <span className="mt-1 block text-xs font-normal text-[#756894]">
+                  Hỗ trợ: languages, audio_modes và priority. Ví dụ:{" "}
+                  {`{"languages":["vi"],"audio_modes":["speech"],"priority":200}`}
+                </span>
+              </label>
               <div className="flex gap-2 md:col-span-2">
                 <button
                   disabled={!canEdit}

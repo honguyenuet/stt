@@ -17,6 +17,7 @@ import {
   Heart,
   Home,
   Info,
+  Layers3,
   Languages,
   ListChecks,
   Mic,
@@ -44,10 +45,13 @@ import {
   formatMediaDuration as formatDuration,
   normalizeMediaDuration,
 } from "@/lib/format-duration";
+import {
+  normalizeEstimatedRemainingSeconds,
+  tickEstimatedRemainingSeconds,
+} from "@/lib/job-progress";
 import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
-  TRANSLATION_LANGUAGE_OPTIONS,
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
@@ -56,6 +60,7 @@ const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
   "http://localhost:3001";
 const MAX_MB = 200;
+const HISTORY_PREVIEW_LIMIT = 8;
 
 const FORMAT_TAGS = ["MP3", "WAV", "M4A", "OGG", "FLAC", "AAC", "MP4", "WEBM"];
 const UPLOAD_LANGUAGE_OPTIONS = SPEECH_LANGUAGE_OPTIONS.map((item) =>
@@ -84,7 +89,15 @@ interface HistoryItem {
   progress?: number;
   error_message?: string | null;
   job_id?: number | null;
+  folder_id?: number | null;
+  folder_name?: string | null;
   created_at: string;
+}
+
+interface WorkspaceFolder {
+  id: number;
+  name: string;
+  item_count: number;
 }
 
 type UploadStatus =
@@ -94,7 +107,7 @@ type UploadStatus =
   | "done"
   | "error"
   | "cancelled";
-type UploadMode = "single" | "multi" | "link";
+type UploadMode = "single" | "multi" | "multitrack" | "link";
 type AudioMode = "speech" | "song";
 type YoutubeMetadata = {
   url: string;
@@ -111,6 +124,23 @@ type ActionDialogState = {
   description: string;
   ctaLabel?: string;
   to?: string;
+};
+type ActiveJobStatus = "queued" | "processing";
+type JobStatusResponse = {
+  status: ActiveJobStatus | "completed" | "failed" | "cancelled";
+  progress?: number | null;
+  queue_position?: number | null;
+  estimated_remaining_seconds?: number | null;
+  duration?: number | string | null;
+  text?: string | null;
+  words?: Word[] | null;
+  source_language?: string | null;
+  translated_text?: string | null;
+  translation_target_language?: string | null;
+  translation_provider?: string | null;
+  translation_error?: string | null;
+  error_message?: string | null;
+  error?: string;
 };
 
 export const Route = createFileRoute("/upload")({
@@ -169,7 +199,7 @@ function UploadPage() {
   const { user, isLoading, token } = useAuth();
   const navigate = useNavigate();
 
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
   const [transcription, setTranscription] = useState("");
@@ -179,7 +209,7 @@ function UploadPage() {
   const [speakerLabels, setSpeakerLabels] = useState(false);
   const [audioMode, setAudioMode] = useState<AudioMode>("speech");
   const [transcriptionLanguage, setTranscriptionLanguage] = useState("auto");
-  const [translateTo, setTranslateTo] = useState("none");
+  const translateTo = "none";
   const [translation, setTranslation] = useState<TranslationResult | null>(
     null,
   );
@@ -197,7 +227,9 @@ function UploadPage() {
   const [linkMetadataLoading, setLinkMetadataLoading] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
-  const [activeFolder, setActiveFolder] = useState("Dự án mới");
+  const [folders, setFolders] = useState<WorkspaceFolder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+  const [folderError, setFolderError] = useState("");
   const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
     null,
   );
@@ -206,9 +238,15 @@ function UploadPage() {
   const [expectedDuration, setExpectedDuration] = useState<number | null>(null);
   const [queuedJob, setQueuedJob] = useState<{
     id: number;
+    status: ActiveJobStatus;
+    progress: number;
     queuePosition: number;
     estimatedRemainingSeconds: number | null;
   } | null>(null);
+  const [multitrackBatchId, setMultitrackBatchId] = useState<string | null>(
+    null,
+  );
+  const queuedJobId = queuedJob?.id;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -228,9 +266,44 @@ function UploadPage() {
   useEffect(() => {
     if (!user || !token) return;
     let active = true;
+    void fetch(`${API_URL}/api/transcribe/folders`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as {
+          folders?: WorkspaceFolder[];
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(body.folders)) {
+          throw new Error(body.error || "Không tải được thư mục");
+        }
+        if (!active) return;
+        setFolders(body.folders);
+        setActiveFolderId((current) => current ?? body.folders?.[0]?.id ?? null);
+        setFolderError("");
+      })
+      .catch((error) => {
+        if (active) {
+          setFolderError(
+            error instanceof Error ? error.message : "Không tải được thư mục",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, user]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    let active = true;
     const loadHistory = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/transcribe/history`, {
+        const folderQuery = activeFolderId
+          ? `?folderId=${encodeURIComponent(activeFolderId)}`
+          : "";
+        const response = await fetch(`${API_URL}/api/transcribe/history${folderQuery}`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
@@ -245,7 +318,7 @@ function UploadPage() {
           );
         }
         if (active) {
-          setHistory(body.slice(0, 4));
+          setHistory(body.slice(0, HISTORY_PREVIEW_LIMIT));
           setHistoryError("");
         }
       } catch (error) {
@@ -266,7 +339,226 @@ function UploadPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [historyRetryKey, user, token]);
+  }, [activeFolderId, historyRetryKey, user, token]);
+
+  useEffect(() => {
+    if (
+      !queuedJobId ||
+      !token ||
+      uploadStatus !== "queued" ||
+      multitrackBatchId
+    )
+      return;
+
+    let active = true;
+    let requestInFlight = false;
+    let controller: AbortController | null = null;
+
+    const loadJobStatus = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      controller = new AbortController();
+      try {
+        const response = await fetch(
+          `${API_URL}/api/transcribe/jobs/${queuedJobId}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+        const data = (await response.json().catch(() => ({}))) as
+          | JobStatusResponse
+          | { error?: string };
+        if (!response.ok || !("status" in data)) {
+          throw new Error(data.error || "Không cập nhật được trạng thái job");
+        }
+        if (!active) return;
+
+        if (data.status === "queued" || data.status === "processing") {
+          setQueuedJob((current) => {
+            if (!current || current.id !== queuedJobId) return current;
+            return {
+              ...current,
+              status: data.status,
+              progress: Math.max(0, Math.min(99, Number(data.progress || 0))),
+              queuePosition: Math.max(
+                1,
+                Number(data.queue_position || current.queuePosition || 1),
+              ),
+              estimatedRemainingSeconds:
+                normalizeEstimatedRemainingSeconds(
+                  data.estimated_remaining_seconds,
+                ) ?? current.estimatedRemainingSeconds,
+            };
+          });
+          setHistory((current) =>
+            current.map((item) =>
+              item.job_id === queuedJobId
+                ? {
+                    ...item,
+                    status: data.status,
+                    progress: Number(data.progress || 0),
+                  }
+                : item,
+            ),
+          );
+          return;
+        }
+
+        setQueuedJob(null);
+        setQuotaRefreshKey((key) => key + 1);
+        setHistoryRetryKey((key) => key + 1);
+
+        if (data.status === "completed") {
+          setTranscription(data.text || "");
+          setDuration(normalizeMediaDuration(data.duration));
+          setWords(Array.isArray(data.words) ? data.words : []);
+          setTranslation(
+            data.translated_text
+              ? {
+                  text: data.translated_text,
+                  sourceLanguage: data.source_language,
+                  targetLanguage: data.translation_target_language,
+                  provider: data.translation_provider,
+                }
+              : null,
+          );
+          setTranslationError(data.translation_error || "");
+          setUploadError("");
+          setUploadStatus("done");
+          return;
+        }
+
+        setUploadStatus(data.status === "cancelled" ? "cancelled" : "error");
+        setUploadError(
+          data.error_message ||
+            (data.status === "cancelled"
+              ? "Job đã được hủy."
+              : "Không thể xử lý file này."),
+        );
+      } catch (error) {
+        if (!active || controller?.signal.aborted) return;
+        setUploadError(
+          error instanceof Error
+            ? `${error.message}. Hệ thống sẽ tự thử lại.`
+            : "Không cập nhật được tiến độ. Hệ thống sẽ tự thử lại.",
+        );
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void loadJobStatus();
+    const pollTimer = window.setInterval(() => void loadJobStatus(), 5_000);
+    const countdownTimer = window.setInterval(() => {
+      setQueuedJob((current) =>
+        current?.id === queuedJobId
+          ? {
+              ...current,
+              estimatedRemainingSeconds: tickEstimatedRemainingSeconds(
+                current.estimatedRemainingSeconds,
+              ),
+            }
+          : current,
+      );
+    }, 1_000);
+
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(pollTimer);
+      window.clearInterval(countdownTimer);
+    };
+  }, [multitrackBatchId, queuedJobId, token, uploadStatus]);
+
+  useEffect(() => {
+    if (!multitrackBatchId || !token || uploadStatus !== "queued") return;
+    let active = true;
+    let requestInFlight = false;
+
+    const loadBatchStatus = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const response = await fetch(
+          `${API_URL}/api/transcribe/multitrack/${multitrackBatchId}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
+        const data = (await response.json().catch(() => ({}))) as {
+          status?:
+            | "queued"
+            | "processing"
+            | "merging"
+            | "completed"
+            | "failed"
+            | "cancelled";
+          progress?: number;
+          outputTranscriptionId?: number | null;
+          error?: string;
+        };
+        if (!response.ok || !data.status) {
+          throw new Error(data.error || "Không cập nhật được multitrack");
+        }
+        if (!active) return;
+        if (["queued", "processing", "merging"].includes(data.status)) {
+          setQueuedJob((current) =>
+            current
+              ? {
+                  ...current,
+                  status: data.status === "queued" ? "queued" : "processing",
+                  progress:
+                    data.status === "merging"
+                      ? 95
+                      : Math.max(0, Math.min(94, Number(data.progress || 0))),
+                }
+              : current,
+          );
+          return;
+        }
+
+        setQueuedJob(null);
+        setMultitrackBatchId(null);
+        setQuotaRefreshKey((key) => key + 1);
+        setHistoryRetryKey((key) => key + 1);
+        if (data.status === "completed" && data.outputTranscriptionId) {
+          setUploadStatus("done");
+          void navigate({
+            to: "/transcript/$id",
+            params: { id: String(data.outputTranscriptionId) },
+          });
+          return;
+        }
+        setUploadStatus(data.status === "cancelled" ? "cancelled" : "error");
+        setUploadError(
+          data.error ||
+            (data.status === "cancelled"
+              ? "Phiên multitrack đã được hủy."
+              : "Không thể hợp nhất các track."),
+        );
+      } catch (error) {
+        if (active) {
+          setUploadError(
+            error instanceof Error
+              ? `${error.message}. Hệ thống sẽ tự thử lại.`
+              : "Không cập nhật được multitrack. Hệ thống sẽ tự thử lại.",
+          );
+        }
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void loadBatchStatus();
+    const timer = window.setInterval(() => void loadBatchStatus(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [multitrackBatchId, navigate, token, uploadStatus]);
 
   useEffect(() => {
     const div = editRef.current;
@@ -308,11 +600,17 @@ function UploadPage() {
     return historySeconds + (normalizeMediaDuration(duration) ?? 0);
   }, [duration, history]);
 
-  const hasSelectedSource = Boolean(uploadFile || youtubeMetadata);
+  const activeFolderName =
+    folders.find((folder) => folder.id === activeFolderId)?.name ?? "Dự án mới";
+  const hasSelectedSource = Boolean(uploadFiles.length || youtubeMetadata);
   const selectedFilename =
-    uploadFile?.name ?? youtubeMetadata?.filename ?? "transcript";
+    uploadFiles.length > 1
+      ? `${uploadFiles.length} file: ${uploadFiles.map((file) => file.name).join(", ")}`
+      : uploadFiles[0]?.name ?? youtubeMetadata?.filename ?? "transcript";
   const selectedFileSize =
-    uploadFile?.size ?? youtubeMetadata?.approximateBytes ?? undefined;
+    uploadFiles.length > 0
+      ? uploadFiles.reduce((total, file) => total + file.size, 0)
+      : youtubeMetadata?.approximateBytes ?? undefined;
 
   const normalizedExpectedDuration = normalizeMediaDuration(expectedDuration);
   const pendingUploadSeconds =
@@ -354,16 +652,32 @@ function UploadPage() {
     activeIdxRef.current = newIdx;
   }
 
-  async function handleFileSelect(file: File) {
-    if (!/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name)) {
+  async function handleFileSelect(selected: File[]) {
+    const files =
+      uploadMode === "multi"
+        ? selected.slice(0, 8)
+        : uploadMode === "multitrack"
+          ? selected.slice(0, 5)
+          : selected.slice(0, 1);
+    if (!files.length) return;
+    if (
+      files.some(
+        (file) => !/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name),
+      )
+    ) {
       setUploadError(
-        "Định dạng không hỗ trợ. Dùng MP3, WAV, M4A, OGG, FLAC, AAC",
+        "Định dạng không hỗ trợ. Dùng MP3, WAV, M4A, OGG, FLAC, AAC, MP4 hoặc WEBM.",
       );
       return;
     }
     const maxMb = quota?.limits.maxUploadMb ?? MAX_MB;
-    if (file.size > maxMb * 1024 * 1024) {
-      setUploadError(`File quá lớn cho gói hiện tại (tối đa ${maxMb}MB)`);
+    const oversized = files.find(
+      (file) => file.size > maxMb * 1024 * 1024,
+    );
+    if (oversized) {
+      setUploadError(
+        `${oversized.name} quá lớn cho gói hiện tại (tối đa ${maxMb}MB/file)`,
+      );
       return;
     }
     if (quota?.isLimitReached) {
@@ -372,24 +686,33 @@ function UploadPage() {
       );
       return;
     }
-    const duration = await readMediaDuration(file);
-    if (duration && quota) {
-      if (duration > quota.limits.maxFileSeconds) {
+    const durations = await Promise.all(files.map(readMediaDuration));
+    if (quota) {
+      const overDurationIndex = durations.findIndex(
+        (value) => value && value > quota.limits.maxFileSeconds,
+      );
+      if (overDurationIndex >= 0) {
         setUploadError(
-          `File vượt giới hạn ${formatQuotaTime(quota.limits.maxFileSeconds)} của gói ${quota.label}`,
+          `${files[overDurationIndex].name} vượt giới hạn ${formatQuotaTime(quota.limits.maxFileSeconds)} của gói ${quota.label}`,
         );
         return;
       }
-      if (duration > quota.remainingSeconds) {
+      const totalSeconds = durations.reduce(
+        (total, value) => total + (value || 0),
+        0,
+      );
+      if (totalSeconds > quota.remainingSeconds) {
         setUploadError(
-          `Quota còn lại không đủ. Còn ${formatQuotaTime(quota.remainingSeconds)}, file khoảng ${formatQuotaTime(duration)}.`,
+          `Quota còn lại không đủ. Còn ${formatQuotaTime(quota.remainingSeconds)}, các track khoảng ${formatQuotaTime(totalSeconds)}.`,
         );
         return;
       }
     }
-    setUploadFile(file);
+    setUploadFiles(files);
     setYoutubeMetadata(null);
-    setExpectedDuration(duration);
+    setExpectedDuration(
+      durations.reduce((total, value) => total + (value || 0), 0) || null,
+    );
     setUploadStatus("idle");
     setUploadError("");
     setTranscription("");
@@ -402,31 +725,65 @@ function UploadPage() {
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) void handleFileSelect(file);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) void handleFileSelect(files);
   }
 
   async function handleUpload() {
-    if (!uploadFile && !youtubeMetadata) return;
+    if (!uploadFiles.length && !youtubeMetadata) return;
+    if (
+      (uploadMode === "multi" || uploadMode === "multitrack") &&
+      uploadFiles.length < 2
+    ) {
+      setUploadError(
+        uploadMode === "multitrack"
+          ? "Multitrack cần ít nhất 2 file của cùng một phiên ghi."
+          : "Chế độ nhiều file cần chọn ít nhất 2 file.",
+      );
+      return;
+    }
     setUploadStatus("uploading");
     setUploadError("");
     try {
       let res: Response;
-      if (uploadFile) {
+      if (uploadFiles.length) {
         const formData = new FormData();
-        formData.append("audio", uploadFile);
+        uploadFiles.forEach((file) => formData.append("audio", file));
         formData.append("speakerLabels", String(speakerLabels));
         formData.append("source", "upload");
         formData.append("audioMode", audioMode);
         formData.append("language", transcriptionLanguage);
         formData.append("translateTo", translateTo);
+        if (uploadMode === "multitrack") {
+          formData.append(
+            "trackNames",
+            JSON.stringify(
+              uploadFiles.map((file) =>
+                file.name.replace(/\.[^.]+$/, "").slice(0, 100),
+              ),
+            ),
+          );
+          formData.append(
+            "sessionName",
+            `${uploadFiles[0].name.replace(/\.[^.]+$/, "")} - Multitrack.mp3`,
+          );
+        }
+        if (activeFolderId) {
+          formData.append("folderId", String(activeFolderId));
+        }
         if (normalizedExpectedDuration) {
           formData.append(
             "expectedDuration",
             String(normalizedExpectedDuration),
           );
         }
-        res = await fetch(`${API_URL}/api/transcribe`, {
+        const endpoint =
+          uploadMode === "multitrack"
+            ? `${API_URL}/api/transcribe/multitrack`
+            : uploadFiles.length > 1
+              ? `${API_URL}/api/transcribe/batch`
+              : `${API_URL}/api/transcribe`;
+        res = await fetch(endpoint, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: formData,
@@ -445,11 +802,13 @@ function UploadPage() {
             audioMode,
             language: transcriptionLanguage,
             translateTo,
+            folderId: activeFolderId,
           }),
         });
       }
       const data = (await res.json()) as {
         id?: number;
+        batchId?: string;
         jobId?: number;
         status?: "queued" | "processing" | "completed" | "failed";
         progress?: number;
@@ -462,6 +821,18 @@ function UploadPage() {
         createdAt?: string;
         quota?: QuotaStatus;
         message?: string;
+        jobs?: Array<{
+          id: number;
+          jobId: number;
+          status: "queued" | "processing";
+          progress: number;
+          expectedDurationSeconds?: number;
+          filename: string;
+          createdAt?: string;
+          folderId?: number;
+          folderName?: string;
+        }>;
+        rejected?: Array<{ filename: string; error: string }>;
       };
       if (!res.ok) {
         if (data.quota) setQuota(data.quota);
@@ -470,33 +841,82 @@ function UploadPage() {
         return;
       }
       setUploadStatus("queued");
+      if (uploadMode === "multitrack" && data.batchId) {
+        setMultitrackBatchId(data.batchId);
+      } else {
+        setMultitrackBatchId(null);
+      }
+      if (data.rejected?.length) {
+        setUploadError(
+          `${data.rejected.length} file chưa được xếp hàng: ${data.rejected.map((item) => item.filename).join(", ")}`,
+        );
+      }
       if (data.jobId) {
         setQueuedJob({
           id: data.jobId,
+          status: data.status === "processing" ? "processing" : "queued",
+          progress: Number(data.progress || 0),
           queuePosition: data.queuePosition || 1,
-          estimatedRemainingSeconds: data.estimatedRemainingSeconds ?? null,
+          estimatedRemainingSeconds: normalizeEstimatedRemainingSeconds(
+            data.estimatedRemainingSeconds,
+          ),
         });
       }
       setQuotaRefreshKey((key) => key + 1);
       if (data.quota) setQuota(data.quota);
-      if (data.id) {
+      const acceptedJobs = data.jobs?.length
+        ? data.jobs
+        : data.id
+          ? [
+              {
+                id: data.id,
+                jobId: data.jobId ?? 0,
+                status: data.status === "processing" ? "processing" : "queued",
+                progress: data.progress ?? 0,
+                expectedDurationSeconds: data.expectedDurationSeconds,
+                filename: data.filename ?? selectedFilename,
+                createdAt: data.createdAt ?? new Date().toISOString(),
+              },
+            ]
+          : [];
+      if (
+        uploadMode === "multitrack" &&
+        acceptedJobs[0] &&
+        !data.jobId
+      ) {
+        setQueuedJob({
+          id: acceptedJobs[0].jobId,
+          status: "queued",
+          progress: 0,
+          queuePosition: 1,
+          estimatedRemainingSeconds: normalizedExpectedDuration,
+        });
+      }
+      if (acceptedJobs.length && uploadMode !== "multitrack") {
         setHistory((prev) =>
           [
-            {
-              id: data.id!,
-              filename: data.filename ?? selectedFilename,
-              file_size: data.fileSize ?? selectedFileSize,
+            ...acceptedJobs.map((job) => ({
+              id: job.id,
+              filename: job.filename,
+              file_size:
+                acceptedJobs.length === 1 ? selectedFileSize : undefined,
               duration:
-                normalizeMediaDuration(data.expectedDurationSeconds) ??
-                normalizedExpectedDuration,
+                normalizeMediaDuration(job.expectedDurationSeconds) ??
+                (acceptedJobs.length === 1
+                  ? normalizedExpectedDuration
+                  : null),
               text: "",
-              status: data.status ?? "queued",
-              progress: data.progress ?? 0,
-              job_id: data.jobId ?? null,
-              created_at: data.createdAt ?? new Date().toISOString(),
-            },
-            ...prev.filter((item) => item.id !== data.id),
-          ].slice(0, 4),
+              status: job.status,
+              progress: job.progress,
+              job_id: job.jobId || null,
+              folder_id: job.folderId ?? activeFolderId,
+              folder_name: job.folderName ?? activeFolderName,
+              created_at: job.createdAt ?? new Date().toISOString(),
+            })),
+            ...prev.filter(
+              (item) => !acceptedJobs.some((job) => job.id === item.id),
+            ),
+          ].slice(0, HISTORY_PREVIEW_LIMIT),
         );
       }
     } catch {
@@ -509,7 +929,9 @@ function UploadPage() {
     if (!queuedJob || !token) return;
     try {
       const response = await fetch(
-        `${API_URL}/api/transcribe/jobs/${queuedJob.id}`,
+        multitrackBatchId
+          ? `${API_URL}/api/transcribe/multitrack/${multitrackBatchId}`
+          : `${API_URL}/api/transcribe/jobs/${queuedJob.id}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
@@ -518,6 +940,7 @@ function UploadPage() {
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Không hủy được job");
       setQueuedJob(null);
+      setMultitrackBatchId(null);
       setUploadStatus("idle");
       setUploadError("");
       setQuotaRefreshKey((key) => key + 1);
@@ -603,7 +1026,7 @@ function UploadPage() {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
     setWords([]);
-    setUploadFile(null);
+    setUploadFiles([]);
     setYoutubeMetadata(null);
     setVideoLink("");
     setLinkRightsAccepted(false);
@@ -619,12 +1042,35 @@ function UploadPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function handleCreateFolder() {
+  async function handleCreateFolder() {
     const name = folderName.trim();
-    if (!name) return;
-    setActiveFolder(name);
-    setFolderOpen(false);
-    setFolderName("Dự án mới");
+    if (!name || !token) return;
+    setFolderError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: WorkspaceFolder;
+        error?: string;
+      };
+      if (!response.ok || !body.folder) {
+        throw new Error(body.error || "Không tạo được thư mục");
+      }
+      setFolders((current) => [...current, body.folder!]);
+      setActiveFolderId(body.folder.id);
+      setFolderOpen(false);
+      setFolderName("Dự án mới");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không tạo được thư mục",
+      );
+    }
   }
 
   async function handleVideoLink() {
@@ -705,11 +1151,12 @@ function UploadPage() {
       <input
         ref={fileInputRef}
         type="file"
+        multiple={uploadMode === "multi" || uploadMode === "multitrack"}
         accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.webm,audio/*"
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void handleFileSelect(f);
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) void handleFileSelect(files);
         }}
       />
 
@@ -780,10 +1227,23 @@ function UploadPage() {
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
                     Dự án mới
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <label className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
-                    {activeFolder}
-                  </div>
+                    <span className="sr-only">Chọn thư mục</span>
+                    <select
+                      value={activeFolderId ?? ""}
+                      onChange={(event) =>
+                        setActiveFolderId(Number(event.target.value) || null)
+                      }
+                      className="max-w-64 bg-transparent font-semibold outline-none"
+                    >
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
                   {history.length + (hasSelectedSource ? 1 : 0)} items
@@ -817,7 +1277,7 @@ function UploadPage() {
                         1. Chọn nguồn cần chuyển đổi
                       </p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Chọn file, nhiều track của cùng một buổi ghi, hoặc link
+                        Chọn một file, nhiều file độc lập hoặc link
                         video công khai.
                       </p>
                     </div>
@@ -971,7 +1431,7 @@ function UploadPage() {
                         />
                       </span>
                     </label>
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3">
                       <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
                         <span className="text-sm font-bold">
                           Ngôn ngữ âm thanh
@@ -995,27 +1455,11 @@ function UploadPage() {
                             : "Chọn đúng ngôn ngữ chính để tăng độ chính xác; chỉ dùng tự nhận diện khi chưa biết ngôn ngữ của file."}
                         </span>
                       </label>
-                      <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
-                        <span className="text-sm font-bold">
-                          Dịch văn bản sang
-                        </span>
-                        <select
-                          value={translateTo}
-                          onChange={(e) => setTranslateTo(e.target.value)}
-                          className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
-                        >
-                          {TRANSLATION_LANGUAGE_OPTIONS.map((item) => (
-                            <option key={item.value} value={item.value}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                     </div>
                     <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      Bản dịch được thực hiện sau khi transcript gốc đã tạo
-                      xong. Chọn “Tự nhận diện nhiều ngôn ngữ” khi một file có
-                      từ hai ngôn ngữ trở lên.
+                      Hệ thống tạo transcript gốc trước. Sau khi nghe lại và
+                      sửa nội dung, bạn có thể chọn ngôn ngữ dịch trong trình
+                      biên tập để bản dịch chính xác hơn.
                     </p>
                     <button
                       onClick={() => void handleUpload()}
@@ -1038,14 +1482,18 @@ function UploadPage() {
                       <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-primary/35 border-t-primary animate-spin" />
                       <div>
                         <p className="text-sm font-black text-primary">
-                          File đã được đưa vào hàng đợi xử lý
+                          {queuedJob?.status === "processing"
+                            ? "Vbee đang chuyển đổi file"
+                            : "File đã được đưa vào hàng đợi xử lý"}
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
                           Bạn có thể rời trang hoặc tiếp tục tải file khác. Vbee
                           sẽ xử lý nền và cập nhật transcript trong Lịch sử.
                         </p>
                         <p className="mt-2 text-xs font-bold text-primary">
-                          Vị trí hàng đợi: {queuedJob?.queuePosition || 1}.
+                          {queuedJob?.status === "processing"
+                            ? `Tiến độ: ${queuedJob.progress || 10}%.`
+                            : `Vị trí hàng đợi: ${queuedJob?.queuePosition || 1}.`}
                           {queuedJob?.estimatedRemainingSeconds
                             ? ` Dự kiến còn ${formatQuotaTime(queuedJob.estimatedRemainingSeconds)}.`
                             : " Đang tính thời gian chờ."}
@@ -1220,18 +1668,21 @@ function UploadPage() {
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
         <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Tạo folder mới</DialogTitle>
+            <DialogTitle>Tạo thư mục mới</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm leading-6 text-muted-foreground">
-              Folder sẽ được chọn cho workspace upload hiện tại.
+              Thư mục mới sẽ được chọn cho không gian tải file hiện tại.
             </p>
             <input
               value={folderName}
               onChange={(e) => setFolderName(e.target.value)}
               className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
-              placeholder="Tên folder"
+              placeholder="Tên thư mục"
             />
+            {folderError && (
+              <p className="text-sm text-destructive">{folderError}</p>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
@@ -1240,10 +1691,10 @@ function UploadPage() {
                 Hủy
               </button>
               <button
-                onClick={handleCreateFolder}
+                onClick={() => void handleCreateFolder()}
                 className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
               >
-                Tạo folder
+                Tạo thư mục
               </button>
             </div>
           </div>
@@ -1312,7 +1763,8 @@ function FileDropzone({
   onDragLeave: () => void;
   onDrop: (event: React.DragEvent<HTMLDivElement>) => void;
 }) {
-  const multiTrack = mode === "multi";
+  const multitrack = mode === "multitrack";
+  const multipleFiles = mode === "multi" || multitrack;
 
   return (
     <div
@@ -1327,18 +1779,24 @@ function FileDropzone({
       }`}
     >
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-        {multiTrack ? (
+        {multipleFiles ? (
           <AudioLines className="h-6 w-6" />
         ) : (
           <UploadCloud className="h-6 w-6" />
         )}
       </span>
       <p className="mt-3 text-base font-black text-foreground">
-        {multiTrack ? "Chọn track âm thanh đầu tiên" : "Kéo thả file vào đây"}
+        {multitrack
+          ? "Chọn từ 2 đến 5 track"
+          : multipleFiles
+            ? "Chọn từ 2 đến 8 file"
+            : "Kéo thả file vào đây"}
       </p>
       <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
-        {multiTrack
-          ? "Mỗi track cần thuộc cùng một phiên ghi và cùng mốc thời gian. Backend hiện xử lý từng file; hãy dùng bản mixdown hoặc tải các track lần lượt."
+        {multitrack
+          ? "Mỗi track phải là một micro/người nói của cùng phiên và bắt đầu cùng thời điểm."
+          : multipleFiles
+            ? "Mỗi file sẽ tạo một transcript riêng và cùng được lưu trong thư mục đã chọn."
           : "Hoặc nhấn để chọn một file audio/video từ máy tính."}
       </p>
       <button
@@ -1465,7 +1923,8 @@ function UploadRequirements({
   maxUploadMb: number;
   maxFileSeconds: number | null;
 }) {
-  const multiTrack = mode === "multi";
+  const multitrack = mode === "multitrack";
+  const multipleFiles = mode === "multi";
   const linkMode = mode === "link";
 
   return (
@@ -1499,14 +1958,22 @@ function UploadRequirements({
         </div>
         <div>
           <p className="text-xs font-black text-foreground">
-            {linkMode ? "Link" : multiTrack ? "Nhiều track" : "Bản dịch"}
+            {linkMode
+              ? "Link"
+              : multitrack
+                ? "Multitrack"
+                : multipleFiles
+                  ? "Nhiều file"
+                  : "Bản dịch"}
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {linkMode
               ? "Chỉ dùng link công khai, không cần đăng nhập."
-              : multiTrack
-                ? "Các track cần cùng phiên ghi và được tải lần lượt ở phiên bản hiện tại."
-                : "Bản dịch được tạo sau transcript gốc, không thay thế bản gốc."}
+              : multitrack
+                ? "Từ 2–5 track đồng bộ sẽ được ghép thành một transcript với tên người nói riêng."
+                : multipleFiles
+                ? "Tối đa 8 file mỗi lần; mỗi file tạo một transcript riêng trong cùng thư mục."
+                : "Bản dịch được tạo trong trình biên tập sau khi bạn kiểm tra transcript gốc."}
           </p>
         </div>
       </div>
@@ -1794,7 +2261,7 @@ function UploadWorkflowSteps({
   status: UploadStatus;
 }) {
   const steps = [
-    ["1", "Nguồn", "Chọn file, nhiều track hoặc link video"],
+    ["1", "Nguồn", "Chọn một file, nhiều file hoặc link video"],
     ["2", "Cài đặt", "Ngôn ngữ, người nói và thư mục"],
     ["3", "Chuyển đổi", "AI xử lý và tạo transcript"],
     ["4", "Biên tập", "Nghe lại, sửa, copy và xuất file"],
@@ -1862,15 +2329,21 @@ function UploadModeSelector({
   }> = [
     {
       value: "single",
-      title: "Một track",
+      title: "Một file",
       desc: "Một file audio/video chính",
       icon: FileAudio,
     },
     {
       value: "multi",
-      title: "Nhiều track",
-      desc: "Chuẩn bị cho nhiều người nói",
+      title: "Nhiều file",
+      desc: "Tạo transcript riêng cho từng file",
       icon: Mic,
+    },
+    {
+      value: "multitrack",
+      title: "Multitrack",
+      desc: "Ghép nhiều micro thành một transcript",
+      icon: Layers3,
     },
     {
       value: "link",
@@ -1881,7 +2354,7 @@ function UploadModeSelector({
   ];
 
   return (
-    <div className="grid gap-2 md:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       {modes.map((item) => {
         const Icon = item.icon;
         const active = mode === item.value;

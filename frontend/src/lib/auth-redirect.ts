@@ -10,6 +10,7 @@ const AUTH_REDIRECT_ALLOWLIST = new Set([
   "/pricing",
   "/custom-dictionary",
   "/transcription-settings",
+  "/onboarding",
   "/admin",
 ]);
 
@@ -21,6 +22,7 @@ export function getSafeAuthRedirect(from?: string | null) {
 
   const path = from.split("?")[0].split("#")[0];
   if (path.startsWith("/checkout/")) return from;
+  if (/^\/transcript\/\d+$/.test(path)) return from;
   if (AUTH_REDIRECT_ALLOWLIST.has(path)) return from;
   return DEFAULT_AUTH_REDIRECT;
 }

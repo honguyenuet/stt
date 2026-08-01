@@ -58,6 +58,7 @@ function AdminUsersPage() {
   const [quotaDelta, setQuotaDelta] = useState(30);
   const [quotaReason, setQuotaReason] = useState("");
   const [loading, setLoading] = useState(true);
+  const [savingAction, setSavingAction] = useState("");
   const [error, setError] = useState("");
 
   function load() {
@@ -73,7 +74,12 @@ function AdminUsersPage() {
 
   useEffect(load, [page, search, role, status]);
 
-  async function mutate(action: () => Promise<AdminUser>, success: string) {
+  async function mutate(
+    actionKey: string,
+    action: () => Promise<AdminUser>,
+    success: string,
+  ) {
+    setSavingAction(actionKey);
     try {
       const user = await action();
       setSelected(user);
@@ -81,11 +87,21 @@ function AdminUsersPage() {
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Thao tác thất bại");
+    } finally {
+      setSavingAction("");
     }
   }
 
   const mayMutate = session ? canMutate(session.user.role) : false;
   const mayChangeRole = session ? canManageSettings(session.user.role) : false;
+  const quotaError = selected
+    ? validateQuotaAdjustment(selected.quota_minutes, quotaDelta)
+    : "";
+  const canSaveQuota =
+    mayMutate &&
+    !savingAction &&
+    !quotaError &&
+    Boolean(quotaReason.trim());
 
   return (
     <div className="space-y-5">
@@ -247,8 +263,14 @@ function AdminUsersPage() {
               <div className="flex gap-2">
                 <button
                   disabled={!mayMutate || selected.status === "active"}
+                  title={
+                    selected.status === "active"
+                      ? "Tài khoản đang hoạt động"
+                      : "Mở lại quyền truy cập của tài khoản"
+                  }
                   onClick={() =>
                     void mutate(
+                      "status",
                       () => updateUserStatus(selected.id, "active"),
                       "Đã mở khóa user",
                     )
@@ -259,8 +281,14 @@ function AdminUsersPage() {
                 </button>
                 <button
                   disabled={!mayMutate || selected.status === "suspended"}
+                  title={
+                    selected.status === "suspended"
+                      ? "Tài khoản đã bị khóa"
+                      : "Khóa quyền truy cập của tài khoản"
+                  }
                   onClick={() =>
                     void mutate(
+                      "status",
                       () => updateUserStatus(selected.id, "suspended"),
                       "Đã khóa user",
                     )
@@ -272,10 +300,11 @@ function AdminUsersPage() {
               </div>
               <h3 className="font-black">Vai trò</h3>
               <select
-                disabled={!mayChangeRole}
+                disabled={!mayChangeRole || Boolean(savingAction)}
                 value={selected.role}
                 onChange={(e) =>
                   void mutate(
+                    "role",
                     () =>
                       updateUserRole(selected.id, e.target.value as AdminRole),
                     "Đã cập nhật role",
@@ -287,6 +316,9 @@ function AdminUsersPage() {
                 <option value="admin">Quản trị viên</option>
                 <option value="super_admin">Quản trị cao nhất</option>
               </select>
+              <p className="text-xs text-[#756894]">
+                Vai trò được lưu ngay sau khi bạn chọn.
+              </p>
             </div>
             <div className="space-y-3">
               <h3 className="font-black">Điều chỉnh quota</h3>
@@ -302,22 +334,28 @@ function AdminUsersPage() {
                 placeholder="Lý do điều chỉnh"
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
-              {validateQuotaAdjustment(selected.quota_minutes, quotaDelta) && (
+              {quotaError && (
                 <p className="text-sm text-red-700">
-                  {validateQuotaAdjustment(selected.quota_minutes, quotaDelta)}
+                  {quotaError}
+                </p>
+              )}
+              {!quotaReason.trim() && (
+                <p className="text-xs text-[#756894]">
+                  Nhập lý do điều chỉnh để bật nút lưu quota.
                 </p>
               )}
               <button
-                disabled={!mayMutate}
+                disabled={!canSaveQuota}
                 onClick={() =>
                   void mutate(
+                    "quota",
                     () => adjustUserQuota(selected.id, quotaDelta, quotaReason),
                     "Đã điều chỉnh quota",
                   )
                 }
                 className="w-full rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
               >
-                Lưu quota
+                {savingAction === "quota" ? "Đang lưu..." : "Lưu quota"}
               </button>
             </div>
           </div>

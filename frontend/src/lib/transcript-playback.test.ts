@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSeekTime,
+  confidenceLevel,
   findActiveWordIndex,
   formatPlaybackTime,
+  summarizeConfidence,
   replaceTimedWordInText,
 } from "./transcript-playback";
 
@@ -57,5 +59,27 @@ describe("transcript playback helpers", () => {
         "Hi",
       ),
     ).toBeNull();
+  });
+
+  it("classifies word confidence for the review heatmap", () => {
+    expect(confidenceLevel(null)).toBe("unknown");
+    expect(confidenceLevel(0.94)).toBe("high");
+    expect(confidenceLevel(0.76)).toBe("medium");
+    expect(confidenceLevel(0.49)).toBe("low");
+  });
+
+  it("summarizes only words that have valid confidence", () => {
+    expect(
+      summarizeConfidence([
+        { confidence: 0.9 },
+        { confidence: 0.7 },
+        { confidence: null },
+        { confidence: Number.NaN },
+      ]),
+    ).toEqual({
+      average: 0.8,
+      lowCount: 0,
+      reviewedCount: 2,
+    });
   });
 });

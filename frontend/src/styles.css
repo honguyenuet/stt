@@ -2,6 +2,12 @@
 @source "../src";
 @import "tw-animate-css";
 
+@layer components {
+  .onboarding-input {
+    @apply h-11 w-full rounded-md border border-[#e4ddcf] bg-white px-3 text-sm font-semibold text-[#21104a] outline-none transition placeholder:font-normal placeholder:text-[#9a8eac] focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -28,8 +34,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --font-display: "Be Vietnam Pro", system-ui, sans-serif;
-  --font-sans: "Be Vietnam Pro", system-ui, sans-serif;
+  --font-display: var(--vbee-font-display);
+  --font-content: var(--vbee-font-content);
+  --font-sans: var(--vbee-font-ui);
 
   /* Compact Vbee type scale: clear hierarchy without oversized dashboard copy. */
   --text-xs: 0.6875rem;
@@ -61,6 +68,15 @@
 
 :root {
   --radius: 0.5rem;
+  --vbee-font-ui: "Inter", "Plus Jakarta Sans", "Roboto", system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial,
+    sans-serif;
+  --vbee-font-content: "Be Vietnam Pro", "Lexend", "Inter",
+    "Plus Jakarta Sans", "Roboto", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --vbee-font-display: "Be Vietnam Pro", "Lexend", "Inter",
+    "Plus Jakarta Sans", "Roboto", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 
   /* Vbee palette: deep purple for identity, clean white for work, yellow for action. */
   --background: #ffffff;
@@ -103,7 +119,7 @@
     min-width: 320px;
     background-color: var(--color-background);
     color: var(--color-foreground);
-    font-family: var(--font-sans);
+    font-family: var(--vbee-font-ui);
     font-size: 13px;
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
@@ -112,11 +128,32 @@
     text-rendering: auto;
   }
 
+  nav,
+  button,
   input,
   textarea,
   select,
-  button {
-    font-family: inherit;
+  table,
+  [role="menu"],
+  [role="menubar"],
+  [role="dialog"] {
+    font-family: var(--vbee-font-ui);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--vbee-font-display);
+  }
+
+  article,
+  blockquote,
+  [contenteditable="true"],
+  [data-typography="content"] {
+    font-family: var(--vbee-font-content);
   }
 
   button,
@@ -187,7 +224,15 @@
   box-shadow: var(--shadow-soft);
 }
 @utility font-display {
-  font-family: var(--font-display);
+  font-family: var(--vbee-font-display);
+}
+
+@utility font-content {
+  font-family: var(--vbee-font-content);
+}
+
+@utility font-ui {
+  font-family: var(--vbee-font-ui);
 }
 
 @utility vbee-page-band {

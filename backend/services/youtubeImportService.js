@@ -13,6 +13,10 @@ const YOUTUBE_HOSTS = new Set([
   "music.youtube.com",
   "youtu.be",
 ]);
+const YOUTUBE_ANONYMOUS_PLAYER_CLIENTS = new Set([
+  "android_vr",
+  "web_embedded",
+]);
 
 function positiveInt(name, fallback) {
   const parsed = Number.parseInt(process.env[name] || "", 10);
@@ -86,7 +90,38 @@ function getYoutubeDl() {
   return youtubeDlPackage.create(customPath);
 }
 
-function youtubeRuntimeFlags() {
+function youtubeErrorDetail(error) {
+  return `${error?.stderr || ""}\n${error?.message || ""}`
+    .replace(/[’‘]/g, "'")
+    .toLowerCase();
+}
+
+function isYoutubeVerificationError(error) {
+  const detail = youtubeErrorDetail(error);
+  return (
+    detail.includes("confirm you're not a bot") ||
+    detail.includes("confirm you are not a bot")
+  );
+}
+
+function getYoutubeAttemptProfiles() {
+  if (String(process.env.YOUTUBE_COOKIES_FILE || "").trim()) {
+    return [null];
+  }
+
+  const configured =
+    process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS === undefined
+      ? "android_vr"
+      : process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS;
+  const fallbackClients = String(configured || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => YOUTUBE_ANONYMOUS_PLAYER_CLIENTS.has(value));
+
+  return [null, ...new Set(fallbackClients)];
+}
+
+function youtubeRuntimeFlags(playerClient = null) {
   const flags = {
     jsRuntimes: `node:${process.execPath}`,
   };
@@ -100,7 +135,36 @@ function youtubeRuntimeFlags() {
     }
     flags.cookies = cookiesFile;
   }
+  if (playerClient && !cookiesFile) {
+    flags.extractorArgs = `youtube:player_client=${playerClient}`;
+  }
   return flags;
+}
+
+async function runYoutubeDlWithFallback(operation, { beforeRetry } = {}) {
+  const profiles = getYoutubeAttemptProfiles();
+  let verificationError = null;
+
+  for (let index = 0; index < profiles.length; index += 1) {
+    const playerClient = profiles[index];
+    try {
+      return await operation(youtubeRuntimeFlags(playerClient));
+    } catch (error) {
+      if (index === 0 && !isYoutubeVerificationError(error)) {
+        throw error;
+      }
+      verificationError ||= error;
+      if (index >= profiles.length - 1) {
+        throw verificationError;
+      }
+      await beforeRetry?.();
+      console.warn(
+        `YouTube yêu cầu xác minh; thử lại bằng client công khai ${profiles[index + 1]}.`,
+      );
+    }
+  }
+
+  throw verificationError || new Error("Không thể kết nối YouTube.");
 }
 
 function sanitizeTitle(value) {
@@ -113,9 +177,15 @@ function sanitizeTitle(value) {
 
 function mapYoutubeError(error, fallback) {
   if (error?.statusCode) return error;
-  const detail = `${error?.stderr || ""}\n${error?.message || ""}`.toLowerCase();
+  const detail = youtubeErrorDetail(error);
   if (detail.includes("timed out") || detail.includes("timeout")) {
     return createHttpError(504, "YouTube phản hồi quá chậm. Vui lòng thử lại.");
+  }
+  if (isYoutubeVerificationError(error)) {
+    return createHttpError(
+      503,
+      "YouTube đang yêu cầu máy chủ xác minh. Vui lòng thử video công khai khác hoặc liên hệ quản trị viên.",
+    );
   }
   if (
     detail.includes("private video") ||
@@ -123,12 +193,6 @@ function mapYoutubeError(error, fallback) {
     detail.includes("age-restricted") ||
     detail.includes("members-only")
   ) {
-    if (detail.includes("confirm you’re not a bot")) {
-      return createHttpError(
-        503,
-        "YouTube đang yêu cầu máy chủ xác minh. Quản trị viên cần cấu hình xác thực YouTube.",
-      );
-    }
     return createHttpError(
       422,
       "Video riêng tư, giới hạn độ tuổi hoặc yêu cầu đăng nhập nên không thể xử lý.",
@@ -155,23 +219,25 @@ async function getYoutubeMetadata(inputUrl) {
   assertEnabled();
   const url = normalizeYoutubeUrl(inputUrl);
   try {
-    const raw = await getYoutubeDl()(
-      url,
-      {
-        ...youtubeRuntimeFlags(),
-        dumpSingleJson: true,
-        skipDownload: true,
-        noPlaylist: true,
-        format: "bestaudio[ext=m4a]/bestaudio/best",
-        noWarnings: true,
-        socketTimeout: 20,
-        retries: 1,
-      },
-      {
-        timeout: METADATA_TIMEOUT_MS,
-        maxBuffer: 12 * 1024 * 1024,
-        windowsHide: true,
-      },
+    const raw = await runYoutubeDlWithFallback((runtimeFlags) =>
+      getYoutubeDl()(
+        url,
+        {
+          ...runtimeFlags,
+          dumpSingleJson: true,
+          skipDownload: true,
+          noPlaylist: true,
+          format: "bestaudio[ext=m4a]/bestaudio/best",
+          noWarnings: true,
+          socketTimeout: 20,
+          retries: 1,
+        },
+        {
+          timeout: METADATA_TIMEOUT_MS,
+          maxBuffer: 12 * 1024 * 1024,
+          windowsHide: true,
+        },
+      ),
     );
     const metadata = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (!metadata || metadata._type === "playlist") {
@@ -235,27 +301,33 @@ async function downloadYoutubeAudio(inputUrl, { maxSizeMb, metadata: knownMetada
   const outputTemplate = path.join(STAGING_DIR, `${prefix}.%(ext)s`);
 
   try {
-    await getYoutubeDl()(
-      metadata.url,
+    await runYoutubeDlWithFallback(
+      (runtimeFlags) =>
+        getYoutubeDl()(
+          metadata.url,
+          {
+            ...runtimeFlags,
+            extractAudio: true,
+            audioFormat: "m4a",
+            audioQuality: "128K",
+            format: "bestaudio[ext=m4a]/bestaudio/best",
+            output: outputTemplate,
+            noPlaylist: true,
+            noWarnings: true,
+            noPart: true,
+            maxFilesize: `${Math.max(1, Math.floor(Number(maxSizeMb || 1)))}M`,
+            ffmpegLocation: ffmpegStaticPath,
+            socketTimeout: 30,
+            retries: 2,
+          },
+          {
+            timeout: DOWNLOAD_TIMEOUT_MS,
+            maxBuffer: 8 * 1024 * 1024,
+            windowsHide: true,
+          },
+        ),
       {
-        ...youtubeRuntimeFlags(),
-        extractAudio: true,
-        audioFormat: "m4a",
-        audioQuality: "128K",
-        format: "bestaudio[ext=m4a]/bestaudio/best",
-        output: outputTemplate,
-        noPlaylist: true,
-        noWarnings: true,
-        noPart: true,
-        maxFilesize: `${Math.max(1, Math.floor(Number(maxSizeMb || 1)))}M`,
-        ffmpegLocation: ffmpegStaticPath,
-        socketTimeout: 30,
-        retries: 2,
-      },
-      {
-        timeout: DOWNLOAD_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-        windowsHide: true,
+        beforeRetry: () => cleanupPrefix(prefix),
       },
     );
 
@@ -304,6 +376,9 @@ async function downloadYoutubeAudio(inputUrl, { maxSizeMb, metadata: knownMetada
 
 module.exports = {
   downloadYoutubeAudio,
+  getYoutubeAttemptProfiles,
   getYoutubeMetadata,
+  isYoutubeVerificationError,
   normalizeYoutubeUrl,
+  runYoutubeDlWithFallback,
 };

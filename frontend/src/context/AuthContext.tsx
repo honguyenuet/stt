@@ -35,7 +35,7 @@ async function fetchWithTimeout(
   }
 }
 
-interface User {
+export interface User {
   id: number;
   firstName: string;
   lastName: string;
@@ -44,13 +44,18 @@ interface User {
   plan?: PlanCode;
   role?: "user" | "support" | "finance" | "admin" | "super_admin";
   accountStatus?: "active" | "blocked";
+  organization?: string;
+  jobRole?: string;
+  usagePurpose?: string;
+  preferredLanguage?: string;
+  onboardingCompleted?: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   token: string | null;
-  setToken: (token: string) => void;
+  setToken: (token: string, user?: User) => Promise<boolean>;
   updateUser: (partial: Partial<User>) => void;
   logout: () => void;
 }
@@ -59,7 +64,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   token: null,
-  setToken: () => {},
+  setToken: async () => false,
   updateUser: () => {},
   logout: () => {},
 });
@@ -89,13 +94,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isDefinitiveAuthFailure(res.status)) {
         setTokenState(null);
         setUser(null);
-        return;
+        return false;
       }
       if (!res.ok) throw new Error("auth service temporarily unavailable");
       const data = (await res.json()) as User;
       setUser(data);
+      userRef.current = data;
+      return true;
     } catch {
       // Keep the current session during timeouts and temporary 5xx responses.
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -147,9 +155,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return refreshInFlight.current;
   }, []);
 
-  function setToken(newToken: string) {
+  async function setToken(newToken: string, sessionUser?: User) {
     setTokenState(newToken);
-    void fetchUser(newToken);
+    tokenRef.current = newToken;
+    if (sessionUser) {
+      setUser(sessionUser);
+      userRef.current = sessionUser;
+      setIsLoading(false);
+      return true;
+    }
+    return fetchUser(newToken);
   }
 
   function updateUser(partial: Partial<User>) {

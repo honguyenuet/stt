@@ -31,12 +31,18 @@ const {
 const { publicApiLimiter } = require("../middleware/security");
 const { IS_PRODUCTION } = require("../config/security");
 const { writeSecurityAudit } = require("../services/securityAuditService");
+const {
+  protectCustomerWebhook,
+} = require("../services/customerWebhookService");
 
 const router = express.Router();
 
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
-  return quota.limits.maxUploadMb;
+  return {
+    maxSizeMb: quota.limits.maxUploadMb,
+    supportedFormats: quota.limits.supportedFormats,
+  };
 });
 const SYNC_API_MAX_MB = Math.max(
   1,
@@ -175,6 +181,10 @@ router.post(
       const dictionaryKeywords = parseDictionaryKeywords(
         userSettings.customDictionary,
       );
+      const customerWebhook = protectCustomerWebhook({
+        url: req.body.callbackUrl,
+        secret: req.body.callbackSecret,
+      });
 
       await validateBeforeTranscription({
         userId: req.user.id,
@@ -184,6 +194,7 @@ router.post(
       });
 
       const useQueue =
+        Boolean(customerWebhook) ||
         !ALLOW_SYNC_PUBLIC_API ||
         req.body.async === "true" ||
         req.body.async === true ||
@@ -201,6 +212,7 @@ router.post(
           speakerLabels:
             req.body.speakerLabels === "true" || req.body.speakerLabels === true,
           expectedDurationSeconds,
+          customerWebhook,
         });
         const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
         const quota = await getQuotaStatus(req.user.id);

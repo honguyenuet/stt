@@ -171,6 +171,10 @@ function AdminSettingsPage() {
                 rows={6}
                 className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 font-mono text-xs disabled:opacity-60"
               />
+              <span className="mt-1 block text-xs font-normal text-[#756894]">
+                queue_concurrency là số job xử lý đồng thời;
+                queue_retention_ms là thời gian giữ bản ghi job đã kết thúc.
+              </span>
             </label>
             <label className="block text-sm font-bold md:col-span-2">
               Cấu hình thông báo JSON

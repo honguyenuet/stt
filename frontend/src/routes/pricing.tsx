@@ -54,6 +54,11 @@ type Plan = {
   highlight?: boolean;
   cta: string;
   features: string[];
+  enabled?: boolean;
+  quotaSeconds?: number;
+  maxUploadMb?: number;
+  maxRecordSeconds?: number;
+  maxFileSeconds?: number;
 };
 
 type TopUp = {
@@ -73,6 +78,21 @@ function formatVnd(value: number | null | undefined) {
 function formatQuotaHours(seconds: number, yearly: boolean) {
   const hours = Math.round(seconds / 3600);
   return `${hours} giờ${yearly ? "/năm" : ""}`;
+}
+
+function formatLimitSeconds(seconds: number | undefined) {
+  if (!Number.isFinite(seconds)) return "Theo gói hiện tại";
+  const minutes = Math.round(Number(seconds) / 60);
+  return minutes >= 60 && minutes % 60 === 0
+    ? `${minutes / 60} giờ`
+    : `${minutes} phút`;
+}
+
+function formatUploadLimit(megabytes: number | undefined) {
+  if (!Number.isFinite(megabytes)) return "Theo gói hiện tại";
+  return Number(megabytes) >= 1024
+    ? `${Number(megabytes) / 1024}GB`
+    : `${megabytes}MB`;
 }
 
 export const Route = createFileRoute("/pricing")({
@@ -582,11 +602,27 @@ function PricingPage() {
       );
       const cycle = catalogPlan?.[billing];
       return cycle
-        ? {
-            ...plan,
-            price: formatVnd(cycle.price),
-            minutes: formatQuotaHours(cycle.quotaSeconds, billing === "yearly"),
-          }
+          ? {
+              ...plan,
+              name: catalogPlan.label,
+              enabled: catalogPlan.enabled,
+              quotaSeconds: cycle.quotaSeconds,
+              maxUploadMb: catalogPlan.limits.maxUploadMb,
+              maxRecordSeconds: catalogPlan.limits.maxRecordSeconds,
+              maxFileSeconds: catalogPlan.limits.maxFileSeconds,
+              price: formatVnd(cycle.price),
+              minutes: formatQuotaHours(
+                cycle.quotaSeconds,
+                billing === "yearly",
+              ),
+              features: [
+                `${formatQuotaHours(cycle.quotaSeconds, billing === "yearly")} xử lý${billing === "monthly" ? " mỗi tháng" : ""}`,
+                `Tải file tối đa ${formatUploadLimit(catalogPlan.limits.maxUploadMb)}`,
+                `File dài tối đa ${formatLimitSeconds(catalogPlan.limits.maxFileSeconds)}`,
+                `Ghi âm tối đa ${formatLimitSeconds(catalogPlan.limits.maxRecordSeconds)}`,
+                ...plan.features.slice(4),
+              ],
+            }
         : plan;
     });
   }, [billing, catalog]);
@@ -684,6 +720,10 @@ function PricingPage() {
 
   async function handleSelectPlan(plan: Plan) {
     setPlanMessage("");
+    if (plan.enabled === false) {
+      setPlanMessage("Gói này đang tạm ngừng nhận đăng ký mới.");
+      return;
+    }
 
     if (!user || !token) {
       if (
@@ -1060,14 +1100,20 @@ function PlanCards({
 
               <button
                 onClick={() => onSelectPlan(plan)}
-                disabled={upgradingPlan === plan.name}
+                disabled={
+                  upgradingPlan === plan.name || plan.enabled === false
+                }
                 className={`mt-6 w-full rounded-full px-5 py-3 text-sm font-black transition ${
                   plan.highlight
                     ? "bg-[#ffcb05] text-[#21104a] hover:bg-[#ffd842]"
                     : "bg-[#21104a] text-white hover:bg-[#30116b]"
                 } disabled:cursor-not-allowed disabled:opacity-65`}
               >
-                {upgradingPlan === plan.name ? "Đang nâng cấp..." : plan.cta}
+                {plan.enabled === false
+                  ? "Tạm ngừng đăng ký"
+                  : upgradingPlan === plan.name
+                    ? "Đang nâng cấp..."
+                    : plan.cta}
               </button>
 
               <div className="mt-6 space-y-3">
@@ -1275,18 +1321,33 @@ function CompareTable({
   plans: Plan[];
 }) {
   const [showAllFeatures, setShowAllFeatures] = useState(false);
-  const yearlyMultiplier = billing === "yearly";
+  const planByCode = new Map(plans.map((plan) => [plan.code, plan]));
 
   const getDisplayRows = featureGroups.map((group) => ({
     ...group,
     rows: group.rows.map((row) => {
-      if (!yearlyMultiplier || row.feature !== "Thời lượng xử lý") return row;
+      const resolve = (code: PlanCode, fallback: CompareValue) => {
+        const plan = planByCode.get(code);
+        if (!plan) return fallback;
+        if (row.feature === "Thời lượng xử lý") {
+          return `${plan.minutes}${billing === "monthly" ? "/tháng" : ""}`;
+        }
+        if (row.feature === "Thời lượng tối đa mỗi file") {
+          return formatLimitSeconds(plan.maxFileSeconds);
+        }
+        if (row.feature === "Kích thước file tối đa") {
+          return formatUploadLimit(plan.maxUploadMb);
+        }
+        if (row.feature === "Thời lượng ghi âm tối đa") {
+          return formatLimitSeconds(plan.maxRecordSeconds);
+        }
+        return fallback;
+      };
       return {
         ...row,
-        free: "Theo giờ đã mua",
-        basic: "60 giờ/năm",
-        pro: "240 giờ/năm",
-        business: "480 giờ/năm",
+        basic: resolve("standard", row.basic),
+        pro: resolve("special", row.pro),
+        business: resolve("business", row.business),
       };
     }),
   }));
@@ -1327,14 +1388,20 @@ function CompareTable({
                   </th>
                   <PlanHead name="Theo lượt" price={`${hourlyPrice}/giờ`} />
                   <PlanHead
-                    name="Tiêu chuẩn"
+                    name={
+                      plans.find((plan) => plan.code === "standard")?.name ||
+                      "Tiêu chuẩn"
+                    }
                     price={
                       plans.find((plan) => plan.code === "standard")?.price ||
                       "Liên hệ"
                     }
                   />
                   <PlanHead
-                    name="Đặc biệt"
+                    name={
+                      plans.find((plan) => plan.code === "special")?.name ||
+                      "Đặc biệt"
+                    }
                     price={
                       plans.find((plan) => plan.code === "special")?.price ||
                       "Liên hệ"
@@ -1342,7 +1409,10 @@ function CompareTable({
                     highlight
                   />
                   <PlanHead
-                    name="Chuyên nghiệp"
+                    name={
+                      plans.find((plan) => plan.code === "business")?.name ||
+                      "Chuyên nghiệp"
+                    }
                     price={
                       plans.find((plan) => plan.code === "business")?.price ||
                       "Liên hệ"

@@ -1,14 +1,18 @@
 const pool = require("../db");
+const { getAdminSettings } = require("./adminSettingsService");
 
 const SOCIAL_PROVIDERS = new Set(["google", "facebook", "apple"]);
 const USER_COLUMNS = `
   id, first_name, last_name, email, avatar, plan, auth_version,
-  role, account_status
+  role, account_status, organization, job_role, usage_purpose,
+  preferred_language, onboarding_completed_at
 `;
 const ACCOUNT_USER_COLUMNS = `
   account.id, account.first_name, account.last_name, account.email,
   account.avatar, account.plan, account.auth_version, account.role,
-  account.account_status
+  account.account_status, account.organization, account.job_role,
+  account.usage_purpose, account.preferred_language,
+  account.onboarding_completed_at
 `;
 
 function createSocialIdentityError(code, message, statusCode = 400) {
@@ -156,11 +160,13 @@ async function findOrCreateSocialUser({
       );
     }
 
+    const adminSettings = await getAdminSettings(client);
     const inserted = await client.query(
       `INSERT INTO users (
-         first_name, last_name, email, password, google_id, avatar
+         first_name, last_name, email, password, google_id, avatar,
+         quota_seconds
        )
-       VALUES ($1, $2, $3, NULL, $4, $5)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6)
        RETURNING ${USER_COLUMNS}`,
       [
         cleanName(firstName, "Người dùng"),
@@ -168,6 +174,7 @@ async function findOrCreateSocialUser({
         email,
         provider === "google" ? providerUserId : null,
         safeAvatar,
+        adminSettings.default_quota_minutes * 60,
       ],
     );
     user = inserted.rows[0];

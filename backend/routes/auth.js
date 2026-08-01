@@ -36,6 +36,7 @@ const {
   normalizeReferralCode,
   registerReferralForNewUser,
 } = require('../services/referralService');
+const { getAdminSettings } = require('../services/adminSettingsService');
 const {
   consumeOAuthState,
   createOAuthState,
@@ -44,6 +45,12 @@ const {
 const {
   findOrCreateSocialUser,
 } = require('../services/socialIdentityService');
+const {
+  completeOnboarding,
+} = require('../services/onboardingService');
+const {
+  executeOAuthCallback,
+} = require('../services/oauthCallbackService');
 const {
   createFacebookAuthorizationUrl,
   exchangeFacebookCode,
@@ -103,6 +110,11 @@ function normalizeUser(row) {
     plan: normalizePlan(row.plan),
     role: row.role || 'user',
     accountStatus: row.account_status || 'active',
+    organization: row.organization || '',
+    jobRole: row.job_role || '',
+    usagePurpose: row.usage_purpose || '',
+    preferredLanguage: row.preferred_language || 'vi',
+    onboardingCompleted: Boolean(row.onboarding_completed_at),
   };
 }
 
@@ -192,6 +204,17 @@ async function handleOAuthFailure({ provider, error, req, res }) {
   );
 }
 
+function executeProviderCallback({ provider, req, res, next, action }) {
+  return executeOAuthCallback(action, (error) =>
+    handleOAuthFailure({
+      provider,
+      error,
+      req,
+      res,
+    })
+  ).catch(next);
+}
+
 // GET /api/auth/google — khởi tạo OAuth với Google
 router.get('/google', oauthLimiter, (req, res, next) => {
   if (!passportConfig.hasGoogleOAuth) {
@@ -270,38 +293,44 @@ router.get(
       failureRedirect: `${FRONTEND_URL}/login?error=google_failed`,
     })(req, res, next);
   },
-  async (req, res) => {
-    try {
-      const referralCode = readCookie(req, OAUTH_REFERRAL_COOKIE);
-      res.clearCookie(OAUTH_REFERRAL_COOKIE, {
-        httpOnly: true,
-        secure: IS_PRODUCTION,
-        sameSite: 'lax',
-        path: '/',
-      });
-      const { googleId, email, emailVerified, firstName, lastName, photo } = req.user;
-      return completeOAuthLogin({
-        provider: 'google',
-        profile: {
-          providerUserId: googleId,
+  async (req, res, next) => {
+    return executeProviderCallback({
+      provider: 'google',
+      req,
+      res,
+      next,
+      action: async () => {
+        const referralCode = readCookie(req, OAUTH_REFERRAL_COOKIE);
+        res.clearCookie(OAUTH_REFERRAL_COOKIE, {
+          httpOnly: true,
+          secure: IS_PRODUCTION,
+          sameSite: 'lax',
+          path: '/',
+        });
+        const {
+          googleId,
           email,
           emailVerified,
           firstName,
           lastName,
-          avatar: photo,
-        },
-        referralCode,
-        req,
-        res,
-      });
-    } catch (error) {
-      return handleOAuthFailure({
-        provider: 'google',
-        error,
-        req,
-        res,
-      });
-    }
+          photo,
+        } = req.user;
+        return completeOAuthLogin({
+          provider: 'google',
+          profile: {
+            providerUserId: googleId,
+            email,
+            emailVerified,
+            firstName,
+            lastName,
+            avatar: photo,
+          },
+          referralCode,
+          req,
+          res,
+        });
+      },
+    });
   }
 );
 
@@ -329,43 +358,42 @@ router.get('/facebook', oauthLimiter, async (req, res) => {
 });
 
 // GET /api/auth/facebook/callback — Facebook trả authorization code.
-router.get('/facebook/callback', oauthLimiter, async (req, res) => {
-  try {
-    if (!hasFacebookOAuth()) {
-      const error = new Error('Facebook OAuth chưa được cấu hình.');
-      error.oauthCode = 'facebook_not_configured';
-      throw error;
-    }
-    if (req.query.error || !req.query.code) {
-      const error = new Error('Người dùng hủy hoặc Facebook từ chối đăng nhập.');
-      error.oauthCode = 'facebook_failed';
-      throw error;
-    }
-    const state = await consumeOAuthState({
-      provider: 'facebook',
-      state: String(req.query.state || ''),
-    });
-    if (!state) {
-      const error = new Error('Facebook OAuth state không hợp lệ.');
-      error.oauthCode = 'facebook_failed';
-      throw error;
-    }
-    const profile = await exchangeFacebookCode(req.query.code);
-    return completeOAuthLogin({
-      provider: 'facebook',
-      profile,
-      referralCode: state.referral_code,
-      req,
-      res,
-    });
-  } catch (error) {
-    return handleOAuthFailure({
-      provider: 'facebook',
-      error,
-      req,
-      res,
-    });
-  }
+router.get('/facebook/callback', oauthLimiter, async (req, res, next) => {
+  return executeProviderCallback({
+    provider: 'facebook',
+    req,
+    res,
+    next,
+    action: async () => {
+      if (!hasFacebookOAuth()) {
+        const error = new Error('Facebook OAuth chưa được cấu hình.');
+        error.oauthCode = 'facebook_not_configured';
+        throw error;
+      }
+      if (req.query.error || !req.query.code) {
+        const error = new Error('Người dùng hủy hoặc Facebook từ chối đăng nhập.');
+        error.oauthCode = 'facebook_failed';
+        throw error;
+      }
+      const state = await consumeOAuthState({
+        provider: 'facebook',
+        state: String(req.query.state || ''),
+      });
+      if (!state) {
+        const error = new Error('Facebook OAuth state không hợp lệ.');
+        error.oauthCode = 'facebook_failed';
+        throw error;
+      }
+      const profile = await exchangeFacebookCode(req.query.code);
+      return completeOAuthLogin({
+        provider: 'facebook',
+        profile,
+        referralCode: state.referral_code,
+        req,
+        res,
+      });
+    },
+  });
 });
 
 // GET /api/auth/apple — bắt đầu Sign in with Apple.
@@ -392,61 +420,60 @@ router.get('/apple', oauthLimiter, async (req, res) => {
 });
 
 // POST /api/auth/apple/callback — Apple dùng response_mode=form_post.
-router.post('/apple/callback', oauthLimiter, async (req, res) => {
-  try {
-    if (!hasAppleOAuth()) {
-      const error = new Error('Apple OAuth chưa được cấu hình.');
-      error.oauthCode = 'apple_not_configured';
-      throw error;
-    }
-    if (req.body.error || !req.body.code) {
-      const error = new Error('Người dùng hủy hoặc Apple từ chối đăng nhập.');
-      error.oauthCode = 'apple_failed';
-      throw error;
-    }
-    const state = await consumeOAuthState({
-      provider: 'apple',
-      state: String(req.body.state || ''),
-    });
-    if (!state?.nonce_hash) {
-      const error = new Error('Apple OAuth state không hợp lệ.');
-      error.oauthCode = 'apple_failed';
-      throw error;
-    }
-
-    const profile = await exchangeAppleCode(req.body.code);
-    assertAppleNonce(profile.nonce, state.nonce_hash, hashOAuthValue);
-    let firstName = '';
-    let lastName = '';
-    if (req.body.user) {
-      try {
-        const appleUser = JSON.parse(String(req.body.user));
-        firstName = appleUser.name?.firstName || '';
-        lastName = appleUser.name?.lastName || '';
-        if (!profile.email) profile.email = appleUser.email || '';
-      } catch {
-        // Apple chỉ gửi user object ở lần cấp quyền đầu tiên.
+router.post('/apple/callback', oauthLimiter, async (req, res, next) => {
+  return executeProviderCallback({
+    provider: 'apple',
+    req,
+    res,
+    next,
+    action: async () => {
+      if (!hasAppleOAuth()) {
+        const error = new Error('Apple OAuth chưa được cấu hình.');
+        error.oauthCode = 'apple_not_configured';
+        throw error;
       }
-    }
-    return completeOAuthLogin({
-      provider: 'apple',
-      profile: {
-        ...profile,
-        firstName,
-        lastName,
-      },
-      referralCode: state.referral_code,
-      req,
-      res,
-    });
-  } catch (error) {
-    return handleOAuthFailure({
-      provider: 'apple',
-      error,
-      req,
-      res,
-    });
-  }
+      if (req.body.error || !req.body.code) {
+        const error = new Error('Người dùng hủy hoặc Apple từ chối đăng nhập.');
+        error.oauthCode = 'apple_failed';
+        throw error;
+      }
+      const state = await consumeOAuthState({
+        provider: 'apple',
+        state: String(req.body.state || ''),
+      });
+      if (!state?.nonce_hash) {
+        const error = new Error('Apple OAuth state không hợp lệ.');
+        error.oauthCode = 'apple_failed';
+        throw error;
+      }
+
+      const profile = await exchangeAppleCode(req.body.code);
+      assertAppleNonce(profile.nonce, state.nonce_hash, hashOAuthValue);
+      let firstName = '';
+      let lastName = '';
+      if (req.body.user) {
+        try {
+          const appleUser = JSON.parse(String(req.body.user));
+          firstName = appleUser.name?.firstName || '';
+          lastName = appleUser.name?.lastName || '';
+          if (!profile.email) profile.email = appleUser.email || '';
+        } catch {
+          // Apple chỉ gửi user object ở lần cấp quyền đầu tiên.
+        }
+      }
+      return completeOAuthLogin({
+        provider: 'apple',
+        profile: {
+          ...profile,
+          firstName,
+          lastName,
+        },
+        referralCode: state.referral_code,
+        req,
+        res,
+      });
+    },
+  });
 });
 
 // POST /api/auth/register — đăng ký tài khoản mới bằng email/password
@@ -476,13 +503,21 @@ router.post('/register', requireTrustedOrigin, registrationLimiter, async (req, 
     }
 
     const hashedPassword = await bcrypt.hash(cleanPassword, 12);
+    const adminSettings = await getAdminSettings();
+    const defaultQuotaSeconds = adminSettings.default_quota_minutes * 60;
 
     const { rows } = await pool.query(
-      `INSERT INTO users (first_name, last_name, email, password)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (first_name, last_name, email, password, quota_seconds)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, first_name, last_name, email, avatar, plan, auth_version,
                  role, account_status`,
-      [cleanFirstName, cleanLastName, cleanEmail, hashedPassword]
+      [
+        cleanFirstName,
+        cleanLastName,
+        cleanEmail,
+        hashedPassword,
+        defaultQuotaSeconds,
+      ]
     );
 
     const user = rows[0];
@@ -542,7 +577,8 @@ router.post('/login', requireTrustedOrigin, loginLimiter, async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT id, first_name, last_name, email, password, avatar, plan,
-              auth_version, role, account_status
+              auth_version, role, account_status, organization, job_role,
+              usage_purpose, preferred_language, onboarding_completed_at
        FROM users WHERE LOWER(email) = LOWER($1)`,
       [email]
     );
@@ -772,7 +808,9 @@ router.post('/refresh', requireTrustedOrigin, refreshLimiter, async (req, res) =
       return res.status(401).json({ error: 'Phiên đăng nhập đã hết hạn' });
     }
     const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, email, avatar, plan, role, account_status
+      `SELECT id, first_name, last_name, email, avatar, plan, role, account_status,
+              organization, job_role, usage_purpose, preferred_language,
+              onboarding_completed_at
        FROM users WHERE id = $1`,
       [session.userId]
     );
@@ -794,6 +832,37 @@ router.post('/refresh', requireTrustedOrigin, refreshLimiter, async (req, res) =
 // GET /api/auth/me — lấy thông tin user hiện tại qua JWT
 router.get('/me', requireAuth, (req, res) => {
   return res.json(normalizeUser(req.user));
+});
+
+// PATCH /api/auth/onboarding - hoàn tất thiết lập không gian làm việc lần đầu.
+router.patch('/onboarding', requireAuth, async (req, res) => {
+  try {
+    const user = await completeOnboarding(pool, req.user.id, req.body || {});
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy người dùng' });
+    }
+    await writeSecurityAudit({
+      event: 'auth.onboarding_completed',
+      outcome: 'success',
+      req,
+      userId: req.user.id,
+      sessionId: req.auth?.sid,
+      metadata: {
+        jobRole: user.job_role,
+        usagePurpose: user.usage_purpose,
+        preferredLanguage: user.preferred_language,
+      },
+    });
+    return res.json(normalizeUser(user));
+  } catch (error) {
+    console.error('Complete onboarding error:', error);
+    return res.status(error.statusCode || 500).json({
+      error:
+        error.statusCode === 400
+          ? error.message
+          : 'Không lưu được thông tin thiết lập',
+    });
+  }
 });
 
 // POST /api/auth/logout — revoke this server-side session immediately.
@@ -923,7 +992,9 @@ router.patch('/profile', requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `UPDATE users SET first_name = $1, last_name = $2
        WHERE id = $3
-       RETURNING id, first_name, last_name, email, avatar, plan, role, account_status`,
+       RETURNING id, first_name, last_name, email, avatar, plan, role,
+         account_status, organization, job_role, usage_purpose,
+         preferred_language, onboarding_completed_at`,
       [cleanFirstName, cleanLastName, req.user.id]
     );
 
@@ -964,7 +1035,9 @@ router.post('/avatar', requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `UPDATE users SET avatar = $1
        WHERE id = $2
-       RETURNING id, first_name, last_name, email, avatar, plan, role, account_status`,
+       RETURNING id, first_name, last_name, email, avatar, plan, role,
+         account_status, organization, job_role, usage_purpose,
+         preferred_language, onboarding_completed_at`,
       [avatar, req.user.id]
     );
 

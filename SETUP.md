@@ -140,6 +140,11 @@ Giữ `VBEE_API_KEY_SCHEME` trống khi dùng header `X-API-Key`. Chế độ `a
 chọn provider đầu tiên đã có khóa hợp lệ và chuyển sang provider tiếp theo khi
 gặp lỗi hạ tầng, xác thực hoặc quota.
 
+Chế độ **Multitrack** nhận từ 2 đến 5 file micro đồng bộ, nhận dạng từng track
+trong hàng đợi rồi ghép thành một transcript. Quota chỉ giữ và trừ theo track
+dài nhất; tên file được dùng làm tên người nói ban đầu. Có thể chỉnh thời gian
+ghép audio bằng `MULTITRACK_MIX_TIMEOUT_MS` (mặc định 20 phút).
+
 Trong `backend/.env`, đặt:
 
 ```env
@@ -205,11 +210,12 @@ Trang Tải file hỗ trợ dán một link video YouTube, đọc metadata, ki�
 YOUTUBE_IMPORT_ENABLED=true
 YT_DLP_PATH=
 YOUTUBE_COOKIES_FILE=
+YOUTUBE_FALLBACK_PLAYER_CLIENTS=android_vr
 YOUTUBE_METADATA_TIMEOUT_MS=45000
 YOUTUBE_DOWNLOAD_TIMEOUT_MS=600000
 ```
 
-`npm install` tự cài `yt-dlp`. Máy chủ dùng Node làm JavaScript runtime và `ffmpeg-static` để trích audio. Nếu YouTube yêu cầu xác minh máy chủ, hãy xuất `cookies.txt` từ một tài khoản dịch vụ riêng, lưu ngoài repository với quyền đọc giới hạn cho tiến trình backend, rồi đặt đường dẫn tuyệt đối vào `YOUTUBE_COOKIES_FILE`. Không dùng cookies trình duyệt cá nhân và không commit file này lên Git.
+`npm install` tự cài `yt-dlp`. Máy chủ dùng Node làm JavaScript runtime và `ffmpeg-static` để trích audio. Khi YouTube yêu cầu xác minh với client mặc định, backend tự thử lại bằng client công khai trong `YOUTUBE_FALLBACK_PLAYER_CLIENTS`. Nếu YouTube vẫn yêu cầu xác minh, hãy xuất `cookies.txt` từ một tài khoản dịch vụ riêng, lưu ngoài repository với quyền đọc giới hạn cho tiến trình backend, rồi đặt đường dẫn tuyệt đối vào `YOUTUBE_COOKIES_FILE`. Không dùng cookies trình duyệt cá nhân và không commit file này lên Git.
 
 ### Dịch transcript sang ngôn ngữ khác
 
@@ -339,6 +345,7 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | DEEPGRAM_LANGUAGE | Mã ngôn ngữ Deepgram | vi |
 | YOUTUBE_IMPORT_ENABLED | Bật nhập một video YouTube từ URL | true |
 | YOUTUBE_COOKIES_FILE | Đường dẫn tuyệt đối đến cookies.txt của tài khoản dịch vụ khi YouTube yêu cầu xác minh | C:\\secrets\\youtube-cookies.txt |
+| YOUTUBE_FALLBACK_PLAYER_CLIENTS | Client công khai thử lại khi YouTube chặn yêu cầu mặc định; để trống để tắt | android_vr |
 | DEEPGRAM_DETECT_LANGUAGE | Tự phát hiện ngôn ngữ thay vì dùng DEEPGRAM_LANGUAGE | false |
 | TRANSLATION_PROVIDER | Provider dịch transcript | auto, google, libretranslate hoặc mymemory |
 | GOOGLE_TRANSLATE_API_URL | Endpoint Google Cloud Translation | https://translation.googleapis.com/language/translate/v2 |

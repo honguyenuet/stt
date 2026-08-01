@@ -15,7 +15,11 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
-import { logoutAdmin, readAdminSession } from "@/lib/admin/admin-auth";
+import {
+  logoutAdmin,
+  readAdminSession,
+  validateAdminSession,
+} from "@/lib/admin/admin-auth";
 import {
   jobStatusLabel,
   storageStatusLabel,
@@ -60,19 +64,43 @@ function AdminGuard({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AdminSession | null>(() =>
     readAdminSession(),
   );
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
+    let active = true;
     const current = readAdminSession();
-    setSession(current);
     if (!current) {
+      setChecking(false);
       void navigate({
         to: "/admin/login",
         search: { from: window.location.pathname },
       });
+      return () => {
+        active = false;
+      };
     }
+    void validateAdminSession()
+      .then(({ user }) => {
+        if (!active) return;
+        setSession({ ...current, user });
+      })
+      .catch(() => {
+        if (!active) return;
+        setSession(null);
+        void navigate({
+          to: "/admin/login",
+          search: { from: window.location.pathname },
+        });
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [navigate]);
 
-  if (!session) {
+  if (checking || !session) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#f7f4ec] text-[#21104a]">
         <div className="h-9 w-9 animate-spin rounded-full border-2 border-[#ffcb05] border-t-transparent" />

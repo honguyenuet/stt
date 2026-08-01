@@ -1,4 +1,4 @@
-import { adminRequest, buildQuery } from "./api-client";
+import { adminBlobRequest, adminRequest, buildQuery } from "./api-client";
 import type {
   ListFilesParams,
   ManagedFile,
@@ -21,6 +21,10 @@ export function listFiles(params: ListFilesParams) {
 
 export function getFileJobs(fileId: string) {
   return adminRequest<TranscriptionJob[]>(`/api/admin/files/${fileId}/jobs`);
+}
+
+export function getFileMedia(fileId: string) {
+  return adminBlobRequest(`/api/admin/files/${fileId}/media`);
 }
 
 export function markFileDeleted(fileId: string) {

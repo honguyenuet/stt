@@ -102,6 +102,12 @@ app.use((error, _req, res, next) => {
   if (error.type === "entity.too.large") {
     return res.status(413).json({ error: "Nội dung yêu cầu quá lớn" });
   }
+  if (Number.isInteger(error.statusCode) && error.statusCode >= 400) {
+    return res.status(error.statusCode).json({
+      error: error.message || "Yêu cầu không hợp lệ",
+      ...(error.details ? { details: error.details } : {}),
+    });
+  }
   console.error("Unhandled request error:", error.message);
   return res.status(500).json({ error: "Lỗi máy chủ" });
 });

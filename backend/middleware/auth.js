@@ -25,8 +25,10 @@ async function authenticate(req, res, next, optional) {
 
     const { rows } = await pool.query(
       `SELECT account.id, account.first_name, account.last_name, account.email,
-              account.avatar, account.plan, account.role, account.account_status,
-              account.auth_version
+              account.avatar, account.plan, account.role, account.admin_role,
+              account.account_status, account.status, account.auth_version,
+              account.organization, account.job_role, account.usage_purpose,
+              account.preferred_language, account.onboarding_completed_at
        FROM users account
        JOIN auth_refresh_tokens session
          ON session.id = $2 AND session.user_id = account.id
@@ -37,7 +39,10 @@ async function authenticate(req, res, next, optional) {
       [userId, sessionId, authVersion],
     );
     if (!rows[0]) throw new Error("Revoked or expired session");
-    if (rows[0].account_status !== "active") {
+    if (
+      rows[0].account_status !== "active" ||
+      rows[0].status !== "active"
+    ) {
       return res.status(403).json({ error: "Tài khoản đã bị khóa" });
     }
 

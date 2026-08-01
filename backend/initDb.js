@@ -141,6 +141,11 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_note TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS organization VARCHAR(160);`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS job_role VARCHAR(40);`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_purpose VARCHAR(40);`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(20) NOT NULL DEFAULT 'vi';`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMP WITH TIME ZONE;`);
   await pool.query(`
     UPDATE users
     SET admin_role = role
@@ -203,6 +208,25 @@ async function initDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_oauth_login_states_expiry ON oauth_login_states(expires_at, consumed_at);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS transcription_folders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(160) NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transcription_folders_user_name
+    ON transcription_folders(user_id, LOWER(name));
+  `);
+  await pool.query(`
+    INSERT INTO transcription_folders (user_id, name)
+    SELECT id, 'Dự án mới' FROM users
+    ON CONFLICT DO NOTHING;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS transcriptions (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -243,6 +267,9 @@ async function initDatabase() {
     `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS speaker_names JSONB DEFAULT '{}'::jsonb;`,
   );
   await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS folder_id BIGINT REFERENCES transcription_folders(id) ON DELETE SET NULL;`,
+  );
+  await pool.query(
     `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS audio_filename VARCHAR(255);`,
   );
   await pool.query(
@@ -278,6 +305,37 @@ async function initDatabase() {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_transcriptions_user_created ON transcriptions(user_id, created_at DESC);`,
   );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_transcriptions_folder_created ON transcriptions(folder_id, created_at DESC);`,
+  );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transcription_batches (
+      id UUID PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      folder_id BIGINT REFERENCES transcription_folders(id) ON DELETE SET NULL,
+      kind VARCHAR(30) NOT NULL DEFAULT 'multitrack',
+      name VARCHAR(255) NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'queued',
+      expected_tracks SMALLINT NOT NULL CHECK (expected_tracks BETWEEN 2 AND 5),
+      output_transcription_id INTEGER REFERENCES transcriptions(id) ON DELETE SET NULL,
+      error_message TEXT,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_transcription_batches_user_created
+    ON transcription_batches(user_id, created_at DESC);
+  `);
+  await pool.query(`
+    UPDATE transcriptions transcript
+    SET folder_id = folder.id
+    FROM transcription_folders folder
+    WHERE transcript.folder_id IS NULL
+      AND folder.user_id = transcript.user_id
+      AND LOWER(folder.name) = LOWER('Dự án mới');
+  `);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
   );
@@ -1054,7 +1112,7 @@ async function initDatabase() {
        ('free', 'Free', $1, 0, 'monthly', $2, $3),
        ('standard', 'Standard', CEIL($4::numeric / 60), $5, 'monthly', $6, CEIL($7::numeric / 60)),
        ('special', 'Special', CEIL($8::numeric / 60), $9, 'monthly', $10, CEIL($11::numeric / 60)),
-       ('business', 'Business', CEIL($12::numeric / 60), 0, 'custom', $13, CEIL($14::numeric / 60))
+       ('business', 'Business', CEIL($12::numeric / 60), $13, 'monthly', $14, CEIL($15::numeric / 60))
      ON CONFLICT (code) DO NOTHING`,
     [
       Math.ceil(FREE_PLAN_SECONDS / 60),
@@ -1071,8 +1129,26 @@ async function initDatabase() {
       Number.parseInt(process.env.SPECIAL_MAX_UPLOAD_MB || "1024", 10),
       Number.parseInt(process.env.SPECIAL_MAX_FILE_SECONDS || "14400", 10),
       Number.parseInt(process.env.BUSINESS_MONTHLY_SECONDS || "600000", 10),
+      Number.parseInt(process.env.BUSINESS_MONTHLY_PRICE_VND || "799000", 10),
       Number.parseInt(process.env.BUSINESS_MAX_UPLOAD_MB || "2048", 10),
       Number.parseInt(process.env.BUSINESS_MAX_FILE_SECONDS || "43200", 10),
+    ],
+  );
+  await pool.query(
+    `UPDATE service_plans
+     SET price_vnd = CASE code
+       WHEN 'standard' THEN $1
+       WHEN 'special' THEN $2
+       WHEN 'business' THEN $3
+       ELSE price_vnd
+     END,
+     updated_at = NOW()
+     WHERE code IN ('standard', 'special', 'business')
+       AND price_vnd <= 0`,
+    [
+      Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "150000", 10),
+      Number.parseInt(process.env.SPECIAL_MONTHLY_PRICE_VND || "449000", 10),
+      Number.parseInt(process.env.BUSINESS_MONTHLY_PRICE_VND || "799000", 10),
     ],
   );
 
@@ -1123,6 +1199,39 @@ async function initDatabase() {
       process.env.VBEE_API_BASE_URL || "https://uat-api.vbeelabs.ai",
       process.env.TRANSCRIPTION_PROVIDER === "vbee",
     ],
+  );
+  await pool.query(`
+    DO $$
+    DECLARE
+      selected_provider_id integer;
+      default_count integer;
+    BEGIN
+      SELECT COUNT(*)::integer INTO default_count
+      FROM stt_providers
+      WHERE enabled = TRUE AND is_default = TRUE;
+
+      IF default_count <> 1 THEN
+        SELECT id INTO selected_provider_id
+        FROM stt_providers
+        WHERE enabled = TRUE
+        ORDER BY
+          CASE WHEN is_default THEN 0 ELSE 1 END,
+          CASE WHEN api_key_encrypted IS NOT NULL THEN 0 ELSE 1 END,
+          id
+        LIMIT 1;
+
+        IF selected_provider_id IS NOT NULL THEN
+          UPDATE stt_providers
+          SET is_default = (id = selected_provider_id),
+              updated_at = NOW();
+        END IF;
+      END IF;
+    END $$;
+  `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_providers_one_default
+     ON stt_providers (is_default)
+     WHERE is_default = TRUE`,
   );
 
   const adminSeedEmail = String(process.env.ADMIN_SEED_EMAIL || "")

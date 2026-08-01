@@ -501,18 +501,6 @@ function Hero({ onStart }: { onStart: () => void }) {
                   ["00:04", "Hôm nay chúng ta tổng hợp tính năng chuyển giọng nói thành văn bản của Vbee."],
                   ["00:21", "Người dùng có thể tải file, ghi âm hoặc nói realtime."],
                   ["01:08", "Sau khi xử lý, transcript được lưu vào lịch sử để xuất file."],
-                  [
-                    "00:04",
-                    "Hôm nay chúng ta tổng hợp tính năng Vbee Speech to Text.",
-                  ],
-                  [
-                    "00:21",
-                    "Người dùng có thể tải file, ghi âm hoặc nói realtime.",
-                  ],
-                  [
-                    "01:08",
-                    "Sau khi xử lý, transcript được lưu vào lịch sử để xuất file.",
-                  ],
                 ].map(([time, text]) => (
                   <p
                     key={time}
@@ -872,12 +860,6 @@ function Footer() {
           ["Sản phẩm", ["Tải tệp lên", "Ghi âm", "Realtime", "Lịch sử"]],
           ["Hệ thống", ["API", "Quota", "Thanh toán", "Hỗ trợ"]],
           ["Liên hệ", ["contact@vbee.ai", "(+84) 249 999 3399", "Hà Nội, Việt Nam"]],
-          ["Sản phẩm", ["Upload", "Ghi âm", "Realtime", "History"]],
-          ["Hệ thống", ["API", "Quota", "Billing", "Support"]],
-          [
-            "Liên hệ",
-            ["contact@vbee.ai", "(+84) 249 999 3399", "Hà Nội, Việt Nam"],
-          ],
         ].map(([title, links]) => (
           <div key={String(title)}>
             <h3 className="text-sm font-black text-[#ffcb05]">{title}</h3>

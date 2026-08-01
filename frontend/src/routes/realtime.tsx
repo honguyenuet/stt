@@ -490,7 +490,10 @@ function RealtimePage() {
 
             <div className="mt-4 min-h-[260px] rounded-lg border border-border bg-[#fbf8ef] p-4">
               {liveText ? (
-                <p className="whitespace-pre-wrap text-base leading-8">
+                <p
+                  data-typography="content"
+                  className="whitespace-pre-wrap text-base leading-8"
+                >
                   {transcript}
                   {interim && (
                     <span className="text-muted-foreground"> {interim}</span>

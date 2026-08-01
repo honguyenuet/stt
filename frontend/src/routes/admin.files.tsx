@@ -17,6 +17,7 @@ import {
   formatFileSize,
 } from "@/lib/admin/formatters";
 import {
+  getFileMedia,
   getFileJobs,
   listFiles,
   markFileDeleted,
@@ -48,6 +49,9 @@ function AdminFilesPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ManagedFile | null>(null);
   const [relatedJobs, setRelatedJobs] = useState<TranscriptionJob[]>([]);
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaError, setMediaError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -100,16 +104,58 @@ function AdminFilesPage() {
     }
   }, [rows, selected]);
 
+  useEffect(() => {
+    let objectUrl = "";
+    let cancelled = false;
+    setMediaUrl("");
+    setMediaError("");
+
+    if (!selected?.has_audio_track) {
+      setMediaLoading(false);
+      return undefined;
+    }
+
+    setMediaLoading(true);
+    void getFileMedia(selected.file_id)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setMediaUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMediaError(
+            err instanceof Error ? err.message : "Không tải được media",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMediaLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [selected?.file_id, selected?.has_audio_track]);
+
   function openFile(file: ManagedFile) {
     setSelected(file);
-    void getFileJobs(file.file_id).then(setRelatedJobs);
+    setRelatedJobs([]);
+    void getFileJobs(file.file_id)
+      .then(setRelatedJobs)
+      .catch((err) =>
+        toast.error(
+          err instanceof Error ? err.message : "Không tải được job liên quan",
+        ),
+      );
   }
 
   async function deleteFile() {
     if (
       !selected ||
       !window.confirm(
-        "Xác nhận xóa file? V1 sẽ đánh dấu soft-delete nếu backend chưa hỗ trợ.",
+        "Xóa vĩnh viễn tệp, transcript và job liên quan? Số quota đã sử dụng sẽ không được hoàn lại.",
       )
     )
       return;
@@ -272,9 +318,21 @@ function AdminFilesPage() {
           <div className="grid gap-5 p-4 xl:grid-cols-2">
             <div className="space-y-3">
               {selected.file_type === "video" ? (
-                <video controls className="w-full rounded-md border bg-black" />
+                <video
+                  controls
+                  src={mediaUrl || undefined}
+                  className="w-full rounded-md border bg-black"
+                />
               ) : (
-                <audio controls className="w-full" />
+                <audio controls src={mediaUrl || undefined} className="w-full" />
+              )}
+              {mediaLoading && (
+                <p className="text-sm text-[#756894]">Đang tải media...</p>
+              )}
+              {mediaError && (
+                <p className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+                  {mediaError}
+                </p>
               )}
               <pre className="overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
                 {JSON.stringify(selected.metadata, null, 2)}

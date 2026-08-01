@@ -36,8 +36,19 @@ const {
 const { normalizeFilename } = require("../services/filenameEncoding");
 const {
   cleanupStagedFile,
+  cleanupStagedFiles,
   createPlanAwareMediaUpload,
 } = require("../services/uploadStorage");
+const {
+  createUserFolder,
+  listUserFolders,
+} = require("../services/workspaceFolderService");
+const {
+  MULTITRACK_MAX_TRACKS,
+  finalizeMultitrackBatch,
+  getMultitrackBatchForUser,
+  normalizeTrackName,
+} = require("../services/multitrackService");
 const {
   downloadYoutubeAudio,
   getYoutubeMetadata,
@@ -54,8 +65,22 @@ const router = express.Router();
 
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
-  return quota.limits.maxUploadMb;
+  return {
+    maxSizeMb: quota.limits.maxUploadMb,
+    supportedFormats: quota.limits.supportedFormats,
+  };
 });
+const uploadBatch = createPlanAwareMediaUpload(
+  async (req) => {
+    const quota = await getQuotaStatus(req.user.id);
+    return {
+      maxSizeMb: quota.limits.maxUploadMb,
+      supportedFormats: quota.limits.supportedFormats,
+    };
+  },
+  "audio",
+  { maxFiles: 8 },
+);
 const AUDIO_STREAM_TTL_SECONDS = Math.min(
   15 * 60,
   Math.max(
@@ -117,6 +142,28 @@ async function validateYoutubeMetadataForUser(userId, metadata) {
   });
   return quota;
 }
+
+router.get("/folders", requireAuth, async (req, res) => {
+  try {
+    const folders = await listUserFolders(req.user.id);
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ folders });
+  } catch (error) {
+    console.error("List transcription folders error:", error.message);
+    return res.status(500).json({ error: "Không tải được danh sách thư mục" });
+  }
+});
+
+router.post("/folders", requireAuth, async (req, res) => {
+  try {
+    const folder = await createUserFolder(req.user.id, req.body?.name);
+    return res.status(201).json({ folder });
+  } catch (error) {
+    return res
+      .status(error.statusCode || 500)
+      .json({ error: error.message || "Không tạo được thư mục" });
+  }
+});
 
 router.post(
   "/url/metadata",
@@ -190,6 +237,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       speakerLabels:
         req.body.speakerLabels === "true" || req.body.speakerLabels === true,
       expectedDurationSeconds,
+      folderId: req.body.folderId,
     });
     const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
     const quota = await getQuotaStatus(req.user.id);
@@ -314,6 +362,325 @@ router.get("/provider-files/:jobId", async (req, res) => {
   }
 });
 
+// POST /api/transcribe/batch — nhận nhiều file và tạo một transcript riêng cho mỗi file.
+router.post(
+  "/batch",
+  requireAuth,
+  uploadLimiter,
+  uploadBatch,
+  async (req, res) => {
+    const files = Array.isArray(req.files) ? req.files : [];
+    try {
+      if (files.length < 2) {
+        return res.status(400).json({
+          error: "Chế độ nhiều file cần ít nhất 2 file âm thanh",
+        });
+      }
+      await assertTranscriptionProviderReady();
+      const language =
+        req.body.language || req.body.transcriptionLanguage || "auto";
+      const audioMode =
+        req.body.audioMode === "song" || req.body.audioMode === "music"
+          ? "song"
+          : "speech";
+      const translateTo =
+        req.body.translateTo || req.body.targetLanguage || "";
+      const userSettings = await getUserSettings(req.user.id);
+      const dictionaryKeywords = parseDictionaryKeywords(
+        userSettings.customDictionary,
+      );
+      const batchId = crypto.randomUUID();
+      const accepted = [];
+      const rejected = [];
+
+      for (const file of files) {
+        try {
+          file.originalname = normalizeFilename(file.originalname);
+          const { durationSeconds: expectedDurationSeconds } =
+            await probeMediaFile(file);
+          const job = await enqueueTranscriptionJob({
+            userId: req.user.id,
+            file,
+            source: "upload",
+            language,
+            audioMode,
+            translateTo,
+            dictionaryKeywords,
+            transcriptionSettings: userSettings.transcriptionSettings,
+            speakerLabels:
+              req.body.speakerLabels === "true" ||
+              req.body.speakerLabels === true,
+            expectedDurationSeconds,
+            folderId: req.body.folderId,
+            batchId,
+          });
+          accepted.push({
+            id: job.transcription.id,
+            jobId: job.jobId,
+            status: job.status,
+            progress: job.progress,
+            expectedDurationSeconds: job.expectedDurationSeconds,
+            filename: job.transcription.filename,
+            folderId: job.transcription.folder_id,
+            folderName: job.transcription.folder_name,
+            createdAt: job.transcription.created_at,
+          });
+        } catch (error) {
+          rejected.push({
+            filename: normalizeFilename(file.originalname),
+            error: error.message || "Không xếp hàng được file",
+          });
+          await cleanupStagedFile(file);
+        }
+      }
+
+      if (accepted.length === 0) {
+        return res.status(422).json({
+          error: rejected[0]?.error || "Không có track nào được xếp hàng",
+          rejected,
+        });
+      }
+      const quota = await getQuotaStatus(req.user.id);
+      await writeSecurityAudit({
+        event: "transcription.batch_queued",
+        outcome: rejected.length ? "partial" : "accepted",
+        req,
+        userId: req.user.id,
+        metadata: {
+          batchId,
+          accepted: accepted.length,
+          rejected: rejected.length,
+        },
+      });
+      return res.status(rejected.length ? 207 : 202).json({
+        ...accepted[0],
+        batchId,
+        jobs: accepted,
+        rejected,
+        message: `${accepted.length} file đã được đưa vào hàng đợi.`,
+        quota,
+      });
+    } catch (error) {
+      console.error("Batch transcribe error:", error);
+      return res.status(error.statusCode || 500).json({
+        error: error.message || "Không tải được nhiều file",
+        quota: error.details?.quota,
+      });
+    } finally {
+      await cleanupStagedFiles(files);
+    }
+  },
+);
+
+// POST /api/transcribe/multitrack — nhiều micro của cùng một phiên, hợp nhất thành một transcript.
+router.post(
+  "/multitrack",
+  requireAuth,
+  uploadLimiter,
+  uploadBatch,
+  async (req, res) => {
+    const files = Array.isArray(req.files) ? req.files : [];
+    const acceptedJobs = [];
+    let batchId = null;
+    try {
+      if (files.length < 2 || files.length > MULTITRACK_MAX_TRACKS) {
+        return res.status(400).json({
+          error: `Multitrack cần từ 2 đến ${MULTITRACK_MAX_TRACKS} file của cùng một phiên ghi.`,
+        });
+      }
+      const pending = await pool.query(
+        `SELECT COUNT(*)::integer AS total
+         FROM transcription_jobs
+         WHERE user_id = $1
+           AND status IN ('queued', 'processing')
+           AND cancel_requested = FALSE`,
+        [req.user.id],
+      );
+      const maxPending = Number.parseInt(
+        process.env.MAX_PENDING_JOBS_PER_USER || "5",
+        10,
+      );
+      if (Number(pending.rows[0]?.total || 0) + files.length > maxPending) {
+        return res.status(429).json({
+          error: `Bạn cần còn ít nhất ${files.length} vị trí trống trong hàng đợi để xử lý multitrack.`,
+        });
+      }
+
+      await assertTranscriptionProviderReady();
+      const language =
+        req.body.language || req.body.transcriptionLanguage || "auto";
+      const userSettings = await getUserSettings(req.user.id);
+      const dictionaryKeywords = parseDictionaryKeywords(
+        userSettings.customDictionary,
+      );
+      let suppliedTrackNames = [];
+      try {
+        suppliedTrackNames = JSON.parse(req.body.trackNames || "[]");
+      } catch {
+        suppliedTrackNames = [];
+      }
+      const prepared = await Promise.all(
+        files.map(async (file, index) => {
+          file.originalname = normalizeFilename(file.originalname);
+          const { durationSeconds } = await probeMediaFile(file);
+          return {
+            file,
+            durationSeconds,
+            trackName: normalizeTrackName(
+              suppliedTrackNames[index] ||
+                path.basename(file.originalname, path.extname(file.originalname)),
+              index,
+            ),
+          };
+        }),
+      );
+
+      batchId = crypto.randomUUID();
+      const sessionName = String(req.body.sessionName || "")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .trim()
+        .slice(0, 220);
+      const outputName = (
+        sessionName ||
+        `${path.basename(files[0].originalname, path.extname(files[0].originalname))} - Multitrack.mp3`
+      ).slice(0, 255);
+      await pool.query(
+        `INSERT INTO transcription_batches (
+           id, user_id, kind, name, status, expected_tracks
+         )
+         VALUES ($1, $2, 'multitrack', $3, 'queued', $4)`,
+        [batchId, req.user.id, outputName, files.length],
+      );
+
+      for (let index = 0; index < prepared.length; index += 1) {
+        const item = prepared[index];
+        const job = await enqueueTranscriptionJob({
+          userId: req.user.id,
+          file: item.file,
+          source: "multitrack",
+          language,
+          audioMode: "speech",
+          translateTo: "",
+          dictionaryKeywords,
+          transcriptionSettings: userSettings.transcriptionSettings,
+          speakerLabels: false,
+          expectedDurationSeconds: item.durationSeconds,
+          folderId: req.body.folderId,
+          batchId,
+          batchKind: "multitrack",
+          batchTrackIndex: index,
+          batchTrackName: item.trackName,
+        });
+        acceptedJobs.push({
+          id: job.transcription.id,
+          jobId: job.jobId,
+          status: job.status,
+          progress: job.progress,
+          filename: job.transcription.filename,
+          trackName: item.trackName,
+        });
+      }
+      await pool.query(
+        `UPDATE transcription_batches
+         SET folder_id = $2, status = 'processing', updated_at = NOW()
+         WHERE id = $1`,
+        [batchId, acceptedJobs.length ? req.body.folderId || null : null],
+      );
+      return res.status(202).json({
+        batchId,
+        status: "processing",
+        progress: 0,
+        jobs: acceptedJobs,
+        message: `${files.length} track đang được nhận dạng và sẽ hợp nhất thành một transcript.`,
+      });
+    } catch (error) {
+      await Promise.all(
+        acceptedJobs.map((job) =>
+          cancelTranscriptionJobForUser(job.jobId, req.user.id).catch(() => {}),
+        ),
+      );
+      if (batchId) {
+        await pool
+          .query(
+            `UPDATE transcription_batches
+             SET status = 'failed', error_message = $2, completed_at = NOW(), updated_at = NOW()
+             WHERE id = $1`,
+            [batchId, String(error.message || "Không tạo được multitrack").slice(0, 2000)],
+          )
+          .catch(() => {});
+      }
+      console.error("Multitrack upload error:", error);
+      return res.status(error.statusCode || 500).json({
+        error: error.message || "Không tạo được phiên multitrack",
+      });
+    } finally {
+      await cleanupStagedFiles(files);
+    }
+  },
+);
+
+router.get("/multitrack/:batchId", requireAuth, async (req, res) => {
+  try {
+    const current = await getMultitrackBatchForUser(
+      req.params.batchId,
+      req.user.id,
+    );
+    if (!current) {
+      return res.status(404).json({ error: "Không tìm thấy phiên multitrack" });
+    }
+    if (["queued", "processing", "merging"].includes(current.status)) {
+      await finalizeMultitrackBatch(current.id).catch(() => {});
+    }
+    const batch = await getMultitrackBatchForUser(current.id, req.user.id);
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      id: batch.id,
+      status: batch.status,
+      progress: Math.max(0, Math.min(100, Number(batch.progress || 0))),
+      expectedTracks: batch.expected_tracks,
+      trackCount: batch.track_count,
+      outputTranscriptionId: batch.output_transcription_id,
+      error: batch.error_message,
+    });
+  } catch (error) {
+    console.error("Multitrack status error:", error);
+    return res.status(500).json({ error: "Không tải được trạng thái multitrack" });
+  }
+});
+
+router.delete("/multitrack/:batchId", requireAuth, async (req, res) => {
+  try {
+    const batch = await getMultitrackBatchForUser(
+      req.params.batchId,
+      req.user.id,
+    );
+    if (!batch) {
+      return res.status(404).json({ error: "Không tìm thấy phiên multitrack" });
+    }
+    const jobs = await pool.query(
+      `SELECT id FROM transcription_jobs
+       WHERE user_id = $1 AND payload->>'batchId' = $2`,
+      [req.user.id, req.params.batchId],
+    );
+    await Promise.all(
+      jobs.rows.map((job) =>
+        cancelTranscriptionJobForUser(job.id, req.user.id).catch(() => {}),
+      ),
+    );
+    await pool.query(
+      `UPDATE transcription_batches
+       SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND user_id = $2`,
+      [req.params.batchId, req.user.id],
+    );
+    return res.json({ status: "cancelled" });
+  } catch (error) {
+    return res
+      .status(error.statusCode || 500)
+      .json({ error: error.message || "Không hủy được multitrack" });
+  }
+});
+
 // POST /api/transcribe — lưu file và trả job ngay; worker nền xử lý transcript.
 router.post(
   "/",
@@ -366,6 +733,7 @@ router.post(
         speakerLabels:
           req.body.speakerLabels === "true" || req.body.speakerLabels === true,
         expectedDurationSeconds,
+        folderId: req.body.folderId,
       });
       const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
       const quota = await getQuotaStatus(req.user.id);
@@ -453,8 +821,23 @@ router.get("/history", requireAuth, async (req, res) => {
       Math.max(1, Number.parseInt(req.query.limit, 10) || 20),
     );
     const search = String(req.query.q || "").trim().slice(0, 200);
+    const requestedFolderId = String(req.query.folderId || "").trim();
+    const folderId = requestedFolderId
+      ? Number.parseInt(requestedFolderId, 10)
+      : null;
+    if (
+      requestedFolderId &&
+      (!Number.isFinite(folderId) || Number(folderId) <= 0)
+    ) {
+      return res.status(400).json({ error: "Thư mục không hợp lệ" });
+    }
     const offset = (page - 1) * limit;
     const values = [req.user.id];
+    let folderSql = "";
+    if (folderId) {
+      values.push(folderId);
+      folderSql = ` AND transcript.folder_id = $${values.length}`;
+    }
     let searchSql = "";
     if (search) {
       values.push(`%${search}%`);
@@ -470,7 +853,11 @@ router.get("/history", requireAuth, async (req, res) => {
       ? await pool.query(
           `SELECT COUNT(*)::integer AS total
            FROM transcriptions transcript
-           WHERE transcript.user_id = $1${searchSql}`,
+           LEFT JOIN transcription_jobs hidden_job
+             ON hidden_job.transcription_id = transcript.id
+           WHERE transcript.user_id = $1
+             AND COALESCE(hidden_job.payload->>'batchKind', '') <> 'multitrack'
+             ${folderSql}${searchSql}`,
           values,
         )
       : null;
@@ -490,10 +877,13 @@ router.get("/history", requireAuth, async (req, res) => {
          COALESCE(job.status, transcript.status, 'completed') AS status,
          COALESCE(job.progress, CASE WHEN transcript.status = 'completed' THEN 100 ELSE 0 END) AS progress,
          COALESCE(job.error_message, transcript.error_message) AS error_message,
-         job.id AS job_id
+         job.id AS job_id, transcript.folder_id, folder.name AS folder_name
        FROM transcriptions transcript
        LEFT JOIN transcription_jobs job ON job.transcription_id = transcript.id
-       WHERE transcript.user_id = $1${searchSql}
+       LEFT JOIN transcription_folders folder ON folder.id = transcript.folder_id
+       WHERE transcript.user_id = $1
+         AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
+         ${folderSql}${searchSql}
        ORDER BY transcript.created_at DESC, transcript.id DESC
        LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
       queryValues,
@@ -553,15 +943,17 @@ router.get("/history/:id", requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT transcript.id, transcript.filename, transcript.file_size, transcript.duration,
-         transcript.processing_seconds, transcript.text, transcript.words, transcript.audio_filename,
+         transcript.processing_seconds, transcript.text, transcript.words, transcript.segments,
+         transcript.speaker_names, transcript.audio_filename,
          transcript.source_language, transcript.translated_text, transcript.translation_target_language,
          transcript.translation_provider, transcript.translation_error, transcript.created_at,
          COALESCE(job.status, transcript.status, 'completed') AS status,
          COALESCE(job.progress, CASE WHEN transcript.status = 'completed' THEN 100 ELSE 0 END) AS progress,
          COALESCE(job.error_message, transcript.error_message) AS error_message,
-         job.id AS job_id
+         job.id AS job_id, transcript.folder_id, folder.name AS folder_name
        FROM transcriptions transcript
        LEFT JOIN transcription_jobs job ON job.transcription_id = transcript.id
+       LEFT JOIN transcription_folders folder ON folder.id = transcript.folder_id
        WHERE transcript.id = $1 AND transcript.user_id = $2
        LIMIT 1`,
       [id, req.user.id],
@@ -576,6 +968,13 @@ router.get("/history/:id", requireAuth, async (req, res) => {
       filename: normalizeFilename(rows[0].filename),
       text: String(rows[0].text || ""),
       words: Array.isArray(rows[0].words) ? rows[0].words : [],
+      segments: Array.isArray(rows[0].segments) ? rows[0].segments : [],
+      speaker_names:
+        rows[0].speaker_names &&
+        typeof rows[0].speaker_names === "object" &&
+        !Array.isArray(rows[0].speaker_names)
+          ? rows[0].speaker_names
+          : {},
     });
   } catch (error) {
     console.error("Get transcription detail error:", error.message);
@@ -1050,9 +1449,20 @@ router.get("/:id/audio", requireAuth, async (req, res) => {
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
-  const { text, words } = req.body;
-  if (typeof text !== "string" || text.length > 2_000_000)
-    return res.status(400).json({ error: "Thiếu trường text" });
+  const { text, words, speakerNames } = req.body;
+  if (
+    text === undefined &&
+    words === undefined &&
+    speakerNames === undefined
+  ) {
+    return res.status(400).json({ error: "Không có thay đổi để lưu" });
+  }
+  if (
+    text !== undefined &&
+    (typeof text !== "string" || text.length > 2_000_000)
+  ) {
+    return res.status(400).json({ error: "Nội dung text không hợp lệ" });
+  }
   let normalizedWords = null;
   if (words !== undefined) {
     if (!Array.isArray(words) || words.length > 100_000) {
@@ -1089,21 +1499,50 @@ router.patch("/:id", requireAuth, async (req, res) => {
       });
     }
   }
+  let normalizedSpeakerNames = null;
+  if (speakerNames !== undefined) {
+    if (
+      !speakerNames ||
+      typeof speakerNames !== "object" ||
+      Array.isArray(speakerNames) ||
+      Object.keys(speakerNames).length > 100
+    ) {
+      return res.status(400).json({ error: "Danh sách người nói không hợp lệ" });
+    }
+    normalizedSpeakerNames = {};
+    for (const [speaker, label] of Object.entries(speakerNames)) {
+      const cleanSpeaker = String(speaker).trim().slice(0, 100);
+      const cleanLabel = String(label || "")
+        .trim()
+        .replace(/\s+/g, " ");
+      if (!cleanSpeaker || cleanLabel.length > 100) {
+        return res.status(400).json({ error: "Tên người nói không hợp lệ" });
+      }
+      if (cleanLabel) normalizedSpeakerNames[cleanSpeaker] = cleanLabel;
+    }
+  }
   try {
     const { rowCount, rows } = await pool.query(
       `UPDATE transcriptions
-       SET text = $1,
+       SET text = CASE WHEN $1::text IS NULL THEN text ELSE $1 END,
            words = CASE
              WHEN $4::jsonb IS NULL THEN words
              ELSE $4::jsonb
+           END,
+           speaker_names = CASE
+             WHEN $5::jsonb IS NULL THEN speaker_names
+             ELSE $5::jsonb
            END
        WHERE id = $2 AND user_id = $3
-       RETURNING id, text, words`,
+       RETURNING id, text, words, speaker_names`,
       [
-        text,
+        text === undefined ? null : text,
         id,
         req.user.id,
         normalizedWords === null ? null : JSON.stringify(normalizedWords),
+        normalizedSpeakerNames === null
+          ? null
+          : JSON.stringify(normalizedSpeakerNames),
       ],
     );
     if (rowCount === 0)

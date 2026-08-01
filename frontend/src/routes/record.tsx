@@ -1392,6 +1392,7 @@ function TranscriptResult({
         </div>
       ) : (
         <textarea
+          data-typography="content"
           value={transcription}
           rows={8}
           onChange={(e) => setTranscription(e.target.value)}

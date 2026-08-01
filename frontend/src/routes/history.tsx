@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Clock,
   HardDrive,
+  Folder,
   Trash2,
   X,
   Search,
@@ -58,6 +59,8 @@ interface HistoryItem {
   progress: number;
   error_message: string | null;
   job_id: number | null;
+  folder_id?: number | null;
+  folder_name?: string | null;
   queue_position?: number;
   estimated_remaining_seconds?: number;
   created_at: string;
@@ -792,6 +795,14 @@ function HistoryPage() {
                             <Clock className="h-3 w-3" />
                             {formatDate(item.created_at)}
                           </span>
+                          {item.folder_name && (
+                            <span className="flex min-w-0 items-center gap-1">
+                              <Folder className="h-3 w-3 shrink-0" />
+                              <span className="max-w-32 truncate">
+                                {item.folder_name}
+                              </span>
+                            </span>
+                          )}
                           {item.file_size > 0 && (
                             <span className="flex items-center gap-1">
                               <HardDrive className="h-3 w-3" />
@@ -987,6 +998,7 @@ function HistoryPage() {
                               Văn bản — có thể chỉnh sửa trực tiếp
                             </p>
                             <textarea
+                              data-typography="content"
                               value={editorText}
                               onChange={(event) => {
                                 const nextText = event.target.value;
