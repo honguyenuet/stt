@@ -88,7 +88,7 @@ export const Route = createFileRoute("/pricing")({
       {
         property: "og:description",
         content:
-          "So sánh gói Theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp cho nền tảng chuyển giọng nói thành văn bản.",
+          "So sánh gói theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp cho nền tảng chuyển giọng nói thành văn bản.",
       },
     ],
   }),
@@ -99,26 +99,28 @@ const monthlyPlans: Plan[] = [
   {
     code: "standard",
     name: "Tiêu chuẩn",
-    label: "Cá nhân dùng ít",
-    desc: "Dành cho cá nhân cần xử lý đều đặn với quota hằng tháng và tính năng xuất file đầy đủ.",
-    price: "149.000đ",
+    label: "Cá nhân",
+    desc: "Dành cho học tập, ghi chú, phỏng vấn và nhu cầu cá nhân hằng tháng.",
+    price: "150.000đ",
     unit: "/tháng",
     minutes: "5 giờ",
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "5 giờ xử lý mỗi tháng",
-      "Upload tối đa 300MB",
-      "File dài tối đa 3 giờ",
-      "Lưu transcript 180 ngày",
-      "API có giới hạn",
+      "Tải file tối đa 200MB",
+      "File dài tối đa 2 giờ",
+      "Ghi âm tối đa 1 giờ",
+      "Lưu dữ liệu 90 ngày",
+      "API Speech to Text",
+      "Ưu tiên xử lý 2×",
     ],
   },
   {
     code: "special",
     name: "Đặc biệt",
-    label: "Freelancer / Creator",
-    desc: "Cho creator, freelancer và người dùng thường xuyên cần nhiều giờ hơn.",
-    price: "499.000đ",
+    label: "Phổ biến",
+    desc: "Cho người sáng tạo và chuyên viên cần xử lý nhiều file thường xuyên.",
+    price: "449.000đ",
     unit: "/tháng",
     minutes: "20 giờ",
     badge: "Khuyên dùng",
@@ -126,27 +128,31 @@ const monthlyPlans: Plan[] = [
     cta: "Đăng ký Đặc biệt",
     features: [
       "20 giờ xử lý mỗi tháng",
-      "Upload tối đa 1GB",
+      "Tải file tối đa 1GB",
       "File dài tối đa 4 giờ",
-      "API mở rộng và webhook",
+      "Ghi âm tối đa 2 giờ",
+      "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
+      "API và ưu tiên xử lý 4×",
     ],
   },
   {
     code: "business",
     name: "Chuyên nghiệp",
     label: "Nâng cao",
-    desc: "Cho nhóm nhỏ và chuyên gia cần 40 giờ xử lý, tốc độ cao và API đầy đủ.",
+    desc: "Cho chuyên gia và đơn vị có khối lượng chuyển đổi lớn mỗi tháng.",
     price: "799.000đ",
     unit: "/tháng",
     minutes: "40 giờ",
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "40 giờ xử lý mỗi tháng",
-      "Upload tối đa 2GB",
-      "File dài tối đa 10 giờ",
-      "API và webhook đầy đủ",
-      "Xử lý song song 10 file",
+      "Tải file tối đa 2GB",
+      "File dài tối đa 8 giờ",
+      "Ghi âm tối đa 8 giờ",
+      "Lưu dữ liệu 1 năm",
+      "Nhận diện nhiều người nói",
+      "API và ưu tiên xử lý 8×",
     ],
   },
 ];
@@ -156,55 +162,61 @@ const yearlyPlans: Plan[] = [
     code: "standard",
     name: "Tiêu chuẩn",
     label: "Tiết kiệm",
-    desc: "Thanh toán năm cho cá nhân dùng đều đặn và muốn tiết kiệm chi phí.",
-    price: "1.490.000đ",
+    desc: "Thanh toán năm cho người dùng cá nhân cần dùng đều đặn.",
+    price: "1.650.000đ",
     unit: "/năm",
     minutes: "60 giờ/năm",
-    saving: "Tiết kiệm 2 tháng",
+    saving: "Tiết kiệm 1 tháng",
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "Cấp đủ 60 giờ ngay sau thanh toán",
-      "Upload tối đa 300MB",
-      "File dài tối đa 3 giờ",
-      "Lưu transcript 180 ngày",
-      "API có giới hạn",
+      "Tải file tối đa 200MB",
+      "File dài tối đa 2 giờ",
+      "Ghi âm tối đa 1 giờ",
+      "Lưu dữ liệu 90 ngày",
+      "API và ưu tiên xử lý 2×",
     ],
   },
   {
     code: "special",
     name: "Đặc biệt",
     label: "Tốt nhất",
-    desc: "Gói năm tối ưu cho creator và freelancer cần xử lý nhiều file.",
-    price: "4.990.000đ",
+    desc: "Gói năm tối ưu chi phí cho người dùng thường xuyên.",
+    price: "4.939.000đ",
     unit: "/năm",
     minutes: "240 giờ/năm",
     badge: "Tối ưu nhất",
-    saving: "Tiết kiệm 2 tháng",
+    saving: "Tiết kiệm 1 tháng",
     highlight: true,
     cta: "Đăng ký Đặc biệt năm",
     features: [
       "Cấp đủ 240 giờ ngay sau thanh toán",
-      "Upload tối đa 1GB",
+      "Tải file tối đa 1GB",
       "File dài tối đa 4 giờ",
-      "API mở rộng và webhook",
+      "Ghi âm tối đa 2 giờ",
+      "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
+      "API và ưu tiên xử lý 4×",
     ],
   },
   {
     code: "business",
     name: "Chuyên nghiệp",
     label: "Nâng cao",
-    desc: "Gói năm cho nhóm nhỏ và chuyên gia có khối lượng xử lý lớn.",
-    price: "7.990.000đ",
+    desc: "Gói năm cho chuyên gia và đơn vị có khối lượng xử lý lớn.",
+    price: "8.789.000đ",
     unit: "/năm",
     minutes: "480 giờ/năm",
-    saving: "Tiết kiệm 2 tháng",
+    saving: "Tiết kiệm 1 tháng",
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "Cấp đủ 480 giờ ngay sau thanh toán",
-      "Upload tối đa 2GB",
-      "File dài tối đa 10 giờ",
-      "API, webhook và queue cao nhất",
+      "Tải file tối đa 2GB",
+      "File dài tối đa 8 giờ",
+      "Ghi âm tối đa 8 giờ",
+      "Lưu dữ liệu 1 năm",
+      "Nhận diện nhiều người nói",
+      "API và ưu tiên xử lý 8×",
     ],
   },
 ];
@@ -262,7 +274,7 @@ const faqs = [
   },
   {
     q: "Gói theo tháng và theo năm khác nhau như thế nào?",
-    a: "Gói theo tháng linh hoạt, phù hợp dùng ngắn hạn. Gói theo năm có cùng bộ tính năng, được cấp đủ thời lượng của năm và có giá tương đương 10 tháng, tiết kiệm 2 tháng.",
+    a: "Gói theo tháng linh hoạt, phù hợp dùng ngắn hạn. Gói theo năm có cùng bộ tính năng, được cấp đủ thời lượng của năm và có giá tương đương 11 tháng.",
   },
   {
     q: "Hết số phút xử lý thì có dùng tiếp được không?",
@@ -270,11 +282,15 @@ const faqs = [
   },
   {
     q: "Có thể xuất file Word không?",
-    a: "Có. Theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp đều hỗ trợ xuất TXT/DOCX; PDF và SRT/VTT khả dụng từ gói Tiêu chuẩn trở lên.",
+    a: "Có. Sau khi chuyển đổi hoàn tất, bạn có thể sao chép văn bản hoặc tải transcript ở định dạng TXT và DOCX.",
   },
   {
-    q: "Doanh nghiệp có thể tích hợp API không?",
-    a: "Có. Các đơn vị cần số phút lớn, nhiều tài khoản, SLA hoặc hạ tầng riêng có thể gửi yêu cầu để Vbee tư vấn cấu hình và báo giá riêng.",
+    q: "Gói nào có thể tích hợp API?",
+    a: "Gói Tiêu chuẩn, Đặc biệt và Chuyên nghiệp đều có quyền tạo API key để tích hợp Speech to Text. Gói cao hơn được ưu tiên xử lý nhanh hơn trong hàng đợi.",
+  },
+  {
+    q: "Mua thêm giờ có làm thay đổi gói đang dùng không?",
+    a: "Không. Số giờ mua thêm được cộng vào tài khoản và giữ nguyên toàn bộ giới hạn, quyền lợi cùng chu kỳ của gói bạn đã đăng ký.",
   },
   {
     q: "Có hoàn tiền khi không dùng hết phút không?",
@@ -293,90 +309,139 @@ const featureGroups: Array<{
   }>;
 }> = [
   {
-    title: "Thanh toán và quota",
+    title: "Giới hạn gói cước",
     rows: [
       {
-        feature: "Thanh toán",
-        free: "Theo lượt",
-        basic: "Theo tháng/năm",
-        pro: "Theo tháng/năm",
-        business: "Theo tháng/năm",
-      },
-      {
         feature: "Thời lượng xử lý",
-        free: "Theo sử dụng",
+        free: "Theo giờ đã mua",
         basic: "5 giờ/tháng",
         pro: "20 giờ/tháng",
         business: "40 giờ/tháng",
       },
       {
-        feature: "Mua thêm giờ",
+        feature: "Thời lượng tối đa mỗi file",
+        free: "Theo gói hiện tại",
+        basic: "2 giờ",
+        pro: "4 giờ",
+        business: "8 giờ",
+      },
+      {
+        feature: "Kích thước file tối đa",
+        free: "Theo gói hiện tại",
+        basic: "200MB",
+        pro: "1GB",
+        business: "2GB",
+      },
+      {
+        feature: "Thời lượng ghi âm tối đa",
+        free: "Theo gói hiện tại",
+        basic: "1 giờ",
+        pro: "2 giờ",
+        business: "8 giờ",
+      },
+      {
+        feature: "Thời gian lưu dữ liệu",
+        free: "Theo gói hiện tại",
+        basic: "90 ngày",
+        pro: "1 năm",
+        business: "1 năm",
+      },
+      {
+        feature: "Mức ưu tiên xử lý",
+        free: "Cơ bản",
+        basic: "Ưu tiên 2×",
+        pro: "Ưu tiên 4×",
+        business: "Ưu tiên 8×",
+      },
+    ],
+  },
+  {
+    title: "Chuyển giọng nói thành văn bản",
+    rows: [
+      {
+        feature: "Tải file audio và video",
         free: true,
         basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Cộng dồn giờ chưa dùng",
-        free: false,
-        basic: "1 tháng",
-        pro: "2 tháng",
-        business: "3 tháng",
+        feature: "Ghi âm trực tiếp",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Nói realtime",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Nhập video từ liên kết YouTube",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Tự động nhận dạng ngôn ngữ",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Nhận dạng Việt - Anh trong cùng nội dung",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Nhận diện nhiều người nói",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Chế độ bài hát và xử lý vocal",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
       },
     ],
   },
   {
-    title: "Dung lượng và xử lý",
+    title: "Biên tập, dịch và xuất dữ liệu",
     rows: [
       {
-        feature: "Upload tối đa",
-        free: "100MB",
-        basic: "300MB",
-        pro: "1GB",
-        business: "2GB",
+        feature: "Chỉnh sửa transcript trực tuyến",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
       },
       {
-        feature: "Thời lượng tối đa mỗi file",
-        free: "30 phút",
-        basic: "3 giờ",
-        pro: "4 giờ",
-        business: "10 giờ",
+        feature: "Tìm kiếm trong lịch sử transcript",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
       },
       {
-        feature: "Lưu transcript",
-        free: "5",
-        basic: "100",
-        pro: "Không giới hạn",
-        business: "Không giới hạn",
+        feature: "Từ điển riêng",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
       },
       {
-        feature: "Lưu trữ",
-        free: "30 ngày",
-        basic: "180 ngày",
-        pro: "1 năm",
-        business: "Không giới hạn",
-      },
-      {
-        feature: "Tốc độ xử lý",
-        free: "Tiêu chuẩn",
-        basic: "Ưu tiên",
-        pro: "Ưu tiên cao",
-        business: "Cao nhất",
-      },
-      {
-        feature: "Xử lý song song",
-        free: "1 file",
-        basic: "3 file",
-        pro: "5 file",
-        business: "10 file",
-      },
-    ],
-  },
-  {
-    title: "Tính năng transcript",
-    rows: [
-      {
-        feature: "Copy văn bản",
+        feature: "Sao chép văn bản",
         free: true,
         basic: true,
         pro: true,
@@ -397,36 +462,8 @@ const featureGroups: Array<{
         business: true,
       },
       {
-        feature: "Xuất PDF",
-        free: false,
-        basic: true,
-        pro: true,
-        business: true,
-      },
-      {
-        feature: "Xuất SRT/VTT",
-        free: false,
-        basic: true,
-        pro: true,
-        business: true,
-      },
-      {
-        feature: "Dịch đa ngôn ngữ",
-        free: false,
-        basic: true,
-        pro: true,
-        business: true,
-      },
-      {
-        feature: "Tóm tắt AI",
-        free: false,
-        basic: "Giới hạn",
-        pro: "Không giới hạn",
-        business: "Không giới hạn",
-      },
-      {
-        feature: "Nhận diện người nói",
-        free: false,
+        feature: "Dịch transcript sang ngôn ngữ khác",
+        free: true,
         basic: true,
         pro: true,
         business: true,
@@ -434,49 +471,96 @@ const featureGroups: Array<{
     ],
   },
   {
-    title: "Quản trị và hỗ trợ",
+    title: "API và quy trình xử lý",
     rows: [
       {
-        feature: "API",
-        free: false,
-        basic: "Có giới hạn",
-        pro: "Mở rộng",
-        business: "Đầy đủ",
-      },
-      {
-        feature: "Webhook",
-        free: false,
-        basic: false,
+        feature: "Hàng đợi xử lý nền",
+        free: true,
+        basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Quản lý nhóm",
+        feature: "API Speech to Text",
         free: false,
-        basic: false,
-        pro: false,
-        business: "5 người",
-      },
-      {
-        feature: "Quyền thành viên",
-        free: false,
-        basic: false,
-        pro: false,
+        basic: true,
+        pro: true,
         business: true,
       },
       {
-        feature: "Nhật ký hoạt động",
+        feature: "Tạo và thu hồi API key",
         free: false,
-        basic: false,
-        pro: false,
+        basic: true,
+        pro: true,
         business: true,
       },
       {
-        feature: "Hỗ trợ",
-        free: "Email",
-        basic: "Ưu tiên",
-        pro: "Ưu tiên",
-        business: "Ưu tiên + Chat",
+        feature: "Theo dõi trạng thái job",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Cảnh báo sắp hết thời lượng",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Mua thêm giờ không đổi gói hiện tại",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+    ],
+  },
+  {
+    title: "Tài khoản, bảo mật và hỗ trợ",
+    rows: [
+      {
+        feature: "Không gian làm việc cá nhân",
+        free: "1 người dùng",
+        basic: "1 người dùng",
+        pro: "1 người dùng",
+        business: "1 người dùng",
+      },
+      {
+        feature: "Đăng nhập email và mạng xã hội",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Quét an toàn file tải lên",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Trung tâm hỗ trợ",
+        free: true,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Hỗ trợ qua email",
+        free: false,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Hỗ trợ ưu tiên",
+        free: false,
+        basic: false,
+        pro: true,
+        business: true,
       },
     ],
   },
@@ -604,7 +688,8 @@ function PricingPage() {
     if (!user || !token) {
       if (
         plan.code === "standard" ||
-        plan.code === "special"
+        plan.code === "special" ||
+        plan.code === "business"
       ) {
         savePendingPlanPurchase(plan.code, billing, plan.name);
       }
@@ -717,52 +802,45 @@ function PricingHero({
   setBilling: (billing: BillingCycle) => void;
 }) {
   return (
-    <section className="relative overflow-hidden bg-[#21104a] px-4 pb-10 pt-10 text-white md:px-6 md:pb-14 md:pt-12">
+    <section className="relative overflow-hidden bg-[#21104a] px-4 py-8 text-white md:px-6 md:py-10">
       <div className="absolute inset-0 opacity-20 vbee-foundation-grid" />
 
       <div className="relative mx-auto max-w-7xl text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-wide text-[#ffdc45]">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-black uppercase tracking-wide text-[#ffdc45]">
           <Sparkles className="h-4 w-4 text-[#ffcb05]" /> Bảng giá dịch vụ
         </div>
-        <h1 className="mx-auto mt-5 max-w-3xl text-2xl font-black leading-tight tracking-tight text-white md:text-3xl lg:text-4xl">
-          Chọn gói Vbee AIVoice phù hợp với nhu cầu của bạn
+        <h1 className="mx-auto mt-4 max-w-3xl text-2xl font-black leading-tight text-white md:text-3xl">
+          Gói cước rõ ràng cho mọi nhu cầu chuyển đổi
         </h1>
-        <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-white/72">
-          Chọn gói theo thời lượng xử lý, nhu cầu xuất dữ liệu và mức độ hỗ trợ.
-          Bạn có thể chuyển giữa giá theo tháng và theo năm.
+        <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-white/72">
+          Mua thêm giờ khi cần hoặc đăng ký theo tháng, theo năm để nhận quota
+          định kỳ và mức ưu tiên xử lý cao hơn.
         </p>
 
         <BillingToggle
           billing={billing}
           setBilling={setBilling}
-          className="mt-8"
+          className="mt-6"
         />
-        <p className="mt-4 text-xs font-bold text-white/70">
+        <p className="mt-3 text-xs font-bold text-white/70">
           Tài khoản mới được tặng 30 phút dùng thử một lần. Không cần thẻ thanh
           toán.
         </p>
 
-        <div className="mx-auto mt-6 grid max-w-3xl gap-3 text-left md:grid-cols-3">
+        <div className="mx-auto mt-5 flex max-w-4xl flex-wrap items-center justify-center gap-x-6 gap-y-3 text-left">
           {[
-            [Clock3, "Linh hoạt", "Nâng cấp hoặc đổi gói theo nhu cầu xử lý."],
-            [
-              ShieldCheck,
-              "Bảo mật",
-              "Lịch sử và file được gắn với tài khoản đăng nhập.",
-            ],
-            [Gift, "Tiết kiệm", "Gói năm phù hợp người dùng thường xuyên."],
-          ].map(([Icon, title, desc]) => {
+            [Clock3, "Mua thêm giờ không đổi gói"],
+            [ShieldCheck, "Thanh toán bảo mật qua PayOS"],
+            [Gift, "Gói năm tiết kiệm 1 tháng"],
+          ].map(([Icon, title]) => {
             const TypedIcon = Icon as typeof Clock3;
             return (
               <div
                 key={String(title)}
-                className="rounded-2xl border border-white/15 bg-white/10 p-4"
+                className="inline-flex items-center gap-2 text-xs font-bold text-white/78"
               >
-                <TypedIcon className="h-5 w-5 text-[#ffcb05]" />
-                <p className="mt-3 font-black text-white">{title as string}</p>
-                <p className="mt-1 text-xs leading-5 text-white/65">
-                  {desc as string}
-                </p>
+                <TypedIcon className="h-4 w-4 shrink-0 text-[#ffcb05]" />
+                <span>{title as string}</span>
               </div>
             );
           })}
@@ -823,9 +901,9 @@ function PlanCards({
   onSelectPlan: (plan: Plan) => void;
 }) {
   return (
-    <section id="plans" className="px-4 py-12 md:px-6 md:py-14">
+    <section id="plans" className="px-4 py-10 md:px-6 md:py-12">
       <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+        <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-end">
           <div>
             <p className="text-sm font-black uppercase tracking-wide text-[#9a7b00]">
               {billing === "monthly"
@@ -844,14 +922,14 @@ function PlanCards({
           </p>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          <article className="relative flex min-h-[460px] flex-col rounded-2xl border border-[#eee4d3] bg-white p-5 text-[#21104a] shadow-[0_14px_45px_rgba(33,16,74,.06)] transition hover:-translate-y-1">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article className="relative flex min-h-[455px] flex-col rounded-lg border border-[#e6def3] bg-white p-5 text-[#21104a] shadow-[0_10px_32px_rgba(33,16,74,.06)]">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <span className="rounded-full bg-[#fff7c2] px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#725a00]">
                   Không thuê bao
                 </span>
-                <h3 className="mt-5 text-2xl font-black">Trả theo giờ</h3>
+                <h3 className="mt-5 text-2xl font-black">Theo lượt sử dụng</h3>
               </div>
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#f7f3ff] text-[#21104a]">
                 <Clock3 className="h-5 w-5" />
@@ -859,8 +937,8 @@ function PlanCards({
             </div>
 
             <p className="mt-4 min-h-[72px] text-sm leading-6 text-[#6a5a8f]">
-              Chỉ trả tiền cho số giờ cần dùng. Không có quota thuê bao cố định
-              hoặc cộng dồn giờ theo chu kỳ.
+              Chỉ trả tiền cho số giờ cần dùng. Thời lượng đã mua được giữ đến
+              khi dùng hết.
             </p>
 
             <div className="mt-5 rounded-2xl border border-current/10 p-4">
@@ -887,9 +965,9 @@ function PlanCards({
 
             <div className="mt-6 space-y-3">
               {[
-                "Không yêu cầu đăng ký",
-                "Không có mức dùng tối thiểu",
-                "Theo sử dụng, không cộng dồn chu kỳ",
+                "Cộng thêm giờ vào gói hiện tại",
+                "Không thay đổi quyền lợi gói đang dùng",
+                "Thời lượng không hết hạn",
                 "Thanh toán trực tuyến qua PayOS",
               ].map((feature) => (
                 <div
@@ -906,7 +984,7 @@ function PlanCards({
           {plans.map((plan) => (
             <article
               key={plan.name}
-              className={`relative flex min-h-[460px] flex-col rounded-2xl border p-5 shadow-[0_14px_45px_rgba(33,16,74,.06)] transition hover:-translate-y-1 ${
+              className={`relative flex min-h-[455px] flex-col rounded-lg border p-5 shadow-[0_10px_32px_rgba(33,16,74,.06)] ${
                 plan.highlight
                   ? "border-[#ffcb05] bg-[#21104a] text-white shadow-[0_20px_70px_rgba(33,16,74,.18)]"
                   : "border-[#eee4d3] bg-white text-[#21104a]"
@@ -993,7 +1071,7 @@ function PlanCards({
               </button>
 
               <div className="mt-6 space-y-3">
-                {plan.features.map((feature) => (
+                {plan.features.slice(0, 5).map((feature) => (
                   <div
                     key={feature}
                     className="flex items-start gap-3 text-sm font-semibold leading-6"
@@ -1056,7 +1134,7 @@ function TopUpCards({
             <div className="mt-7 space-y-4 border-t border-white/15 pt-6 text-sm font-semibold text-white/82">
               {[
                 `${hourlyPrice} cho mỗi giờ chuyển đổi`,
-                "Không có quota thuê bao cố định",
+                "Thời lượng đã mua không hết hạn",
                 "Cộng trực tiếp vào quota hiện có",
                 "Thanh toán QR ngay trên website",
               ].map((item) => (
@@ -1159,7 +1237,7 @@ function PricingValueBand() {
     {
       icon: PlugZap,
       title: "API sẵn sàng mở rộng",
-      desc: "Kết nối API và webhook để đưa quy trình chuyển đổi vào hệ thống vận hành hiện có.",
+      desc: "Tạo API key, gửi file và theo dõi trạng thái job để đưa chuyển đổi vào quy trình hiện có.",
     },
   ];
 
@@ -1196,6 +1274,7 @@ function CompareTable({
   hourlyPrice: string;
   plans: Plan[];
 }) {
+  const [showAllFeatures, setShowAllFeatures] = useState(false);
   const yearlyMultiplier = billing === "yearly";
 
   const getDisplayRows = featureGroups.map((group) => ({
@@ -1204,16 +1283,23 @@ function CompareTable({
       if (!yearlyMultiplier || row.feature !== "Thời lượng xử lý") return row;
       return {
         ...row,
-        free: "Theo sử dụng",
+        free: "Theo giờ đã mua",
         basic: "60 giờ/năm",
         pro: "240 giờ/năm",
         business: "480 giờ/năm",
       };
     }),
   }));
+  const visibleGroups = showAllFeatures
+    ? getDisplayRows
+    : getDisplayRows.slice(0, 1);
+  const totalFeatures = featureGroups.reduce(
+    (total, group) => total + group.rows.length,
+    0,
+  );
 
   return (
-    <section className="bg-white px-4 py-12 md:px-6 md:py-16">
+    <section id="compare" className="bg-white px-4 py-12 md:px-6 md:py-16">
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
           <div>
@@ -1264,8 +1350,8 @@ function CompareTable({
                   />
                 </tr>
               </thead>
-              <tbody>
-                {getDisplayRows.map((group) => (
+              <tbody id="pricing-feature-groups">
+                {visibleGroups.map((group) => (
                   <FragmentGroup
                     key={group.title}
                     title={group.title}
@@ -1275,6 +1361,23 @@ function CompareTable({
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="mt-5 flex justify-center">
+          <button
+            type="button"
+            aria-expanded={showAllFeatures}
+            aria-controls="pricing-feature-groups"
+            onClick={() => setShowAllFeatures((current) => !current)}
+            className="inline-flex items-center gap-2 rounded-full border border-[#d9cdef] bg-white px-5 py-2.5 text-sm font-black text-[#21104a] shadow-[0_8px_24px_rgba(33,16,74,.08)] transition hover:border-[#21104a]"
+          >
+            {showAllFeatures
+              ? "Thu gọn bảng so sánh"
+              : `Xem toàn bộ ${totalFeatures} tính năng`}
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${showAllFeatures ? "rotate-180" : ""}`}
+            />
+          </button>
         </div>
 
         <div className="mt-5 rounded-2xl border border-[#eee4d3] bg-[#fbf8ef] p-5 text-sm leading-7 text-[#6a5a8f]">
@@ -1512,19 +1615,21 @@ function PricingFooter() {
             className="h-14 w-auto rounded-xl bg-white/95 p-1"
           />
           <p className="mt-5 max-w-sm text-sm leading-7 text-white/65">
-            Vbee AIVoice — bảng giá theo tháng và theo năm cho nền tảng
-            chuyển giọng nói thành văn bản.
+            Vbee AIVoice — bảng giá theo tháng và theo năm cho nền tảng chuyển
+            giọng nói thành văn bản.
           </p>
         </div>
         {[
           [
             "Sản phẩm",
-            ["Chuyển giọng nói thành văn bản", "Ghi âm", "Lịch sử", "Xuất DOCX"],
+            [
+              "Chuyển giọng nói thành văn bản",
+              "Ghi âm",
+              "Lịch sử",
+              "Xuất DOCX",
+            ],
           ],
-          [
-            "Bảng giá",
-            ["Theo lượt", "Tiêu chuẩn", "Đặc biệt", "Chuyên nghiệp"],
-          ],
+          ["Bảng giá", ["Miễn phí", "Tiêu chuẩn", "Đặc biệt", "Doanh nghiệp"]],
           [
             "Liên hệ",
             ["vbee@gmail.com", "0916 168 475", "Đại học Vinh", "Việt Nam"],

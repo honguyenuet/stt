@@ -1,6 +1,7 @@
 import { adminRequest, buildQuery } from "./api-client";
 import type {
   AdminRole,
+  AssignableAdminRole,
   AdminUser,
   BillingCycle,
   ListUsersParams,
@@ -37,7 +38,7 @@ export function updateUserStatus(
   });
 }
 
-export function updateUserRole(userId: string, role: AdminRole) {
+export function updateUserRole(userId: string, role: AssignableAdminRole) {
   return adminRequest<AdminUser>(`/api/admin/users/${userId}/role`, {
     method: "PATCH",
     body: JSON.stringify({ role }),

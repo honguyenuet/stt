@@ -228,19 +228,25 @@ YOUTUBE_DOWNLOAD_TIMEOUT_MS=600000
 
 ### Dịch transcript sang ngôn ngữ khác
 
-Deepgram dùng để chuyển giọng nói thành văn bản. Nếu muốn dịch transcript sang tiếng khác như Sonix, backend gọi thêm dịch vụ dịch văn bản. Khuyến nghị dùng Google Cloud Translation cho nhiều ngôn ngữ.
+Deepgram/Vbee dùng để chuyển giọng nói thành văn bản. Nếu muốn dịch transcript sang tiếng khác như Sonix, backend gọi thêm dịch vụ dịch văn bản. Chế độ `auto` thử MyMemory trước, tự chuyển sang AssemblyAI khi MyMemory hết quota hoặc lỗi, rồi chuyển sang Google Cloud Translation nếu AssemblyAI không xử lý được.
 
 Trong `backend/.env`:
 
 ```env
 TRANSLATION_PROVIDER=auto
+TRANSLATION_PROVIDER_CHAIN=mymemory,assemblyai,google-cloud-translation
+ASSEMBLYAI_UNDERSTANDING_URL=https://llm-gateway.assemblyai.com/v1/understanding
+ASSEMBLYAI_API_KEY=your_assemblyai_key
 GOOGLE_TRANSLATE_API_URL=https://translation.googleapis.com/language/translate/v2
 GOOGLE_TRANSLATE_API_KEY=your_google_cloud_translation_key
 ```
 
-Nếu chưa có Google key, backend vẫn có thể fallback qua LibreTranslate/MyMemory:
+Với transcript do AssemblyAI tạo, backend dùng lại transcript ID để dịch. Với transcript do Vbee/Deepgram tạo, AssemblyAI cần đọc lại file âm thanh. Google Cloud Translation dịch trực tiếp transcript text và chỉ hoạt động khi có `GOOGLE_TRANSLATE_API_KEY`.
+
+LibreTranslate có thể được thêm cuối chuỗi nếu cần:
 
 ```env
+TRANSLATION_PROVIDER_CHAIN=mymemory,assemblyai,google-cloud-translation,libretranslate
 LIBRETRANSLATE_API_URL=https://libretranslate.com
 LIBRETRANSLATE_API_KEY=
 MYMEMORY_API_URL=https://api.mymemory.translated.net
@@ -262,7 +268,7 @@ Nếu muốn dùng provider cũ:
 TRANSCRIPTION_PROVIDER=assemblyai
 ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 ASSEMBLYAI_TRANSLATION_ENABLED=true
-ASSEMBLYAI_SPEECH_MODELS=universal-3-pro,universal-2
+ASSEMBLYAI_SPEECH_MODELS=universal-3-5-pro,universal-2
 ```
 
 Khi AssemblyAI là provider chính và người dùng chọn ngôn ngữ đích, backend gửi

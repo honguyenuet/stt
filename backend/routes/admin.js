@@ -18,25 +18,24 @@ const {
   normalizeBillingCycle,
   normalizePlan: normalizeUserPlan,
 } = require("../services/quotaService");
+const {
+  ADMIN_ROLES,
+  getEffectiveAdminRole,
+  isAdminAccountActive,
+} = require("../services/adminAccess");
+const { loginLimiter } = require("../middleware/security");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 const ADMIN_TOKEN_TTL = "8h";
 
-const ADMIN_ROLES = new Set(["admin", "support", "super_admin"]);
 const ASSIGNABLE_ADMIN_ROLES = new Set(["admin", "support", "user"]);
-const MUTATION_ROLES = new Set(["admin"]);
+const MUTATION_ROLES = new Set(["super_admin", "admin"]);
 const SUPPORT_MUTATION_ROLES = new Set(["admin", "support"]);
 const SUPPORT_STATUSES = new Set(["open", "pending", "resolved", "closed"]);
 
-function normalizeAdminRole(role) {
-  if (role === "super_admin") return "admin";
-  if (role === "admin" || role === "support") return role;
-  return "user";
-}
-
 function generateToken(user) {
-  const adminRole = normalizeAdminRole(user.admin_role);
+  const adminRole = getEffectiveAdminRole(user);
   return jwt.sign(
     {
       id: user.id,
@@ -55,12 +54,12 @@ function readBearerToken(req) {
 }
 
 function normalizeAdminUser(row) {
-  const role = normalizeAdminRole(row.admin_role);
+  const role = getEffectiveAdminRole(row) || "viewer";
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role: role === "admin" || role === "support" ? role : "support",
+    role,
   };
 }
 
@@ -75,17 +74,17 @@ async function requireAdmin(req, res, next) {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, email, admin_role, status
+      `SELECT id, first_name, last_name, email, admin_role, status,
+              role, account_status
        FROM users WHERE id = $1`,
       [decoded.id],
     );
     const user = rows[0];
-    const adminRole = normalizeAdminRole(user?.admin_role);
+    const adminRole = getEffectiveAdminRole(user);
     if (
       !user ||
-      user.status !== "active" ||
-      !ADMIN_ROLES.has(user.admin_role) ||
-      !["admin", "support"].includes(adminRole)
+      !isAdminAccountActive(user) ||
+      !adminRole
     ) {
       return res.status(403).json({ error: "Tài khoản admin không hợp lệ" });
     }
@@ -110,7 +109,7 @@ async function requireAdmin(req, res, next) {
 }
 
 function requireAdminManagement(req, res, next) {
-  if (req.admin.admin_role !== "admin") {
+  if (!MUTATION_ROLES.has(req.admin.admin_role)) {
     return res
       .status(403)
       .json({ error: "Bạn không có quyền truy cập mục quản trị này" });
@@ -174,8 +173,10 @@ async function writeAudit({
 
 function userSelectSql() {
   return `
-    SELECT u.id, u.first_name, u.last_name, u.email, u.admin_role, u.status, u.plan,
-      u.quota_seconds, u.plan_started_at, u.plan_expires_at, u.created_at, u.last_login_at,
+    SELECT u.id, u.first_name, u.last_name, u.email,
+      u.admin_role, u.status, u.role, u.account_status,
+      u.plan, u.quota_seconds, u.plan_started_at, u.plan_expires_at,
+      u.created_at, u.last_login_at,
       COALESCE(SUM(CASE WHEN t.status = 'completed' THEN COALESCE(t.duration, 0) ELSE 0 END), 0) AS used_seconds
     FROM users u
     LEFT JOIN transcriptions t ON t.user_id = u.id
@@ -183,13 +184,12 @@ function userSelectSql() {
 }
 
 function normalizeManagedUser(row) {
-  const role = normalizeAdminRole(row.admin_role);
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role,
-    status: row.status || "active",
+    role: getEffectiveAdminRole(row) || "user",
+    status: isAdminAccountActive(row) ? "active" : "suspended",
     plan: normalizeUserPlan(row.plan),
     quota_minutes: Math.ceil(Number(row.quota_seconds || 0) / 60),
     used_minutes: Math.ceil(Number(row.used_seconds || 0) / 60),
@@ -321,7 +321,7 @@ function defaultAdminSettings() {
   };
 }
 
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", loginLimiter, async (req, res) => {
   try {
     const email = String(req.body.email || "")
       .trim()
@@ -332,18 +332,20 @@ router.post("/auth/login", async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, email, password, admin_role, status
+      `SELECT id, first_name, last_name, email, password, admin_role, status,
+              role, account_status
        FROM users WHERE LOWER(email) = LOWER($1)`,
       [email],
     );
     const user = rows[0];
-    if (!user || !user.password || user.status !== "active") {
+    if (!user || !user.password || !isAdminAccountActive(user)) {
       return res
         .status(401)
         .json({ error: "Email hoặc mật khẩu admin không đúng" });
     }
     const matched = await bcrypt.compare(password, user.password);
-    if (!matched || !ADMIN_ROLES.has(user.admin_role)) {
+    const adminRole = getEffectiveAdminRole(user);
+    if (!matched || !adminRole) {
       return res
         .status(401)
         .json({ error: "Email hoặc mật khẩu admin không đúng" });
@@ -352,10 +354,11 @@ router.post("/auth/login", async (req, res) => {
     await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [
       user.id,
     ]);
+    const sessionUser = { ...user, admin_role: adminRole };
     const session = {
-      token: generateToken(user),
+      token: generateToken(sessionUser),
       expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-      user: normalizeAdminUser(user),
+      user: normalizeAdminUser(sessionUser),
     };
     return res.json(session);
   } catch (error) {
@@ -486,13 +489,26 @@ router.get("/users", requireAdmin, async (req, res) => {
         filters.push(`u.admin_role = $${params.length}`);
       } else if (role === "user") {
         filters.push(
-          `(u.admin_role IS NULL OR u.admin_role NOT IN ('admin', 'support', 'super_admin'))`,
+          `(u.admin_role IS NULL OR u.admin_role IN ('none', 'user') OR
+            (u.admin_role NOT IN ('admin', 'support', 'super_admin', 'viewer') AND COALESCE(u.role, 'user') = 'user'))`,
+        );
+      } else {
+        params.push(role);
+        filters.push(
+          `(u.admin_role = $${params.length} OR
+            (u.admin_role = 'none' AND u.role = $${params.length}))`,
         );
       }
     }
     if (status !== "all") {
       params.push(status);
-      filters.push(`u.status = $${params.length}`);
+      filters.push(
+        `(u.status = $${params.length} AND
+          u.account_status = CASE
+            WHEN $${params.length} = 'active' THEN 'active'
+            ELSE 'blocked'
+          END)`,
+      );
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
@@ -540,8 +556,9 @@ router.patch(
              account_status = $2,
              auth_version = auth_version + $3
          WHERE id = $4
-       RETURNING id, first_name, last_name, email, admin_role, status, plan,
-         quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+       RETURNING id, first_name, last_name, email, admin_role, status, role,
+         account_status, plan, quota_seconds, plan_started_at, plan_expires_at,
+         created_at, last_login_at`,
         [status, accountStatus, authVersionIncrement, req.params.id],
       );
       if (!rows[0])
@@ -578,8 +595,9 @@ router.patch(
       const accountRole = role === "user" ? "user" : role;
       const { rows } = await pool.query(
         `UPDATE users SET admin_role = $1, role = $2 WHERE id = $3
-       RETURNING id, first_name, last_name, email, admin_role, status, plan,
-         quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+       RETURNING id, first_name, last_name, email, admin_role, status, role,
+         account_status, plan, quota_seconds, plan_started_at, plan_expires_at,
+         created_at, last_login_at`,
         [storedRole, accountRole, req.params.id],
       );
       if (!rows[0])

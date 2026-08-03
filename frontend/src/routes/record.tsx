@@ -798,6 +798,7 @@ function RecordPage() {
             <aside className="order-3 min-w-0 xl:order-3 xl:max-w-[360px] xl:-translate-y-4 xl:justify-self-end">
               <VbeeAccountUsageCard
                 firstName={user.firstName}
+                showAlert={false}
                 refreshKey={quotaRefreshKey}
                 onQuotaChange={setQuota}
               />

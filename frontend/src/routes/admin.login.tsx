@@ -13,8 +13,8 @@ export const Route = createFileRoute("/admin/login")({
 function AdminLoginPage() {
   const navigate = useNavigate();
   const { from } = Route.useSearch();
-  const [email, setEmail] = useState("superadmin@vbee.local");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -85,8 +85,8 @@ function AdminLoginPage() {
           </button>
         </form>
         <div className="mt-5 rounded-md bg-[#fbf8ef] p-3 text-xs leading-5 text-[#756894]">
-          Tài khoản admin local được seed từ backend: `superadmin@vbee.local`.
-          Mật khẩu mặc định: `admin123`.
+          Sử dụng tài khoản đã được cấp quyền quản trị. Hệ thống không tạo
+          email hoặc mật khẩu admin mặc định.
         </div>
       </div>
     </div>

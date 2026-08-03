@@ -6,7 +6,14 @@ const {
   prioritizeProvidersForLanguage,
 } = require("../services/transcriptionService");
 
+const originalAssemblySpeechModels = process.env.ASSEMBLYAI_SPEECH_MODELS;
+
 after(async () => {
+  if (originalAssemblySpeechModels === undefined) {
+    delete process.env.ASSEMBLYAI_SPEECH_MODELS;
+  } else {
+    process.env.ASSEMBLYAI_SPEECH_MODELS = originalAssemblySpeechModels;
+  }
   await pool.end();
 });
 
@@ -21,7 +28,30 @@ function buildParams(overrides = {}) {
   });
 }
 
+test("AssemblyAI default models do not use the deprecated universal-3-pro", () => {
+  delete process.env.ASSEMBLYAI_SPEECH_MODELS;
+
+  const params = buildParams({ language: "en" });
+
+  assert.deepEqual(params.speech_models, [
+    "universal-3-5-pro",
+    "universal-2",
+  ]);
+});
+
+test("legacy AssemblyAI model configuration is upgraded automatically", () => {
+  process.env.ASSEMBLYAI_SPEECH_MODELS = "universal-3-pro,universal-2";
+
+  const params = buildParams({ language: "en" });
+
+  assert.deepEqual(params.speech_models, [
+    "universal-3-5-pro",
+    "universal-2",
+  ]);
+});
+
 test("AssemblyAI respects a manually selected language", () => {
+  delete process.env.ASSEMBLYAI_SPEECH_MODELS;
   const params = buildParams({ language: "vi" });
 
   assert.equal(params.language_code, "vi");

@@ -25,7 +25,11 @@ test("PayOS webhooks use only their dedicated limiter", () => {
   );
 });
 
+test("login endpoints use their dedicated brute-force limiter", () => {
+  assert.equal(isGlobalApiLimitExempt(request("/api/auth/login")), true);
+  assert.equal(isGlobalApiLimitExempt(request("/api/admin/auth/login")), true);
+});
+
 test("normal API requests remain globally rate limited", () => {
   assert.equal(isGlobalApiLimitExempt(request("/api/transcribe/jobs/12")), false);
-  assert.equal(isGlobalApiLimitExempt(request("/api/auth/login")), false);
 });

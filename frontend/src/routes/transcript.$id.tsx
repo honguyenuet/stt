@@ -1,5 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -11,9 +18,13 @@ import {
   FileAudio,
   FileText,
   Languages,
+  Pause,
+  Pencil,
   Play,
   Printer,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Save,
   Users,
 } from "lucide-react";
@@ -22,6 +33,12 @@ import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
+import {
+  clampSeekTime,
+  findActiveWordIndex,
+  formatPlaybackTime,
+  replaceTimedWordInText,
+} from "@/lib/transcript-playback";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
 const API_URL = getApiBaseUrl();
@@ -30,7 +47,7 @@ const AUTO_SAVE_DELAY_MS = 1_200;
 const MAX_SYNC_WORDS = 5_000;
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "error";
-type EditorMode = "sync" | "timestamp";
+type EditorMode = "sync" | "edit";
 
 interface TranscriptWord {
   text: string;
@@ -69,6 +86,68 @@ interface TranscriptSegment {
   end: number;
   words: IndexedWord[];
 }
+
+const EditableTimedWord = memo(function EditableTimedWord({
+  word,
+  active,
+  onCommit,
+  onSeek,
+}: {
+  word: IndexedWord;
+  active: boolean;
+  onCommit: (index: number, text: string) => void;
+  onSeek: (milliseconds: number) => void;
+}) {
+  const [value, setValue] = useState(word.text);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) {
+      setValue(word.text);
+    }
+  }, [word.text]);
+
+  function commit() {
+    const nextValue = value.trim();
+    if (!nextValue) {
+      setValue(word.text);
+      return;
+    }
+    if (nextValue !== word.text) onCommit(word.index, nextValue);
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      data-word-index={word.index}
+      aria-current={active ? "true" : undefined}
+      aria-label={`Chỉnh sửa từ ${word.text}`}
+      onChange={(event) => setValue(event.target.value)}
+      onClick={() => onSeek(word.start)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          setValue(word.text);
+          event.currentTarget.blur();
+        }
+      }}
+      style={{
+        width: `${Math.max(1.2, Math.min(36, value.length + 0.35))}ch`,
+      }}
+      className={`mr-0.5 inline-block h-7 min-w-0 rounded border-0 px-px align-middle text-[15px] leading-7 outline-none transition-colors duration-150 ${
+        active
+          ? "bg-[#ffcb05] font-black text-[#21104a] shadow-[0_0_0_3px_rgba(255,203,5,.22)]"
+          : "bg-transparent text-[#342752] hover:bg-[#fff3bb] focus:bg-white focus:ring-2 focus:ring-[#ffcb05]"
+      }`}
+    />
+  );
+});
 
 export const Route = createFileRoute("/transcript/$id")({
   component: TranscriptEditorPage,
@@ -127,6 +206,30 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
   return segments;
 }
 
+function buildTextFromTimedWords(words: TranscriptWord[]) {
+  return buildSegments(words)
+    .map((segment) => {
+      const speakerPrefix =
+        segment.speaker === null || segment.speaker === undefined
+          ? ""
+          : `Người nói ${segment.speaker}: `;
+      return `${speakerPrefix}${segment.words
+        .map((word) => word.text)
+        .join(" ")}`;
+    })
+    .join("\n\n");
+}
+
+function formatClock(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function formatCaptionTime(milliseconds: number, separator: "," | ".") {
   const value = Math.max(0, Math.round(milliseconds));
   const hours = Math.floor(value / 3_600_000);
@@ -160,59 +263,6 @@ function joinWords(words: Array<Pick<TranscriptWord, "text">>) {
     .trim();
 }
 
-function findActiveWord(words: TranscriptWord[], milliseconds: number) {
-  let low = 0;
-  let high = words.length - 1;
-  let candidate = -1;
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2);
-    if (words[middle].start <= milliseconds) {
-      candidate = middle;
-      low = middle + 1;
-    } else {
-      high = middle - 1;
-    }
-  }
-  return candidate;
-}
-
-function formatClock(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
-    : `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getEditorWordRanges(text: string, words: TranscriptWord[]) {
-  const ranges: Array<{ start: number; end: number } | null> = [];
-  const tokens = Array.from(text.matchAll(/\S+/g));
-  let cursor = 0;
-  const lowerText = text.toLowerCase();
-
-  words.forEach((word, index) => {
-    const exact = String(word.text || "").trim().toLowerCase();
-    if (exact) {
-      const found = lowerText.indexOf(exact, cursor);
-      if (found >= 0) {
-        ranges[index] = { start: found, end: found + exact.length };
-        cursor = found + exact.length;
-        return;
-      }
-    }
-
-    const fallback = tokens[index];
-    ranges[index] =
-      fallback && fallback.index !== undefined
-        ? { start: fallback.index, end: fallback.index + fallback[0].length }
-        : null;
-  });
-
-  return ranges;
-}
-
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -220,83 +270,6 @@ function downloadBlob(blob: Blob, filename: string) {
   anchor.download = filename;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function SyncedTranscriptEditor({
-  value,
-  onChange,
-  activeRange,
-  wordRanges,
-  onWordClick,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  activeRange: { start: number; end: number } | null;
-  wordRanges: Array<{ start: number; end: number } | null>;
-  onWordClick: (wordIndex: number) => void;
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<HTMLElement>(null);
-
-  const before = activeRange ? value.slice(0, activeRange.start) : value;
-  const active = activeRange ? value.slice(activeRange.start, activeRange.end) : "";
-  const after = activeRange ? value.slice(activeRange.end) : "";
-
-  function syncScroll() {
-    if (!textareaRef.current || !overlayRef.current) return;
-    overlayRef.current.scrollTop = textareaRef.current.scrollTop;
-    overlayRef.current.scrollLeft = textareaRef.current.scrollLeft;
-  }
-
-  function handleClick() {
-    const position = textareaRef.current?.selectionStart;
-    if (position === undefined) return;
-    const wordIndex = wordRanges.findIndex(
-      (range) =>
-        range !== null && position >= range.start && position <= range.end,
-    );
-    if (wordIndex >= 0) onWordClick(wordIndex);
-  }
-
-  useEffect(() => {
-    if (!activeRef.current || !overlayRef.current || !textareaRef.current) {
-      return;
-    }
-    activeRef.current.scrollIntoView({ block: "center", inline: "nearest" });
-    textareaRef.current.scrollTop = overlayRef.current.scrollTop;
-  }, [activeRange?.start, activeRange?.end]);
-
-  return (
-    <div className="relative min-h-[560px] rounded-lg border border-[#ded5e9] bg-[#fbfaf7] focus-within:border-[#ffcb05] focus-within:ring-2 focus-within:ring-[#ffcb05]/20">
-      <div
-        ref={overlayRef}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words px-5 py-4 text-[15px] leading-8 text-[#342752]"
-      >
-        {before}
-        {activeRange && (
-          <mark
-            ref={activeRef}
-            className="rounded bg-[#ffcb05] px-0.5 text-[#21104a]"
-          >
-            {active || " "}
-          </mark>
-        )}
-        {after}
-      </div>
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onClick={handleClick}
-        onScroll={syncScroll}
-        aria-label="Nội dung transcript"
-        spellCheck
-        className="relative z-10 min-h-[560px] w-full resize-y rounded-lg bg-transparent px-5 py-4 text-[15px] leading-8 text-transparent caret-[#21104a] outline-none selection:bg-[#ffcb05]/35"
-      />
-    </div>
-  );
 }
 
 function TranscriptEditorPage() {
@@ -317,33 +290,35 @@ function TranscriptEditorPage() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [saveError, setSaveError] = useState("");
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSeconds, setPlaybackSeconds] = useState(0);
+  const [audioDurationSeconds, setAudioDurationSeconds] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [translationRetrying, setTranslationRetrying] = useState(false);
+  const [translationRetryError, setTranslationRetryError] = useState("");
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const syncScrollRef = useRef<HTMLDivElement>(null);
+  const playWhenReadyRef = useRef(false);
+  const pendingSeekMillisecondsRef = useRef<number | null>(null);
   const loadRequestRef = useRef<AbortController | null>(null);
   const saveRequestRef = useRef<AbortController | null>(null);
   const editorTextRef = useRef("");
   const savedTextRef = useRef("");
-  const timestampSegmentRefs = useRef<Array<HTMLElement | null>>([]);
+  const wordsRef = useRef<TranscriptWord[]>([]);
 
   const words = useMemo(() => transcript?.words ?? [], [transcript?.words]);
+  const activeTranscriptId = transcript?.id ?? null;
   const syncAvailable = words.length > 0 && words.length <= MAX_SYNC_WORDS;
   const segments = useMemo(() => buildSegments(words), [words]);
-  const activeSegmentIndex = useMemo(
-    () =>
-      activeWordIndex < 0
-        ? -1
-        : segments.findIndex((segment) =>
-            segment.words.some((word) => word.index === activeWordIndex),
-          ),
-    [activeWordIndex, segments],
-  );
-  const editorWordRanges = useMemo(
-    () => getEditorWordRanges(editorText, words),
-    [editorText, words],
-  );
-  const activeEditorRange =
-    activeWordIndex >= 0 ? editorWordRanges[activeWordIndex] || null : null;
+  const activeWordWindow = useMemo(() => {
+    if (activeWordIndex < 0) return [];
+    const start = Math.max(0, activeWordIndex - 6);
+    return words.slice(start, activeWordIndex + 8).map((word, index) => ({
+      ...word,
+      index: start + index,
+    }));
+  }, [activeWordIndex, words]);
   const speakers = useMemo(
     () =>
       Array.from(
@@ -373,6 +348,10 @@ function TranscriptEditorPage() {
   useEffect(() => {
     savedTextRef.current = savedText;
   }, [savedText]);
+
+  useEffect(() => {
+    wordsRef.current = words;
+  }, [words]);
 
   const loadTranscript = useCallback(async () => {
     if (!token || !Number.isFinite(transcriptId)) return;
@@ -410,13 +389,14 @@ function TranscriptEditorPage() {
       detail.words = normalizeWords(detail.words);
       detail.text = String(detail.text || "");
       setTranscript(detail);
+      setTranslationRetryError("");
       setEditorText(detail.text);
       setSavedText(detail.text);
       setSaveStatus("saved");
       setEditorMode(
         detail.words.length > 0 && detail.words.length <= MAX_SYNC_WORDS
           ? "sync"
-          : "timestamp",
+          : "edit",
       );
     } catch (error) {
       if (controller.signal.aborted && !timedOut) return;
@@ -442,13 +422,38 @@ function TranscriptEditorPage() {
   }, [loadTranscript, retryKey]);
 
   useEffect(() => {
+    audioRef.current?.pause();
     setAudioUrl(null);
     setAudioError("");
     setAudioLoading(false);
+    setIsPlaying(false);
+    setPlaybackSeconds(0);
+    setAudioDurationSeconds(0);
+    setActiveWordIndex(-1);
+    playWhenReadyRef.current = false;
+    pendingSeekMillisecondsRef.current = null;
   }, [transcript?.audio_filename, transcript?.id]);
 
-  const loadAudio = useCallback(async () => {
+  useEffect(() => {
+    if (editorMode !== "sync" || activeWordIndex < 0) return;
+    const container = syncScrollRef.current;
+    const activeWord = container?.querySelector<HTMLElement>(
+      `[data-word-index="${activeWordIndex}"]`,
+    );
+    if (!container || !activeWord) return;
+    const containerRect = container.getBoundingClientRect();
+    const wordRect = activeWord.getBoundingClientRect();
+    const isOutsideViewport =
+      wordRect.top < containerRect.top + 64 ||
+      wordRect.bottom > containerRect.bottom - 64;
+    if (isOutsideViewport) {
+      activeWord.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeWordIndex, editorMode]);
+
+  const loadAudio = useCallback(async (playWhenReady = false) => {
     if (!token || !transcript?.audio_filename || audioLoading) return;
+    playWhenReadyRef.current = playWhenReady;
     setAudioLoading(true);
     setAudioError("");
     try {
@@ -470,6 +475,7 @@ function TranscriptEditorPage() {
         body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
       );
     } catch (error) {
+      playWhenReadyRef.current = false;
       setAudioError(
         error instanceof Error ? error.message : "Không tải được audio gốc",
       );
@@ -478,9 +484,36 @@ function TranscriptEditorPage() {
     }
   }, [audioLoading, token, transcript?.audio_filename, transcript?.id]);
 
+  const commitTimedWord = useCallback(
+    (wordIndex: number, nextText: string) => {
+      const currentWords = wordsRef.current;
+      const currentWord = currentWords[wordIndex];
+      if (!currentWord || currentWord.text === nextText) return;
+
+      const nextWords = currentWords.map((word, index) =>
+        index === wordIndex ? { ...word, text: nextText } : word,
+      );
+      const nextTranscriptText =
+        replaceTimedWordInText(
+          editorTextRef.current,
+          currentWords,
+          wordIndex,
+          nextText,
+        ) ?? buildTextFromTimedWords(nextWords);
+
+      wordsRef.current = nextWords;
+      setTranscript((current) =>
+        current ? { ...current, words: nextWords } : current,
+      );
+      setEditorText(nextTranscriptText);
+      setSaveStatus("unsaved");
+    },
+    [],
+  );
+
   const saveTranscript = useCallback(
-    async (text: string) => {
-      if (!token || !transcript) return;
+    async (text: string, timedWords = wordsRef.current) => {
+      if (!token || !activeTranscriptId) return;
       saveRequestRef.current?.abort();
       const controller = new AbortController();
       saveRequestRef.current = controller;
@@ -493,14 +526,14 @@ function TranscriptEditorPage() {
       setSaveError("");
       try {
         const response = await fetch(
-          `${API_URL}/api/transcribe/${transcript.id}`,
+          `${API_URL}/api/transcribe/${activeTranscriptId}`,
           {
             method: "PATCH",
             headers: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text, words: timedWords }),
             signal: controller.signal,
           },
         );
@@ -532,7 +565,7 @@ function TranscriptEditorPage() {
         }
       }
     },
-    [token, transcript],
+    [activeTranscriptId, token],
   );
 
   useEffect(() => {
@@ -563,7 +596,10 @@ function TranscriptEditorPage() {
         Number.isFinite(transcriptId) &&
         pendingText !== savedTextRef.current
       ) {
-        const payload = JSON.stringify({ text: pendingText });
+        const payload = JSON.stringify({
+          text: pendingText,
+          words: wordsRef.current,
+        });
         void fetch(`${API_URL}/api/transcribe/${transcriptId}`, {
           method: "PATCH",
           headers: {
@@ -579,21 +615,153 @@ function TranscriptEditorPage() {
   );
 
   function handleTimeUpdate() {
-    const milliseconds = (audioRef.current?.currentTime || 0) * 1000;
-    setActiveWordIndex(findActiveWord(words, milliseconds));
+    const currentSeconds = audioRef.current?.currentTime || 0;
+    setPlaybackSeconds(currentSeconds);
+    setActiveWordIndex(findActiveWordIndex(words, currentSeconds * 1000));
   }
 
-  useEffect(() => {
-    if (editorMode !== "timestamp" || activeSegmentIndex < 0) return;
-    timestampSegmentRefs.current[activeSegmentIndex]?.scrollIntoView({
-      block: "nearest",
-    });
-  }, [activeSegmentIndex, editorMode]);
+  function handleAudioReady() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = Number.isFinite(audio.duration)
+      ? audio.duration
+      : Number(transcript?.duration || 0);
+    setAudioDurationSeconds(Math.max(0, duration));
+    if (pendingSeekMillisecondsRef.current !== null) {
+      const nextSeconds = pendingSeekMillisecondsRef.current / 1000;
+      pendingSeekMillisecondsRef.current = null;
+      audio.currentTime = nextSeconds;
+      setPlaybackSeconds(nextSeconds);
+      setActiveWordIndex(findActiveWordIndex(words, nextSeconds * 1000));
+    }
+    if (playWhenReadyRef.current) {
+      playWhenReadyRef.current = false;
+      void audio.play().catch(() => {
+        setIsPlaying(false);
+        setAudioError("Trình duyệt đã chặn tự phát. Hãy nhấn Phát.");
+      });
+    }
+  }
 
-  function seekTo(milliseconds: number) {
-    if (!audioRef.current || !audioUrl) return;
-    audioRef.current.currentTime = milliseconds / 1000;
-    void audioRef.current.play();
+  function handlePlayPause() {
+    const audio = audioRef.current;
+    if (!audioUrl || !audio) {
+      void loadAudio(true);
+      return;
+    }
+    if (audio.paused) {
+      if (
+        Number.isFinite(audio.duration) &&
+        audio.currentTime >= audio.duration - 0.1
+      ) {
+        audio.currentTime = 0;
+        setPlaybackSeconds(0);
+      }
+      void audio.play().catch(() => {
+        setAudioError("Không thể phát audio. Vui lòng thử tải lại trang.");
+      });
+    } else {
+      audio.pause();
+    }
+  }
+
+  function seekBy(deltaSeconds: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration =
+      Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration
+        : audioDurationSeconds;
+    const nextTime = clampSeekTime(
+      audio.currentTime,
+      deltaSeconds,
+      duration,
+    );
+    audio.currentTime = nextTime;
+    setPlaybackSeconds(nextTime);
+    setActiveWordIndex(findActiveWordIndex(words, nextTime * 1000));
+  }
+
+  function seekFromProgress(nextSeconds: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = nextSeconds;
+    setPlaybackSeconds(nextSeconds);
+    setActiveWordIndex(findActiveWordIndex(words, nextSeconds * 1000));
+  }
+
+  const seekTo = useCallback(
+    (milliseconds: number) => {
+      if (!audioRef.current || !audioUrl) {
+        pendingSeekMillisecondsRef.current = milliseconds;
+        void loadAudio(true);
+        return;
+      }
+      audioRef.current.currentTime = milliseconds / 1000;
+      void audioRef.current.play();
+    },
+    [audioUrl, loadAudio],
+  );
+
+  async function retryTranslation() {
+    if (
+      !token ||
+      !transcript ||
+      !transcript.translation_target_language ||
+      translationRetrying
+    ) {
+      return;
+    }
+    setTranslationRetrying(true);
+    setTranslationRetryError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${transcript.id}/translate`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            targetLanguage: transcript.translation_target_language,
+          }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        translation?: {
+          text: string;
+          targetLanguage: string;
+          provider: string;
+        };
+      };
+      if (!response.ok || !body.translation?.text) {
+        throw new Error(body.error || "Không tạo được bản dịch mới.");
+      }
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              translated_text: body.translation!.text,
+              translation_target_language:
+                body.translation!.targetLanguage ||
+                current.translation_target_language,
+              translation_provider:
+                body.translation!.provider || current.translation_provider,
+              translation_error: null,
+            }
+          : current,
+      );
+    } catch (error) {
+      setTranslationRetryError(
+        error instanceof Error
+          ? error.message
+          : "Không tạo được bản dịch mới.",
+      );
+    } finally {
+      setTranslationRetrying(false);
+    }
   }
 
   async function handleCopy() {
@@ -706,6 +874,14 @@ function TranscriptEditorPage() {
     );
   }
 
+  const effectiveAudioDuration =
+    audioDurationSeconds || Number(transcript.duration || 0);
+  const progressMaximum = Math.max(
+    effectiveAudioDuration,
+    playbackSeconds,
+    0.1,
+  );
+
   return (
     <div className="min-h-screen bg-[#f8f7fb] text-[#21104a] print:bg-white">
       <AuthenticatedHeader />
@@ -765,7 +941,10 @@ function TranscriptEditorPage() {
           </div>
         </div>
 
-        <section className="sticky top-[61px] z-30 mb-4 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-4 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] print:hidden">
+        <section
+          data-testid="transcript-audio-player"
+          className="sticky top-[61px] z-30 mb-4 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-4 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] print:hidden"
+        >
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
               <FileAudio className="h-4 w-4 shrink-0 text-[#ffcb05]" />
@@ -777,28 +956,103 @@ function TranscriptEditorPage() {
               {formatMediaDuration(transcript.duration, "Chưa xác định")}
             </span>
           </div>
-          {audioUrl ? (
-            <audio
-              ref={audioRef}
-              src={audioUrl}
-              controls
-              onTimeUpdate={handleTimeUpdate}
-              className="h-10 w-full"
-            />
-          ) : transcript.audio_filename ? (
-            <button
-              type="button"
-              onClick={() => void loadAudio()}
-              disabled={audioLoading}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white/10 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-white/15 disabled:opacity-60"
-            >
-              {audioLoading ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              ) : (
-                <Play className="h-4 w-4" />
+          {transcript.audio_filename ? (
+            <>
+              {audioUrl && (
+                <audio
+                  ref={audioRef}
+                  src={audioUrl}
+                  preload="metadata"
+                  onLoadedMetadata={handleAudioReady}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    setActiveWordIndex(-1);
+                  }}
+                  onError={() => {
+                    setIsPlaying(false);
+                    setAudioError(
+                      "Không phát được audio. Vui lòng tải lại trang và thử lại.",
+                    );
+                  }}
+                  className="hidden"
+                />
               )}
-              {audioLoading ? "Đang chuẩn bị audio..." : "Phát audio"}
-            </button>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                <button
+                  type="button"
+                  data-testid="audio-seek-back"
+                  onClick={() => seekBy(-10)}
+                  disabled={!audioUrl}
+                  title="Tua lùi 10 giây"
+                  aria-label="Tua lùi 10 giây"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-full border border-white/20 bg-white/8 px-3 text-xs font-black transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <RotateCcw className="h-4 w-4" /> 10 giây
+                </button>
+                <button
+                  type="button"
+                  data-testid="audio-play-pause"
+                  aria-pressed={isPlaying}
+                  onClick={handlePlayPause}
+                  disabled={audioLoading}
+                  className="inline-flex h-11 min-w-32 items-center justify-center gap-2 rounded-full bg-[#ffcb05] px-5 text-sm font-black text-[#21104a] transition hover:bg-[#ffda45] disabled:cursor-wait disabled:opacity-70"
+                >
+                  {audioLoading ? (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#21104a]/25 border-t-[#21104a]" />
+                  ) : isPlaying ? (
+                    <Pause className="h-4 w-4 fill-current" />
+                  ) : (
+                    <Play className="h-4 w-4 fill-current" />
+                  )}
+                  {audioLoading
+                    ? "Đang tải..."
+                    : isPlaying
+                      ? "Dừng"
+                      : effectiveAudioDuration > 0 &&
+                          playbackSeconds >= effectiveAudioDuration - 0.1
+                        ? "Phát lại"
+                        : "Phát"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="audio-seek-forward"
+                  onClick={() => seekBy(10)}
+                  disabled={!audioUrl}
+                  title="Tua tới 10 giây"
+                  aria-label="Tua tới 10 giây"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-full border border-white/20 bg-white/8 px-3 text-xs font-black transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  10 giây <RotateCw className="h-4 w-4" />
+                </button>
+                <span
+                  data-testid="audio-time"
+                  className="min-w-28 text-center font-mono text-xs font-bold text-white/80 sm:ml-auto sm:text-right"
+                >
+                  {formatPlaybackTime(playbackSeconds)} /{" "}
+                  {formatPlaybackTime(effectiveAudioDuration)}
+                </span>
+              </div>
+
+              <label className="mt-3 block">
+                <span className="sr-only">Vị trí phát audio</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={progressMaximum}
+                  step={0.1}
+                  value={Math.min(playbackSeconds, progressMaximum)}
+                  disabled={!audioUrl}
+                  onChange={(event) =>
+                    seekFromProgress(Number(event.target.value))
+                  }
+                  className="h-1.5 w-full cursor-pointer accent-[#ffcb05] disabled:cursor-not-allowed disabled:opacity-40"
+                />
+              </label>
+            </>
           ) : (
             <p className="rounded-md bg-white/8 px-3 py-2 text-xs text-white/70">
               Bản ghi này không có audio để nghe lại.
@@ -831,89 +1085,101 @@ function TranscriptEditorPage() {
                       : "text-[#756894] hover:text-[#21104a]"
                   } disabled:cursor-not-allowed disabled:opacity-40`}
                 >
-                  <Captions className="h-3.5 w-3.5" /> Đồng bộ audio
+                  <Captions className="h-3.5 w-3.5" /> Đồng bộ & chỉnh sửa
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditorMode("timestamp")}
-                  disabled={!syncAvailable}
+                  data-testid="editor-mode-edit"
+                  onClick={() => setEditorMode("edit")}
                   className={`inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-black transition ${
-                    editorMode === "timestamp"
+                    editorMode === "edit"
                       ? "bg-white text-[#21104a] shadow-sm"
                       : "text-[#756894] hover:text-[#21104a]"
-                  } disabled:cursor-not-allowed disabled:opacity-40`}
+                  }`}
                 >
-                  <Clock3 className="h-3.5 w-3.5" /> Timestamp
+                  <Pencil className="h-3.5 w-3.5" /> Văn bản thuần
                 </button>
               </div>
               <p className="text-xs text-[#8a7da1]">
                 {words.length > MAX_SYNC_WORDS
-                  ? "Transcript quá dài, dùng vùng chỉnh sửa thường để đảm bảo mượt."
+                  ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
                   : syncAvailable
-                    ? editorMode === "timestamp"
-                      ? "Đoạn timestamp đang phát sẽ được tô nổi bật."
-                      : "Nghe audio và sửa trực tiếp tại vùng chữ đang được tô."
+                    ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
                     : "Bản ghi chưa có timestamp theo từng từ."}
               </p>
             </div>
 
-            {editorMode === "timestamp" && syncAvailable ? (
-              <div className="max-h-[calc(100vh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 md:px-7">
-                <div className="mx-auto max-w-3xl space-y-4">
-                  {segments.map((segment, segmentIndex) => {
-                    const active = activeSegmentIndex === segmentIndex;
-                    return (
-                      <article
-                        key={`${segment.start}-${segmentIndex}`}
-                        ref={(element) => {
-                          timestampSegmentRefs.current[segmentIndex] = element;
-                        }}
-                        onClick={() => seekTo(segment.start)}
-                        className={`grid cursor-pointer gap-2 rounded-lg border px-3 py-3 transition sm:grid-cols-[112px_minmax(0,1fr)] ${
-                          active
-                            ? "border-[#ffcb05] bg-[#fff7cf] shadow-sm"
-                            : "border-transparent hover:border-[#ece7f2] hover:bg-[#fbfaf7]"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 sm:block">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              seekTo(segment.start);
-                            }}
-                            className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
-                          >
-                            {formatClock(segment.start)}
-                          </button>
-                          <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
-                            {speakerLabel(segment.speaker)}
-                          </p>
-                        </div>
-                        <p className="text-[15px] leading-8 text-[#342752]">
-                          {joinWords(segment.words)}
+            {editorMode === "sync" && syncAvailable ? (
+              <div
+                ref={syncScrollRef}
+                className="max-h-[calc(100vh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7"
+              >
+                <div className="mx-auto max-w-3xl space-y-6">
+                  {segments.map((segment, segmentIndex) => (
+                    <article
+                      key={`${segment.start}-${segmentIndex}`}
+                      className="grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
+                    >
+                      <div className="flex items-center gap-2 sm:block">
+                        <button
+                          type="button"
+                          onClick={() => seekTo(segment.start)}
+                          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
+                        >
+                          {formatClock(segment.start)}
+                        </button>
+                        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
+                          {speakerLabel(segment.speaker)}
                         </p>
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : syncAvailable ? (
-              <div className="p-4 md:p-6">
-                <SyncedTranscriptEditor
-                  value={editorText}
-                  onChange={setEditorText}
-                  activeRange={activeEditorRange}
-                  wordRanges={editorWordRanges}
-                  onWordClick={(wordIndex) => seekTo(words[wordIndex].start)}
-                />
-                <div className="mt-2 flex items-center justify-between text-xs text-[#8a7da1]">
-                  <span>{editorText.length.toLocaleString("vi-VN")} ký tự</span>
-                  <span>Từ đang phát được tô ngay trong vùng chỉnh sửa</span>
+                      </div>
+                      <p className="text-[15px] leading-8 text-[#342752]">
+                        {segment.words.map((word) => (
+                          <EditableTimedWord
+                            key={`${word.start}-${word.index}`}
+                            word={word}
+                            active={activeWordIndex === word.index}
+                            onCommit={commitTimedWord}
+                            onSeek={seekTo}
+                          />
+                        ))}
+                      </p>
+                    </article>
+                  ))}
                 </div>
               </div>
             ) : (
               <div className="p-4 md:p-6">
+                {syncAvailable && (
+                  <div className="mb-3 rounded-lg border border-[#f1d460] bg-[#fff9dd] px-4 py-3">
+                    <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#7b5e00]">
+                      Theo dõi audio khi chỉnh sửa
+                    </p>
+                    <p
+                      data-testid="active-word-preview"
+                      className="mt-1.5 min-h-7 text-sm leading-7 text-[#574875]"
+                    >
+                      {activeWordWindow.length > 0
+                        ? activeWordWindow.map((word) => (
+                            <span
+                              key={`${word.start}-${word.index}`}
+                              aria-current={
+                                word.index === activeWordIndex
+                                  ? "true"
+                                  : undefined
+                              }
+                              className={
+                                word.index === activeWordIndex
+                                  ? "mx-0.5 rounded bg-[#ffcb05] px-1 font-black text-[#21104a]"
+                                  : "mx-0.5"
+                              }
+                            >
+                              {word.text}
+                            </span>
+                          ))
+                        : "Nhấn Phát để theo dõi từ đang được đọc."}
+                    </p>
+                  </div>
+                )}
                 <textarea
                   value={editorText}
                   onChange={(event) => setEditorText(event.target.value)}
@@ -1060,10 +1326,49 @@ function TranscriptEditorPage() {
                   </p>
                 </div>
               ) : (
-                <p className="mt-3 text-xs leading-5 text-[#8a7da1]">
-                  {transcript.translation_error ||
-                    "Transcript này chưa có bản dịch."}
-                </p>
+                <div className="mt-3">
+                  <p className="text-xs leading-5 text-[#8a7da1]">
+                    {transcript.translation_error
+                      ? "Bản dịch chưa hoàn tất. Hệ thống đã thử các nhà cung cấp dự phòng nhưng chưa nhận được kết quả."
+                      : "Transcript này chưa có bản dịch."}
+                  </p>
+                  {transcript.translation_target_language && (
+                    <button
+                      type="button"
+                      onClick={() => void retryTranslation()}
+                      disabled={translationRetrying}
+                      className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#ffcb05] px-3.5 py-2 text-xs font-black text-[#21104a] transition hover:bg-[#ffda45] disabled:cursor-wait disabled:opacity-65"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${
+                          translationRetrying ? "animate-spin" : ""
+                        }`}
+                      />
+                      {translationRetrying
+                        ? "Đang dịch lại..."
+                        : `Dịch lại sang ${languageLabel(
+                            transcript.translation_target_language,
+                          )}`}
+                    </button>
+                  )}
+                  {translationRetryError && (
+                    <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-semibold leading-5 text-red-700">
+                      Dịch lại chưa thành công. Vui lòng thử lại sau.
+                    </p>
+                  )}
+                  {(translationRetryError ||
+                    transcript.translation_error) && (
+                    <details className="mt-3 text-[11px] text-[#8a7da1]">
+                      <summary className="cursor-pointer font-bold text-[#5f4c82]">
+                        Chi tiết kỹ thuật
+                      </summary>
+                      <p className="mt-2 break-words leading-5">
+                        {translationRetryError ||
+                          transcript.translation_error}
+                      </p>
+                    </details>
+                  )}
+                </div>
               )}
             </section>
           </aside>

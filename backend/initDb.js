@@ -141,6 +141,23 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_note TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;`);
+  await pool.query(`
+    UPDATE users
+    SET admin_role = role
+    WHERE admin_role = 'none'
+      AND role IN ('admin', 'super_admin');
+  `);
+  await pool.query(`
+    UPDATE users
+    SET status = CASE
+      WHEN account_status = 'active' THEN 'active'
+      ELSE 'suspended'
+    END
+    WHERE status IS DISTINCT FROM CASE
+      WHEN account_status = 'active' THEN 'active'
+      ELSE 'suspended'
+    END;
+  `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, account_status);`);
 
   await pool.query(`

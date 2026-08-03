@@ -86,24 +86,37 @@ function isWorkerEnabled() {
   );
 }
 
-async function cleanupExpiredAudioFiles() {
-  const { rows } = await pool.query(
-    `UPDATE transcriptions transcript
-     SET audio_filename = NULL
-     FROM users account
-     WHERE transcript.user_id = account.id
-       AND transcript.audio_filename IS NOT NULL
-       AND transcript.status IN ('completed', 'failed', 'cancelled')
-       AND transcript.created_at < NOW() - ((
-         CASE
-           WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
-           WHEN account.plan = 'business' THEN $4
-            WHEN account.plan IN ('special', 'premium') THEN $3
-           WHEN account.plan = 'standard' THEN $2
-           ELSE $1
-         END
-       )::integer * INTERVAL '1 day')
-     RETURNING transcript.audio_filename`,
+async function cleanupExpiredAudioFiles({
+  db = pool,
+  resolveAudioPath = resolveStoredAudioPath,
+  unlink = fs.promises.unlink,
+  warn = (message) => console.warn(message),
+} = {}) {
+  const { rows } = await db.query(
+    `WITH expired_audio AS (
+       SELECT transcript.id, transcript.audio_filename
+       FROM transcriptions transcript
+       JOIN users account ON account.id = transcript.user_id
+       WHERE transcript.audio_filename IS NOT NULL
+         AND transcript.status IN ('completed', 'failed', 'cancelled')
+         AND transcript.created_at < NOW() - ((
+           CASE
+             WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
+             WHEN account.plan = 'business' THEN $4
+             WHEN account.plan IN ('special', 'premium') THEN $3
+             WHEN account.plan = 'standard' THEN $2
+             ELSE $1
+           END
+         )::integer * INTERVAL '1 day')
+       FOR UPDATE OF transcript
+     ), cleared_audio AS (
+       UPDATE transcriptions transcript
+       SET audio_filename = NULL
+       FROM expired_audio
+       WHERE transcript.id = expired_audio.id
+       RETURNING expired_audio.audio_filename
+     )
+     SELECT audio_filename FROM cleared_audio`,
     [
       FREE_RETENTION_DAYS,
       STANDARD_RETENTION_DAYS,
@@ -112,11 +125,23 @@ async function cleanupExpiredAudioFiles() {
     ],
   );
   await Promise.all(
-    rows.map((row) =>
-      fs.promises
-        .unlink(resolveStoredAudioPath(row.audio_filename))
-        .catch(() => {}),
-    ),
+    rows.map(async (row) => {
+      let audioPath;
+      try {
+        audioPath = resolveAudioPath(row.audio_filename);
+      } catch (error) {
+        warn(`Bỏ qua file lưu trữ không hợp lệ: ${error.message}`);
+        return;
+      }
+
+      try {
+        await unlink(audioPath);
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          warn(`Không thể xóa file âm thanh hết hạn: ${error.message}`);
+        }
+      }
+    }),
   );
   return rows.length;
 }
@@ -900,6 +925,7 @@ async function cancelTranscriptionJobForUser(jobId, userId) {
 
 module.exports = {
   cancelTranscriptionJobForUser,
+  cleanupExpiredAudioFiles,
   enqueueTranscriptionJob,
   getTranscriptionJobForUser,
   kickTranscriptionWorker,

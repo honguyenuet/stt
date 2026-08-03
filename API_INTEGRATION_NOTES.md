@@ -104,17 +104,23 @@ DEEPGRAM_UTTERANCES=true
 
 Deepgram nhận request tại `POST https://api.deepgram.com/v1/listen` với header `Authorization: Token <apiKey>`. Backend đang gửi binary file upload hiện có, nên luồng upload, ghi âm, quota free/premium và API key nội bộ vẫn giữ nguyên.
 
-Muốn dịch transcript sau khi chuyển giọng nói thành văn bản, khuyến nghị dùng Google Cloud Translation:
+Muốn dịch transcript sau khi chuyển giọng nói thành văn bản, dùng chuỗi fallback MyMemory -> AssemblyAI -> Google Cloud Translation:
 
 ```env
 TRANSLATION_PROVIDER=auto
+TRANSLATION_PROVIDER_CHAIN=mymemory,assemblyai,google-cloud-translation
+ASSEMBLYAI_UNDERSTANDING_URL=https://llm-gateway.assemblyai.com/v1/understanding
+ASSEMBLYAI_API_KEY=your_assemblyai_key
 GOOGLE_TRANSLATE_API_URL=https://translation.googleapis.com/language/translate/v2
 GOOGLE_TRANSLATE_API_KEY=your_google_cloud_translation_key
 ```
 
-Nếu chưa có Google key, backend fallback qua LibreTranslate/MyMemory:
+Khi MyMemory hết quota hoặc lỗi, backend tự thử AssemblyAI. Nếu AssemblyAI cũng lỗi, backend thử Google. Chỉ sau khi toàn bộ chuỗi thất bại mới lưu `translation_error`.
+
+Có thể thêm LibreTranslate ở cuối chuỗi:
 
 ```env
+TRANSLATION_PROVIDER_CHAIN=mymemory,assemblyai,google-cloud-translation,libretranslate
 LIBRETRANSLATE_API_URL=https://libretranslate.com
 LIBRETRANSLATE_API_KEY=
 MYMEMORY_API_URL=https://api.mymemory.translated.net

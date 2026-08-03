@@ -1,4 +1,5 @@
-export type AdminRole = "admin" | "support" | "user";
+export type AdminRole = "admin" | "support" | "viewer" | "user";
+export type AssignableAdminRole = Exclude<AdminRole, "viewer">;
 export type UserStatus = "active" | "suspended" | "deleted";
 export type ManagedUserPlan = "free" | "standard" | "special" | "business";
 export type BillingCycle = "monthly" | "yearly";
@@ -250,7 +251,7 @@ export interface SystemStatus {
 
 export interface ListUsersParams extends PaginationParams {
   search?: string;
-  role?: AdminRole | "all";
+  role?: AssignableAdminRole | "all";
   status?: UserStatus | "all";
 }
 

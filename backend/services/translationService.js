@@ -10,8 +10,18 @@ const GOOGLE_TRANSLATE_BASE_URL = (
 const MYMEMORY_BASE_URL = (
   process.env.MYMEMORY_API_URL || "https://api.mymemory.translated.net"
 ).replace(/\/$/, "");
+const ASSEMBLYAI_UNDERSTANDING_URL = (
+  process.env.ASSEMBLYAI_UNDERSTANDING_URL ||
+  "https://llm-gateway.assemblyai.com/v1/understanding"
+).replace(/\/$/, "");
 const GOOGLE_MAX_CHARS = 4500;
 const MYMEMORY_MAX_BYTES = 450;
+const DEFAULT_TRANSLATION_PROVIDER_CHAIN = [
+  "mymemory",
+  "assemblyai",
+  "google-cloud-translation",
+  "libretranslate",
+];
 const TRANSLATION_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(process.env.TRANSLATION_REQUEST_TIMEOUT_MS || "30000", 10),
@@ -97,9 +107,38 @@ function decodeHtmlEntities(value) {
 }
 
 function getProviderPreference() {
-  return String(process.env.TRANSLATION_PROVIDER || "auto")
+  const provider = normalizeTranslationProviderName(
+    process.env.TRANSLATION_PROVIDER || "auto",
+  );
+  return provider || "auto";
+}
+
+function normalizeTranslationProviderName(value) {
+  const clean = String(value || "")
     .trim()
     .toLowerCase();
+  if (!clean || clean === "auto") return "auto";
+  if (["google", "google-cloud"].includes(clean)) {
+    return "google-cloud-translation";
+  }
+  if (["assembly", "assembly-ai"].includes(clean)) return "assemblyai";
+  if (["libre", "libre-translate"].includes(clean)) return "libretranslate";
+  return clean;
+}
+
+function getTranslationProviderChain() {
+  const configured = String(process.env.TRANSLATION_PROVIDER_CHAIN || "")
+    .split(",")
+    .map(normalizeTranslationProviderName)
+    .filter((provider) => provider && provider !== "auto");
+  const fallbackChain =
+    configured.length > 0 ? configured : DEFAULT_TRANSLATION_PROVIDER_CHAIN;
+  const preference = getProviderPreference();
+  const requested =
+    preference === "auto"
+      ? fallbackChain
+      : [preference, ...fallbackChain.filter((item) => item !== preference)];
+  return Array.from(new Set(requested));
 }
 
 function getGoogleLanguage(value, fallback = "") {
@@ -311,10 +350,124 @@ async function translateWithMyMemory({
   };
 }
 
+async function translateWithAssemblyAITranscript({
+  sourceLanguage = "auto",
+  targetLanguage,
+  transcriptId,
+}) {
+  if (typeof fetch !== "function") {
+    throw createTranslationError(
+      "Dịch văn bản cần Node.js 18+ để dùng fetch.",
+      503,
+    );
+  }
+
+  const apiKey = String(process.env.ASSEMBLYAI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw createTranslationError(
+      "Chưa cấu hình ASSEMBLYAI_API_KEY trong backend/.env",
+      503,
+    );
+  }
+  if (!String(transcriptId || "").trim()) {
+    throw createTranslationError(
+      "AssemblyAI cần transcript ID hoặc file âm thanh để dịch.",
+      503,
+    );
+  }
+
+  const target = normalizeTranslateTarget(targetLanguage);
+  if (!target) return null;
+
+  const response = await fetch(ASSEMBLYAI_UNDERSTANDING_URL, {
+    method: "POST",
+    headers: {
+      Authorization: apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      transcript_id: String(transcriptId).trim(),
+      speech_understanding: {
+        request: {
+          translation: {
+            target_languages: [target],
+            formal: false,
+          },
+        },
+      },
+    }),
+    signal: AbortSignal.timeout(TRANSLATION_REQUEST_TIMEOUT_MS),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw createTranslationError(
+      body.error ||
+        body.message ||
+        `AssemblyAI Translation lỗi ${response.status}`,
+      response.status,
+    );
+  }
+
+  const translatedText =
+    body.translated_texts?.[target] ||
+    body.translatedTexts?.[target] ||
+    "";
+  const translationStatus =
+    body.speech_understanding?.response?.translation?.status || null;
+  if (!String(translatedText).trim()) {
+    throw createTranslationError(
+      body.speech_understanding?.response?.translation?.error ||
+        (translationStatus
+          ? `AssemblyAI Translation có trạng thái ${translationStatus}.`
+          : "AssemblyAI chưa trả về nội dung bản dịch."),
+      502,
+    );
+  }
+
+  return {
+    provider: "assemblyai-translation",
+    text: translatedText,
+    sourceLanguage:
+      normalizeLanguageCode(body.language_code, "") ||
+      normalizeLanguageCode(sourceLanguage, "auto"),
+    targetLanguage: target,
+  };
+}
+
+function createDefaultProviderRunners({
+  assemblyTranscriptId,
+  assemblyTranslate,
+}) {
+  return {
+    mymemory: translateWithMyMemory,
+    assemblyai: async (args) => {
+      if (process.env.ASSEMBLYAI_TRANSLATION_ENABLED === "false") {
+        throw createTranslationError(
+          "AssemblyAI Translation đang bị tắt trong cấu hình.",
+          503,
+        );
+      }
+      if (typeof assemblyTranslate === "function") {
+        return assemblyTranslate(args);
+      }
+      return translateWithAssemblyAITranscript({
+        ...args,
+        transcriptId: assemblyTranscriptId,
+      });
+    },
+    "google-cloud-translation": translateWithGoogleCloud,
+    libretranslate: translateWithLibreTranslate,
+  };
+}
+
 async function translateTranscript({
   text,
   sourceLanguage = "auto",
   targetLanguage,
+  assemblyTranscriptId = "",
+  assemblyTranslate,
+  providerRunners,
 }) {
   if (!shouldTranslate({ text, sourceLanguage, targetLanguage })) return null;
   if (String(text).length > MAX_TRANSLATION_CHARS) {
@@ -324,75 +477,48 @@ async function translateTranscript({
     );
   }
 
-  const providerPreference = getProviderPreference();
-  const shouldUseGoogle =
-    providerPreference === "google" ||
-    providerPreference === "google-cloud" ||
-    providerPreference === "google-cloud-translation" ||
-    Boolean(process.env.GOOGLE_TRANSLATE_API_KEY);
-  const shouldUseLibreTranslate =
-    providerPreference === "libretranslate" ||
-    Boolean(process.env.LIBRETRANSLATE_API_KEY) ||
-    TRANSLATION_BASE_URL !== "https://libretranslate.com";
+  const runners =
+    providerRunners ||
+    createDefaultProviderRunners({
+      assemblyTranscriptId,
+      assemblyTranslate,
+    });
   const errors = [];
-
-  if (shouldUseGoogle) {
-    try {
-      return await translateWithGoogleCloud({
-        text,
-        sourceLanguage,
-        targetLanguage,
-      });
-    } catch (error) {
-      errors.push(error.message);
+  for (const provider of getTranslationProviderChain()) {
+    const runner = runners[provider];
+    if (typeof runner !== "function") {
+      errors.push(`${provider}: provider dịch không được hỗ trợ.`);
+      continue;
     }
-  }
-
-  if (shouldUseLibreTranslate) {
     try {
-      return await translateWithLibreTranslate({
+      const result = await runner({
         text,
         sourceLanguage,
         targetLanguage,
       });
+      if (!String(result?.text || "").trim()) {
+        throw createTranslationError(
+          `${provider} không trả về nội dung bản dịch.`,
+          502,
+        );
+      }
+      return result;
     } catch (error) {
-      errors.push(error.message);
-    }
-  }
-
-  if (providerPreference === "mymemory" || providerPreference === "auto") {
-    try {
-      return await translateWithMyMemory({
-        text,
-        sourceLanguage,
-        targetLanguage,
-      });
-    } catch (error) {
-      errors.push(error.message);
-    }
-  }
-
-  if (errors.length === 0) {
-    try {
-      return await translateWithMyMemory({
-        text,
-        sourceLanguage,
-        targetLanguage,
-      });
-    } catch (error) {
-      errors.push(error.message);
+      errors.push(`${provider}: ${error.message || "dịch thất bại."}`);
     }
   }
 
   throw createTranslationError(
-    `Không dịch được transcript. ${errors.join(" ")}`,
+    `Không dịch được transcript sau khi đã thử các nhà cung cấp dự phòng. ${errors.join(" ")}`,
     502,
   );
 }
 
 module.exports = {
+  getTranslationProviderChain,
   normalizeLanguageCode,
   normalizeTranslateTarget,
   shouldTranslate,
+  translateWithAssemblyAITranscript,
   translateTranscript,
 };

@@ -56,6 +56,8 @@ function positiveInt(value, fallback) {
 
 const GLOBAL_API_LIMIT_EXEMPT_PATHS = new Set([
   "/api/health",
+  "/api/auth/login",
+  "/api/admin/auth/login",
   "/api/billing/payos/webhook",
 ]);
 
@@ -118,6 +120,13 @@ const urlImportLimiter = limiter({
   keyByIdentity: true,
   message: "Bạn đã gửi quá nhiều link video trong một giờ.",
 });
+const translationLimiter = limiter({
+  name: "translation-retry",
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  keyByIdentity: true,
+  message: "Bạn đã yêu cầu dịch lại quá nhiều lần. Vui lòng thử lại sau.",
+});
 const publicApiLimiter = limiter({
   name: "public-api",
   windowMs: 60 * 1000,
@@ -156,6 +165,7 @@ module.exports = {
   requestId,
   securityHeaders,
   supportLimiter,
+  translationLimiter,
   uploadLimiter,
   urlImportLimiter,
   webhookLimiter,
