@@ -46,12 +46,17 @@ const JWT_AUDIENCE = process.env.JWT_AUDIENCE || "vbee-web";
 const REFRESH_COOKIE_NAME = IS_PRODUCTION
   ? "__Host-vbee_refresh"
   : "vbee_refresh";
+const DEVELOPMENT_FRONTEND_ORIGINS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
 
 function getAllowedOrigins() {
   return Array.from(
     new Set(
       [
         FRONTEND_URL,
+        ...(IS_PRODUCTION ? [] : DEVELOPMENT_FRONTEND_ORIGINS),
         ...String(process.env.CORS_ALLOWED_ORIGINS || "").split(","),
       ]
         .map((value) => value.trim().replace(/\/$/, ""))
@@ -63,6 +68,44 @@ function getAllowedOrigins() {
 function isTrustedOrigin(origin) {
   if (!origin) return true;
   return getAllowedOrigins().includes(String(origin).replace(/\/$/, ""));
+}
+
+function getRequestOrigin(req) {
+  const origin = req?.get?.("origin");
+  if (origin) return String(origin).replace(/\/$/, "");
+  const referer = req?.get?.("referer");
+  if (!referer) return "";
+  try {
+    const url = new URL(referer);
+    return url.origin.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function getRequestFrontendUrl(req) {
+  const queryOrigin = String(req?.query?.frontendOrigin || "").trim();
+  if (queryOrigin && isTrustedOrigin(queryOrigin)) {
+    return queryOrigin.replace(/\/$/, "");
+  }
+  const origin = getRequestOrigin(req);
+  return origin && isTrustedOrigin(origin) ? origin : FRONTEND_URL;
+}
+
+function getRequestBackendUrl(req) {
+  const host = String(req?.get?.("host") || "").trim();
+  const protocol = String(req?.protocol || "http").replace(/:$/, "");
+  if (!host) return String(process.env.PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
+  return `${protocol}://${host}`.replace(/\/$/, "");
+}
+
+function getOAuthCallbackUrl(req, provider) {
+  const cleanProvider = String(provider || "").trim().toLowerCase();
+  const frontendUrl = getRequestFrontendUrl(req);
+  const backendUrl = frontendUrl === "http://localhost:3000"
+    ? "http://localhost:3001"
+    : getRequestBackendUrl(req);
+  return `${backendUrl}/api/auth/${cleanProvider}/callback`;
 }
 
 function validateSecurityConfig() {
@@ -187,6 +230,8 @@ function validateSecurityConfig() {
 module.exports = {
   ACCESS_TOKEN_TTL_SECONDS,
   FRONTEND_URL,
+  getOAuthCallbackUrl,
+  getRequestFrontendUrl,
   IS_PRODUCTION,
   JWT_AUDIENCE,
   JWT_ISSUER,

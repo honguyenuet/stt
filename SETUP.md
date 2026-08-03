@@ -19,6 +19,50 @@ CREATE DATABASE golden_voice;
 6. Thêm Authorized redirect URI: `http://localhost:3001/api/auth/google/callback`
 7. Copy **Client ID** và **Client Secret**
 
+### Facebook Login
+
+1. Tạo ứng dụng tại `https://developers.facebook.com/apps/`.
+2. Thêm sản phẩm **Facebook Login for Business** và chọn loại ứng dụng phù hợp.
+3. Trong **Valid OAuth Redirect URIs**, thêm:
+   `http://localhost:3001/api/auth/facebook/callback` cho môi trường local và
+   callback HTTPS của backend cho production.
+4. Xin quyền `public_profile` và `email`, sau đó điền:
+
+```env
+FACEBOOK_APP_ID=
+FACEBOOK_APP_SECRET=
+FACEBOOK_GRAPH_API_VERSION=v23.0
+FACEBOOK_CALLBACK_URL=http://localhost:3001/api/auth/facebook/callback
+```
+
+Khi ứng dụng Facebook còn ở Development mode, chỉ tài khoản có vai trò trong
+ứng dụng mới đăng nhập được. Trước khi dùng thật, hoàn tất App Review và chuyển
+ứng dụng sang Live.
+
+### Sign in with Apple
+
+1. Trong Apple Developer, tạo **Services ID** cho website và bật
+   **Sign in with Apple**.
+2. Khai báo domain và Return URL trỏ đến:
+   `https://ten-mien-backend/api/auth/apple/callback`.
+3. Tạo Sign in with Apple key (`.p8`) rồi lấy Team ID và Key ID.
+4. Lưu file `.p8` ngoài repository, giới hạn quyền đọc cho tiến trình backend,
+   sau đó điền:
+
+```env
+APPLE_CLIENT_ID=com.congty.vbee.web
+APPLE_TEAM_ID=
+APPLE_KEY_ID=
+APPLE_PRIVATE_KEY_PATH=C:\secure\AuthKey_XXXXXXXXXX.p8
+APPLE_PRIVATE_KEY=
+APPLE_CALLBACK_URL=https://ten-mien-backend/api/auth/apple/callback
+OAUTH_STATE_TTL_MINUTES=10
+```
+
+Apple không chấp nhận callback `localhost` hoặc HTTP. Cần domain HTTPS thật
+hoặc đường hầm HTTPS để kiểm thử. Chỉ dùng một trong `APPLE_PRIVATE_KEY_PATH`
+và `APPLE_PRIVATE_KEY`; không commit khóa `.p8`.
+
 ## 3. Cài đặt Backend
 
 ```bash
@@ -26,8 +70,8 @@ cd backend
 copy .env.example .env
 # Mở .env và điền các thông tin:
 # - DB_PASSWORD, JWT_SECRET
-# - SONIX_API_KEY nếu dùng Sonix.ai
-# - hoặc VBEE_API_KEY nếu dùng Vbee STT
+# - VBEE_API_KEY nếu dùng Vbee STT UAT
+# - hoặc SONIX_API_KEY nếu dùng Sonix.ai
 # - hoặc DEEPGRAM_API_KEY nếu dùng Deepgram
 # - hoặc ASSEMBLYAI_API_KEY nếu dùng AssemblyAI
 
@@ -36,7 +80,65 @@ npm run dev
 # Backend chạy tại http://localhost:3001
 ```
 
+### Bật CMS quản trị
+
+CMS không tạo sẵn tài khoản hoặc mật khẩu quản trị. Hãy đăng ký tài khoản bình thường,
+sau đó thêm đúng email vào `backend/.env` và khởi động lại backend:
+
+```env
+ADMIN_EMAILS=admin@congty.vn
+SUPER_ADMIN_EMAILS=quantri@congty.vn
+```
+
+CMS V1 cũng hỗ trợ tạo Super Admin có chủ đích khi khởi tạo database. Phải điền
+cả hai biến dưới đây và dùng mật khẩu tối thiểu 12 ký tự; dự án không có tài
+khoản hoặc mật khẩu quản trị mặc định:
+
+```env
+ADMIN_SEED_EMAIL=quantri@congty.vn
+ADMIN_SEED_PASSWORD=mat-khau-rieng-toi-thieu-12-ky-tu
+PROVIDER_SECRET_KEY=chuoi-ngau-nhien-rieng-de-ma-hoa-api-key
+```
+
+### Cảnh báo quota cho quản trị viên
+
+CMS tự tạo cảnh báo khi quota thực tế còn 20%, 5% hoặc 0%. Cảnh báo được
+lưu trong PostgreSQL nên không mất khi người dùng xóa transcript. Mua thêm giờ,
+nâng cấp gói hoặc bắt đầu chu kỳ mới sẽ tự đóng cảnh báo đang mở.
+
+Để gửi email cảnh báo, cấu hình SMTP và danh sách người nhận:
+
+```env
+QUOTA_ALERT_EMAIL_ENABLED=true
+QUOTA_ALERT_EMAIL_INTERVAL_SECONDS=30
+QUOTA_ALERT_EMAIL_MAX_ATTEMPTS=5
+QUOTA_ALERT_ADMIN_EMAILS=admin@congty.vn,vanhanh@congty.vn
+```
+
+Nếu `QUOTA_ALERT_ADMIN_EMAILS` để trống, hệ thống dùng `ADMIN_EMAILS`. Khi chưa
+có SMTP, cảnh báo vẫn xuất hiện trong tab **Cảnh báo quota** của CMS.
+
+Có thể phân tách nhiều email bằng dấu phẩy. `Super Admin` được cấp vai trò cho nhân sự
+khác; `Admin` quản lý người dùng, gói và vận hành; `Support` và `Finance` chỉ thấy các
+phân hệ phù hợp. Sau khi đăng nhập bằng tài khoản có quyền, mở `http://localhost:3000/admin`
+hoặc chọn **Trung tâm quản trị** trong menu tài khoản.
+
 ### Chọn provider Speech to Text
+
+Để dùng Vbee STT UAT bằng một API key, cấu hình:
+
+```env
+TRANSCRIPTION_PROVIDER=auto
+TRANSCRIPTION_PROVIDER_CHAIN=vbee,assemblyai,deepgram,sonix
+VBEE_API_KEY=your_vbee_api_key
+VBEE_API_KEY_HEADER=X-API-Key
+VBEE_API_KEY_SCHEME=
+VBEE_STT_API_BASE_URL=https://uat-api.vbeelabs.ai
+```
+
+Giữ `VBEE_API_KEY_SCHEME` trống khi dùng header `X-API-Key`. Chế độ `auto`
+chọn provider đầu tiên đã có khóa hợp lệ và chuyển sang provider tiếp theo khi
+gặp lỗi hạ tầng, xác thực hoặc quota.
 
 Trong `backend/.env`, đặt:
 
@@ -80,7 +182,21 @@ Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định theo tà
 
 ### Tách vocal cho bài hát
 
-Ở trang Tải file, chọn `Bài hát / nhạc nền` trước khi chuyển đổi. Backend dùng Demucs để tách stem vocal, chuẩn hóa lại bằng ffmpeg rồi mới gửi file vocal sang provider speech-to-text. Khi Demucs không chạy được, backend tự fallback sang bộ lọc ffmpeg để vẫn xử lý file.
+Ở trang Tải file, chọn `Bài hát / nhạc nền` trước khi chuyển đổi. Backend dùng
+Demucs để tách stem vocal rồi mới gửi file vocal sang provider speech-to-text.
+Khi Demucs không chạy được, backend giữ nguyên file gốc thay vì áp bộ lọc có
+thể làm méo giọng hát.
+
+Backend kiểm tra độ tin cậy trung bình và lượng từ nhận được của transcript bài
+hát. Kết quả dưới ngưỡng sẽ bị từ chối để tránh lưu văn bản do mô hình suy đoán:
+
+```env
+SONG_MIN_TRANSCRIPT_CONFIDENCE=0.7
+SONG_MIN_WORDS_PER_MINUTE=18
+```
+
+Speaker diarization được tự động tắt trong chế độ bài hát vì các lớp vocal và
+nhạc nền có thể bị nhận nhầm thành nhiều người nói.
 
 ```env
 AUDIO_PREPROCESSING_ENABLED=true
@@ -146,11 +262,20 @@ Nếu muốn dùng provider cũ:
 TRANSCRIPTION_PROVIDER=assemblyai
 ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 ASSEMBLYAI_TRANSLATION_ENABLED=true
+ASSEMBLYAI_SPEECH_MODELS=universal-3-pro,universal-2
 ```
 
 Khi AssemblyAI là provider chính và người dùng chọn ngôn ngữ đích, backend gửi
 yêu cầu Speech Understanding Translation cùng job transcript. MyMemory chỉ còn
 là fallback cho các luồng chỉ có văn bản như realtime trên trình duyệt.
+
+Khi người dùng chọn một ngôn ngữ cụ thể, backend gửi `language_code` thay vì
+tự nhận diện. Lựa chọn `Tiếng Việt + English (đa ngôn ngữ)` dùng
+`universal-2`, bật tự nhận diện và code switching để giữ nguyên tiếng Việt hoặc
+tiếng Anh theo từng đoạn. Ở chế độ `Bài hát / nhạc nền`, lựa chọn tự nhận diện
+cũng giới hạn phạm vi dự kiến về tiếng Việt và tiếng Anh để tránh nhận nhầm
+sang hệ chữ khác. Các job này ưu tiên AssemblyAI trước chuỗi provider; nếu API
+không sẵn sàng, cơ chế failover hiện có mới chuyển sang provider tiếp theo.
 
 ## 4. Cài đặt & chạy Frontend
 
@@ -169,9 +294,11 @@ npm run dev
 ```
 Trang chủ → Bấm nút → Chuyển đến /login
 /login → Bấm "Đăng nhập bằng Google" → Google OAuth
-  → Đã có tài khoản → /dashboard (đăng nhập thành công)
-  → Chưa có → /register (nhập first name, last name, email, password)
-              → Tạo xong → /dashboard
+       → Bấm "Facebook" → Facebook Login
+       → Bấm "Apple" → Sign in with Apple
+  → Danh tính mạng xã hội đã có → /dashboard
+  → Danh tính mới có email xác minh → tạo tài khoản Free → /dashboard
+  → Email đã thuộc phương thức khác → yêu cầu đăng nhập bằng phương thức cũ
 ```
 
 ## Biến môi trường Backend (.env)
@@ -188,7 +315,32 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | GOOGLE_CLIENT_ID | Google OAuth Client ID | ... |
 | GOOGLE_CLIENT_SECRET | Google OAuth Client Secret | ... |
 | GOOGLE_CALLBACK_URL | Google OAuth callback URL | http://localhost:3001/api/auth/google/callback |
-| TRANSCRIPTION_PROVIDER | Provider speech-to-text | vbee, sonix, deepgram hoặc assemblyai |
+| FACEBOOK_APP_ID | Facebook App ID | ... |
+| FACEBOOK_APP_SECRET | Facebook App Secret | ... |
+| FACEBOOK_CALLBACK_URL | Facebook OAuth callback URL | http://localhost:3001/api/auth/facebook/callback |
+| APPLE_CLIENT_ID | Apple Services ID | com.congty.vbee.web |
+| APPLE_TEAM_ID | Apple Developer Team ID | ... |
+| APPLE_KEY_ID | ID của Sign in with Apple key | ... |
+| APPLE_PRIVATE_KEY_PATH | Đường dẫn tuyệt đối đến khóa `.p8` | C:\secure\AuthKey_XXXXXXXXXX.p8 |
+| APPLE_CALLBACK_URL | Apple callback HTTPS | https://api.example.com/api/auth/apple/callback |
+| TRANSCRIPTION_PROVIDER | Provider speech-to-text hoặc chế độ tự chọn | auto, vbee, sonix, deepgram hoặc assemblyai |
+| TRANSCRIPTION_PROVIDER_CHAIN | Thứ tự API chính và dự phòng, phân cách bằng dấu phẩy | vbee,assemblyai,deepgram,sonix |
+| PROVIDER_FAILOVER_ENABLED | Chuyển sang API kế tiếp khi API hiện tại lỗi hạ tầng, quota hoặc xác thực | true |
+| PROVIDER_RETRY_ATTEMPTS | Số lần thử tối đa trên cùng một API trước khi chuyển tiếp | 2 |
+| PROVIDER_CIRCUIT_FAILURE_THRESHOLD | Số yêu cầu lỗi liên tiếp trước khi tạm ngắt API | 3 |
+| PROVIDER_CIRCUIT_OPEN_SECONDS | Thời gian tạm ngắt lần đầu | 120 |
+| PROVIDER_CIRCUIT_MAX_OPEN_SECONDS | Thời gian tạm ngắt tối đa khi API tiếp tục lỗi | 1800 |
+| PROVIDER_CIRCUIT_PROBE_SECONDS | Thời gian khóa một job thăm dò ở trạng thái half-open | 90 |
+| VBEE_API_KEY | API key Vbee, chỉ lưu ở backend | ... |
+| VBEE_API_KEY_HEADER | Tên header chứa API key | X-API-Key |
+| VBEE_API_KEY_SCHEME | Tiền tố key; để trống với X-API-Key |  |
+| VBEE_STT_API_BASE_URL | Endpoint Vbee STT UAT | https://uat-api.vbeelabs.ai |
+| VBEE_TRANSCRIBE_PATH | Path gửi file; đổi theo tài liệu API Vbee đang dùng | /stt |
+| VBEE_RESULT_PATH_TEMPLATE | Path polling, dùng `{id}` cho mã job | /stt/transcripts/{id} |
+| VBEE_ID_PATH | Dot path tới mã job nếu response không dùng trường mặc định | data.id |
+| VBEE_STATUS_PATH | Dot path tới trạng thái job | data.status |
+| VBEE_TEXT_PATH | Dot path tới văn bản kết quả | data.text |
+| PROVIDER_SECRET_KEY | Khóa riêng để mã hóa API key lưu trong CMS | random_long_string |
 | SONIX_API_KEY | API key Sonix.ai | your_sonix_api_key |
 | SONIX_LANGUAGE | Mã ngôn ngữ Sonix | vi |
 | DEEPGRAM_API_KEY | API key Deepgram | your_deepgram_api_key |

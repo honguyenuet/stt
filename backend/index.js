@@ -30,13 +30,18 @@ const initDatabase = require("./initDb");
 const { getTranscriptionProvider } = require("./services/transcriptionService");
 const { startTranscriptionWorker } = require("./services/transcriptionQueue");
 const { cleanupExpiredStagingFiles } = require("./services/uploadStorage");
+const { startQuotaAlertDispatcher } = require("./services/quotaAlertService");
+const {
+  startBillingReconciliationDispatcher,
+} = require("./services/billingService");
 
 const app = express();
 app.disable("x-powered-by");
 const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || "", 10);
-if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
-  app.set("trust proxy", trustProxyHops);
-}
+app.set(
+  "trust proxy",
+  Number.isInteger(trustProxyHops) && trustProxyHops > 0 ? trustProxyHops : 1,
+);
 
 app.use(requestId);
 app.use(securityHeaders);
@@ -114,6 +119,8 @@ initDatabase()
       15 * 60 * 1000,
     );
     stagingCleanupTimer.unref?.();
+    startQuotaAlertDispatcher();
+    startBillingReconciliationDispatcher();
     await startTranscriptionWorker();
     const server = app.listen(PORT, () => {
       console.log(`Backend server đang chạy tại http://localhost:${PORT}`);

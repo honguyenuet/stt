@@ -1,12 +1,10 @@
 require("../config/env");
 const express = require("express");
-const multer = require("multer");
 const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const pool = require("../db");
 const {
-  MAX_SIZE_MB,
   assertTranscriptionProviderReady,
   probeMediaFile,
   resolveStoredAudioPath,
@@ -37,7 +35,7 @@ const {
 const { normalizeFilename } = require("../services/filenameEncoding");
 const {
   cleanupStagedFile,
-  createMediaUpload,
+  createPlanAwareMediaUpload,
 } = require("../services/uploadStorage");
 const {
   downloadYoutubeAudio,
@@ -49,10 +47,45 @@ const { writeSecurityAudit } = require("../services/securityAuditService");
 
 const router = express.Router();
 
-const upload = createMediaUpload(MAX_SIZE_MB);
+const upload = createPlanAwareMediaUpload(async (req) => {
+  const quota = await getQuotaStatus(req.user.id);
+  return quota.limits.maxUploadMb;
+});
+const AUDIO_STREAM_TTL_SECONDS = Math.min(
+  15 * 60,
+  Math.max(
+    60,
+    Number.parseInt(process.env.AUDIO_STREAM_TTL_SECONDS || "300", 10) || 300,
+  ),
+);
+
+function createAudioStreamSignature(id, userId, expiresAt) {
+  const secret = process.env.AUDIO_URL_SECRET || process.env.JWT_SECRET;
+  if (!secret) throw new Error("Máy chủ chưa cấu hình khóa ký audio");
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${id}:${userId}:${expiresAt}`)
+    .digest("hex");
+}
+
+function isValidAudioStreamSignature(id, userId, expiresAt, signature) {
+  if (!signature || expiresAt < Math.floor(Date.now() / 1000)) return false;
+  const expected = Buffer.from(
+    createAudioStreamSignature(id, userId, expiresAt),
+    "hex",
+  );
+  const received = Buffer.from(String(signature), "hex");
+  return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+}
 
 function hasAcceptedMediaRights(value) {
   return value === true || String(value || "").toLowerCase() === "true";
+}
+
+function toFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function assertMediaRightsAccepted(req) {
@@ -281,17 +314,7 @@ router.post(
   "/",
   requireAuth,
   uploadLimiter,
-  (req, res, next) => {
-    upload.single("audio")(req, res, (err) => {
-      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-        return res
-          .status(413)
-          .json({ error: `File quá lớn (tối đa ${MAX_SIZE_MB}MB)` });
-      }
-      if (err) return res.status(400).json({ error: err.message });
-      next();
-    });
-  },
+  upload,
   async (req, res) => {
     try {
       if (!req.file) {
@@ -418,10 +441,46 @@ router.delete("/jobs/:jobId", requireAuth, async (req, res) => {
 // GET /api/transcribe/history — lịch sử và trạng thái job của user
 router.get("/history", requireAuth, async (req, res) => {
   try {
+    const paginated = String(req.query.paginated || "") === "1";
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(
+      50,
+      Math.max(1, Number.parseInt(req.query.limit, 10) || 20),
+    );
+    const search = String(req.query.q || "").trim().slice(0, 200);
+    const offset = (page - 1) * limit;
+    const values = [req.user.id];
+    let searchSql = "";
+    if (search) {
+      values.push(`%${search}%`);
+      searchSql = `
+        AND (
+          transcript.filename ILIKE $${values.length}
+          OR COALESCE(transcript.text, '') ILIKE $${values.length}
+          OR COALESCE(transcript.translated_text, '') ILIKE $${values.length}
+        )`;
+    }
+
+    const countResult = paginated
+      ? await pool.query(
+          `SELECT COUNT(*)::integer AS total
+           FROM transcriptions transcript
+           WHERE transcript.user_id = $1${searchSql}`,
+          values,
+        )
+      : null;
+    const queryValues = [...values, limit, offset];
+    const limitParameter = queryValues.length - 1;
+    const offsetParameter = queryValues.length;
     const { rows } = await pool.query(
       `SELECT transcript.id, transcript.filename, transcript.file_size, transcript.duration,
-         transcript.processing_seconds, transcript.text, transcript.words, transcript.audio_filename,
-         transcript.source_language, transcript.translated_text, transcript.translation_target_language,
+         transcript.processing_seconds,
+         LEFT(COALESCE(transcript.text, ''), 500) AS text,
+         LENGTH(COALESCE(transcript.text, '')) > 500 AS text_truncated,
+         transcript.audio_filename, transcript.source_language,
+         LEFT(transcript.translated_text, 500) AS translated_text,
+         LENGTH(COALESCE(transcript.translated_text, '')) > 500 AS translation_truncated,
+         transcript.translation_target_language,
          transcript.translation_provider, transcript.translation_error, transcript.created_at,
          COALESCE(job.status, transcript.status, 'completed') AS status,
          COALESCE(job.progress, CASE WHEN transcript.status = 'completed' THEN 100 ELSE 0 END) AS progress,
@@ -429,15 +488,18 @@ router.get("/history", requireAuth, async (req, res) => {
          job.id AS job_id
        FROM transcriptions transcript
        LEFT JOIN transcription_jobs job ON job.transcription_id = transcript.id
-       WHERE transcript.user_id = $1
-       ORDER BY transcript.created_at DESC LIMIT 20`,
-      [req.user.id],
+       WHERE transcript.user_id = $1${searchSql}
+       ORDER BY transcript.created_at DESC, transcript.id DESC
+       LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
+      queryValues,
     );
     const enriched = await Promise.all(
       rows.map(async (item) => {
         const normalizedItem = {
           ...item,
           filename: normalizeFilename(item.filename),
+          duration: toFiniteNumberOrNull(item.duration),
+          processing_seconds: toFiniteNumberOrNull(item.processing_seconds),
         };
         if (!item.job_id || !["queued", "processing"].includes(item.status)) {
           return normalizedItem;
@@ -454,9 +516,65 @@ router.get("/history", requireAuth, async (req, res) => {
           : normalizedItem;
       }),
     );
-    return res.json(enriched);
-  } catch {
+    res.setHeader("Cache-Control", "no-store");
+    if (!paginated) return res.json(enriched);
+
+    const total = Number(countResult.rows[0]?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return res.json({
+      items: enriched,
+      pagination: {
+        page,
+        pageSize: limit,
+        total,
+        totalPages,
+        hasPrevious: page > 1,
+        hasNext: page < totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("Get transcription history error:", error.message);
     return res.status(500).json({ error: "Lỗi server" });
+  }
+});
+
+// GET /api/transcribe/history/:id - tải nội dung đầy đủ khi người dùng mở bản ghi
+router.get("/history/:id", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT transcript.id, transcript.filename, transcript.file_size, transcript.duration,
+         transcript.processing_seconds, transcript.text, transcript.words, transcript.audio_filename,
+         transcript.source_language, transcript.translated_text, transcript.translation_target_language,
+         transcript.translation_provider, transcript.translation_error, transcript.created_at,
+         COALESCE(job.status, transcript.status, 'completed') AS status,
+         COALESCE(job.progress, CASE WHEN transcript.status = 'completed' THEN 100 ELSE 0 END) AS progress,
+         COALESCE(job.error_message, transcript.error_message) AS error_message,
+         job.id AS job_id
+       FROM transcriptions transcript
+       LEFT JOIN transcription_jobs job ON job.transcription_id = transcript.id
+       WHERE transcript.id = $1 AND transcript.user_id = $2
+       LIMIT 1`,
+      [id, req.user.id],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Không tìm thấy bản ghi" });
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      ...rows[0],
+      filename: normalizeFilename(rows[0].filename),
+      text: String(rows[0].text || ""),
+      words: Array.isArray(rows[0].words) ? rows[0].words : [],
+    });
+  } catch (error) {
+    console.error("Get transcription detail error:", error.message);
+    return res.status(500).json({ error: "Không thể tải nội dung bản ghi" });
   }
 });
 
@@ -637,6 +755,7 @@ router.post("/text", requireAuth, async (req, res) => {
         userId: req.user.id,
         transcriptionId: savedTranscript.id,
         durationSeconds,
+        source,
         db: client,
       });
       if (source === "realtime") {
@@ -688,7 +807,87 @@ router.post("/text", requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/transcribe/:id/audio — phục vụ file audio (có xác thực)
+// POST /api/transcribe/:id/audio-access - cấp URL ngắn hạn để trình duyệt stream audio.
+router.post("/:id/audio-access", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  try {
+    const { rows } = await pool.query(
+      "SELECT audio_filename FROM transcriptions WHERE id = $1 AND user_id = $2",
+      [id, req.user.id],
+    );
+    if (!rows[0]?.audio_filename) {
+      return res.status(404).json({ error: "Không có file audio" });
+    }
+    const filePath = resolveStoredAudioPath(rows[0].audio_filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File audio không tồn tại trên server" });
+    }
+    const expiresAt = Math.floor(Date.now() / 1000) + AUDIO_STREAM_TTL_SECONDS;
+    const signature = createAudioStreamSignature(id, req.user.id, expiresAt);
+    const query = new URLSearchParams({
+      userId: String(req.user.id),
+      expiresAt: String(expiresAt),
+      signature,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      url: `/api/transcribe/${id}/audio-stream?${query.toString()}`,
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: error.message || "Không tạo được đường dẫn audio",
+    });
+  }
+});
+
+// GET /api/transcribe/:id/audio-stream - URL ký ngắn hạn, hỗ trợ HTTP Range.
+router.get("/:id/audio-stream", async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const userId = Number.parseInt(req.query.userId, 10);
+  const expiresAt = Number.parseInt(req.query.expiresAt, 10);
+  if (
+    !Number.isFinite(id) ||
+    !Number.isFinite(userId) ||
+    !Number.isFinite(expiresAt)
+  ) {
+    return res.status(400).json({ error: "Đường dẫn audio không hợp lệ" });
+  }
+  try {
+    if (
+      !isValidAudioStreamSignature(
+        id,
+        userId,
+        expiresAt,
+        req.query.signature,
+      )
+    ) {
+      return res.status(401).json({ error: "Đường dẫn audio đã hết hạn" });
+    }
+    const { rows } = await pool.query(
+      "SELECT audio_filename FROM transcriptions WHERE id = $1 AND user_id = $2",
+      [id, userId],
+    );
+    if (!rows[0]?.audio_filename) {
+      return res.status(404).json({ error: "Không có file audio" });
+    }
+    const filePath = resolveStoredAudioPath(rows[0].audio_filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File audio không tồn tại trên server" });
+    }
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Content-Disposition", "inline");
+    return res.sendFile(filePath);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Lỗi server" });
+  }
+});
+
+// GET /api/transcribe/:id/audio — tải file audio có xác thực (tương thích cũ)
 router.get("/:id/audio", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
@@ -719,7 +918,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Thiếu trường text" });
   try {
     const { rowCount, rows } = await pool.query(
-      "UPDATE transcriptions SET text = $1 WHERE id = $2 AND user_id = $3 RETURNING *",
+      "UPDATE transcriptions SET text = $1 WHERE id = $2 AND user_id = $3 RETURNING id, text",
       [text, id, req.user.id],
     );
     if (rowCount === 0)

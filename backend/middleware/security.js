@@ -27,6 +27,7 @@ function limiter({
   keyByIdentity = false,
   sharedStore = true,
   skipSuccessfulRequests = false,
+  skip,
 }) {
   return rateLimit({
     windowMs,
@@ -34,6 +35,7 @@ function limiter({
     standardHeaders: "draft-8",
     legacyHeaders: false,
     skipSuccessfulRequests,
+    ...(skip ? { skip } : {}),
     ...(sharedStore ? { store: new PostgresRateLimitStore(name) } : {}),
     keyGenerator: keyByIdentity
       ? (req) => {
@@ -47,11 +49,29 @@ function limiter({
   });
 }
 
+function positiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const GLOBAL_API_LIMIT_EXEMPT_PATHS = new Set([
+  "/api/health",
+  "/api/billing/payos/webhook",
+]);
+
+function isGlobalApiLimitExempt(req) {
+  const requestPath = String(req.originalUrl || req.url || "")
+    .split("?")[0]
+    .replace(/\/+$/, "");
+  return GLOBAL_API_LIMIT_EXEMPT_PATHS.has(requestPath);
+}
+
 const globalApiLimiter = limiter({
   name: "global-api",
-  windowMs: 15 * 60 * 1000,
-  limit: 500,
-  sharedStore: false,
+  windowMs:
+    positiveInt(process.env.GLOBAL_API_RATE_WINDOW_SECONDS, 15 * 60) * 1000,
+  limit: positiveInt(process.env.GLOBAL_API_RATE_LIMIT, 5000),
+  skip: isGlobalApiLimitExempt,
   message: "Hệ thống đang nhận quá nhiều yêu cầu từ kết nối này.",
 });
 const loginLimiter = limiter({
@@ -126,6 +146,7 @@ const webhookLimiter = limiter({
 module.exports = {
   billingLimiter,
   globalApiLimiter,
+  isGlobalApiLimitExempt,
   loginLimiter,
   oauthLimiter,
   passwordLimiter,

@@ -39,10 +39,9 @@ import {
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 interface Word {
   text: string;
@@ -194,6 +193,8 @@ function RecordPage() {
 
   useEffect(() => {
     void checkMicrophoneStatus();
+    // The initial permission probe should only run once when this screen mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -478,7 +479,7 @@ function RecordPage() {
   async function startRecording() {
     if (quota?.isLimitReached) {
       setError(
-        "Free đã hết 30 phút. Vui lòng nâng cấp Premium để ghi âm tiếp.",
+        "Quota Theo lượt đã hết. Vui lòng nâng cấp gói để ghi âm tiếp.",
       );
       setStatus("error");
       return;
@@ -768,52 +769,7 @@ function RecordPage() {
             <div className="order-1 min-w-0 xl:order-2">
               <RecorderPanel status={status} recordTime={recordTime} />
               {status === "idle" && (
-                <div className="mt-2 flex flex-col items-center gap-2 text-center">
-                  <button
-                    onClick={() => void startRecording()}
-                    disabled={
-                      quota?.isLimitReached ||
-                      micStatus === "blocked" ||
-                      micStatus === "unsupported"
-                    }
-                    className="inline-flex items-center gap-3 rounded-full bg-primary px-6 py-3 text-base font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Mic className="h-6 w-6" />
-                    {quota?.isLimitReached
-                      ? "Upgrade to Record"
-                      : micStatus === "blocked"
-                        ? "Microphone bị chặn"
-                        : "Start Recording"}
-                  </button>
-                  <p className="max-w-xl text-base leading-7 text-muted-foreground">
-                    {quota?.isLimitReached
-                      ? "Free đã hết thời lượng. Nâng cấp Premium để ghi âm tiếp."
-                      : "Microphone access is ready - you're ready to record."}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <aside className="order-3 min-w-0 xl:order-3 xl:max-w-[360px] xl:-translate-y-4 xl:justify-self-end">
-              <VbeeAccountUsageCard
-                firstName={user.firstName}
-                showAlert={false}
-                refreshKey={quotaRefreshKey}
-                onQuotaChange={setQuota}
-              />
-            </aside>
-          </div>
-
-          {recordingNotice && (
-            <p className="mt-4 rounded-lg border border-primary/25 bg-primary/5 px-4 py-2.5 text-center text-sm font-bold text-primary">
-              {recordingNotice}
-            </p>
-          )}
-
-          <div className="mt-8 flex flex-col items-center gap-4 text-center">
-            {status === "idle" && (
-              <>
-                <div className="flex items-center justify-center">
+                <div className="mt-3 flex flex-col items-center gap-2 text-center">
                   <button
                     onClick={() => void startRecording()}
                     disabled={
@@ -830,15 +786,29 @@ function RecordPage() {
                         ? "Microphone bị chặn"
                         : "Bắt đầu ghi âm"}
                   </button>
+                  <p className="max-w-xl text-base leading-7 text-muted-foreground">
+                    {quota?.isLimitReached
+                      ? "Quota đã hết. Nâng cấp gói để ghi âm tiếp."
+                      : "Microphone đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
+                  </p>
                 </div>
-                <p className="max-w-xl text-base leading-7 text-muted-foreground">
-                  {quota?.isLimitReached
-                    ? "Free đã hết thời lượng. Nâng cấp Premium để ghi âm tiếp."
-                    : "Microphone đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
-                </p>
-              </>
-            )}
+              )}
+            </div>
+
+            <aside className="order-3 min-w-0 xl:order-3 xl:max-w-[360px] xl:-translate-y-4 xl:justify-self-end">
+              <VbeeAccountUsageCard
+                firstName={user.firstName}
+                refreshKey={quotaRefreshKey}
+                onQuotaChange={setQuota}
+              />
+            </aside>
           </div>
+
+          {recordingNotice && (
+            <p className="mt-4 rounded-lg border border-primary/25 bg-primary/5 px-4 py-2.5 text-center text-sm font-bold text-primary">
+              {recordingNotice}
+            </p>
+          )}
 
           <div className="mt-0 flex flex-col items-center gap-2 text-center">
             {status === "requesting" && (

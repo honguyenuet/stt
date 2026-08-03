@@ -2,10 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent, type ChangeEvent } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { redirectAfterAuth } from "@/lib/auth-redirect";
+import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { Zap, Languages, CheckCircle2, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 // Hạt sáng cố định (tránh SSR hydration mismatch)
 const SPARKLES = [
@@ -31,18 +33,37 @@ const FEATURES = [
 
 export const Route = createFileRoute("/register")({
   validateSearch: (search: Record<string, unknown>) => ({
+    error: search.error as string | undefined,
     from: search.from as string | undefined,
     ref: typeof search.ref === "string" ? search.ref.slice(0, 32) : undefined,
+    provider: search.provider as string | undefined,
+    email: search.email as string | undefined,
+    firstName: search.firstName as string | undefined,
+    lastName: search.lastName as string | undefined,
+    oauthToken: search.oauthToken as string | undefined,
   }),
   component: RegisterPage,
 });
 
 function RegisterPage() {
-  const { from, ref } = Route.useSearch();
+  const {
+    error: urlError,
+    from,
+    ref,
+    provider,
+    email,
+    firstName,
+    lastName,
+    oauthToken,
+  } = Route.useSearch();
   const { user, isLoading, setToken } = useAuth();
 
   const [form, setForm] = useState({
-    firstName: "", lastName: "", email: "", password: "", confirmPassword: "",
+    firstName: firstName || "",
+    lastName: lastName || "",
+    email: email || "",
+    password: "",
+    confirmPassword: "",
   });
   const [showPassword, setShowPassword]       = useState(false);
   const [showConfirm, setShowConfirm]         = useState(false);
@@ -74,6 +95,7 @@ function RegisterPage() {
           firstName: form.firstName, lastName: form.lastName,
           email: form.email,        password: form.password,
           referralCode: ref,
+          oauthToken,
         }),
       });
       const data = (await res.json()) as { token?: string; error?: string };
@@ -89,10 +111,21 @@ function RegisterPage() {
     }
   }
 
-  function handleGoogleRegister() {
-    const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-    window.location.href = `${API_URL}/api/auth/google${query}`;
-  }
+  const oauthErrors: Record<string, string> = {
+    google_failed: "Đăng ký Google thất bại hoặc đã bị hủy.",
+    google_email_exists: "Email này đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    google_email_required: "Google chưa cung cấp email đã xác minh.",
+    google_not_configured: "Google OAuth chưa được cấu hình trên máy chủ.",
+    facebook_failed: "Đăng ký Facebook thất bại hoặc đã bị hủy.",
+    facebook_email_exists: "Email Facebook đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    facebook_email_required: "Facebook chưa cung cấp email đã xác minh.",
+    facebook_not_configured: "Facebook Login chưa được cấu hình trên máy chủ.",
+    apple_failed: "Đăng ký Apple thất bại hoặc đã bị hủy.",
+    apple_email_exists: "Email Apple đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    apple_email_required: "Apple chưa cung cấp email đã xác minh.",
+    apple_not_configured: "Sign in with Apple chưa được cấu hình trên máy chủ.",
+    account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
+  };
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
@@ -196,8 +229,19 @@ function RegisterPage() {
                 mời sẽ nhận 100 phút sau transcript đầu tiên của bạn.
               </div>
             )}
+            {provider === "google" && email && (
+              <div className="mb-5 rounded-xl border border-[#d8cde9] bg-[#f7f4ff] px-4 py-3 text-sm text-[#4a356e]">
+                Email Google này chưa có tài khoản Vbee. Vui lòng bổ sung thông
+                tin và tạo mật khẩu để hoàn tất đăng ký.
+              </div>
+            )}
 
             {/* Lỗi */}
+            {urlError && oauthErrors[urlError] && (
+              <div className="mb-5 rounded-xl bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+                {oauthErrors[urlError]}
+              </div>
+            )}
             {error && (
               <div className="mb-5 rounded-xl bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
                 {error}
@@ -300,16 +344,9 @@ function RegisterPage() {
               </button>
             </form>
 
-            <button
-              type="button"
-              onClick={handleGoogleRegister}
-              className="mt-4 flex w-full items-center justify-center gap-3 rounded-full border border-border bg-white py-3 text-sm font-bold text-foreground transition hover:bg-[#f8f5ff]"
-            >
-              <span className="grid h-6 w-6 place-items-center rounded-full bg-[#fff3a6] font-black text-[#21104a]">
-                G
-              </span>
-              Đăng ký với Google
-            </button>
+            <div className="mt-4">
+              <SocialAuthButtons mode="register" referralCode={ref} />
+            </div>
 
             {/* Divider trang trí */}
             <div className="mt-5 flex items-center gap-3">

@@ -33,11 +33,19 @@ const healthStatusLabel: Record<string, string> = {
   unknown: "Chưa rõ",
 };
 
+function formatUsd(value: number, fractionDigits = 4) {
+  return `$${Number(value || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: fractionDigits,
+  })}`;
+}
+
 function AdminProvidersPage() {
   const session = useAdminSession();
   const [providers, setProviders] = useState<SpeechProvider[]>([]);
   const [selected, setSelected] = useState<SpeechProvider | null>(null);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [failoverProviderDraft, setFailoverProviderDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const canEdit = session ? canManageSettings(session.user.role) : false;
@@ -63,9 +71,12 @@ function AdminProvidersPage() {
     try {
       const updated = await saveSpeechProvider({
         ...selected,
+        failover_provider_id:
+          failoverProviderDraft.trim() || selected.failover_provider_id,
         api_key: apiKeyDraft.trim() || undefined,
       });
       setApiKeyDraft("");
+      setFailoverProviderDraft("");
       setSelected(updated);
       toast.success("Đã lưu nhà cung cấp");
       load();
@@ -103,7 +114,7 @@ function AdminProvidersPage() {
             description="API endpoint, bật/tắt, mặc định, định tuyến, dự phòng, trạng thái hoạt động, hiệu năng và chi phí."
           />
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-left text-sm">
+            <table className="w-full min-w-[1160px] text-left text-sm">
               <thead className="bg-[#fbf8ef] text-xs uppercase text-[#756894]">
                 <tr>
                   {[
@@ -115,7 +126,8 @@ function AdminProvidersPage() {
                     "Định tuyến",
                     "Hoạt động",
                     "Độ trễ",
-                    "Chi phí",
+                    "Chi phí / phút",
+                    "Chi phí tháng",
                     "",
                   ].map((h) => (
                     <th key={h} className="px-4 py-3">
@@ -155,13 +167,17 @@ function AdminProvidersPage() {
                     </td>
                     <td className="px-4 py-3">{provider.avg_latency_ms} ms</td>
                     <td className="px-4 py-3">
-                      ${provider.monthly_cost_usd.toFixed(2)}
+                      {formatUsd(provider.cost_per_minute_usd)}
+                    </td>
+                    <td className="px-4 py-3">
+                      {formatUsd(provider.monthly_cost_usd, 2)}
                     </td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => {
                           setSelected(provider);
                           setApiKeyDraft("");
+                          setFailoverProviderDraft("");
                         }}
                         className="font-black underline"
                       >
@@ -183,6 +199,7 @@ function AdminProvidersPage() {
                   onClick={() => {
                     setSelected(null);
                     setApiKeyDraft("");
+                    setFailoverProviderDraft("");
                   }}
                   className="rounded-md border px-3 py-2 text-sm font-bold"
                 >
@@ -206,7 +223,7 @@ function AdminProvidersPage() {
                 }
               />
               <Input
-                label={selected.api_key_masked ? "API key mới" : "API key"}
+                label={selected.api_key_masked ? "Cập nhật API key mới" : "API key"}
                 type="password"
                 value={apiKeyDraft}
                 placeholder={
@@ -216,6 +233,7 @@ function AdminProvidersPage() {
                 }
                 disabled={!canEdit}
                 onChange={setApiKeyDraft}
+                autoComplete="new-password"
               />
               <label className="block text-sm font-bold">
                 Chế độ định tuyến
@@ -237,14 +255,15 @@ function AdminProvidersPage() {
               </label>
               <Input
                 label="ID nhà cung cấp dự phòng"
-                value={selected.failover_provider_id || ""}
-                disabled={!canEdit}
-                onChange={(value) =>
-                  setSelected({
-                    ...selected,
-                    failover_provider_id: value || null,
-                  })
+                value={failoverProviderDraft}
+                placeholder={
+                  selected.failover_provider_id
+                    ? "Để trống nếu không đổi provider dự phòng"
+                    : "Nhập ID provider dự phòng nếu cần"
                 }
+                disabled={!canEdit}
+                onChange={setFailoverProviderDraft}
+                autoComplete="off"
               />
               <NumberInput
                 label="Chi phí / phút (USD)"
@@ -252,6 +271,14 @@ function AdminProvidersPage() {
                 disabled={!canEdit}
                 onChange={(value) =>
                   setSelected({ ...selected, cost_per_minute_usd: value })
+                }
+              />
+              <NumberInput
+                label="Chi phí tháng (USD)"
+                value={selected.monthly_cost_usd}
+                disabled={!canEdit}
+                onChange={(value) =>
+                  setSelected({ ...selected, monthly_cost_usd: value })
                 }
               />
               <label className="flex items-center gap-2 text-sm font-bold">
@@ -310,6 +337,7 @@ function Input({
   disabled,
   type = "text",
   placeholder,
+  autoComplete,
 }: {
   label: string;
   value: string;
@@ -317,6 +345,7 @@ function Input({
   disabled: boolean;
   type?: "text" | "password";
   placeholder?: string;
+  autoComplete?: string;
 }) {
   return (
     <label className="block text-sm font-bold">
@@ -326,6 +355,7 @@ function Input({
         disabled={disabled}
         value={value}
         placeholder={placeholder}
+        autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
       />
@@ -350,9 +380,10 @@ function NumberInput({
       <input
         type="number"
         step="0.0001"
+        min="0"
         disabled={disabled}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
         className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
       />
     </label>

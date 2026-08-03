@@ -1,11 +1,12 @@
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+import { getApiBaseUrl } from "./api-base-url";
+
+const API_URL = getApiBaseUrl();
 
 export type PlanCode = "free" | "standard" | "special" | "business";
 export type BillingCycle = "monthly" | "yearly";
 
 export interface QuotaStatus {
+  userId?: number;
   plan: PlanCode;
   label: string;
   baseQuotaSeconds: number;
@@ -28,6 +29,11 @@ export interface QuotaStatus {
     maxUploadMb: number;
     maxRecordSeconds: number;
     maxFileSeconds: number;
+    maxConcurrentJobs?: number | null;
+    transcriptLimit?: number | null;
+    retentionDays?: number;
+    webhookAccess?: boolean;
+    apiAccess?: boolean;
   };
 }
 

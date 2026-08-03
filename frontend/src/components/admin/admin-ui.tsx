@@ -7,6 +7,7 @@ import {
   Gauge,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Settings,
   Shield,
   SlidersHorizontal,
@@ -17,28 +18,39 @@ import { Toaster } from "@/components/ui/sonner";
 import { logoutAdmin, readAdminSession } from "@/lib/admin/admin-auth";
 import {
   jobStatusLabel,
+  roleLabel,
   storageStatusLabel,
   userStatusLabel,
 } from "@/lib/admin/formatters";
+import { listSupportTickets } from "@/lib/admin/support-service";
 import { useAdminSession } from "@/lib/admin/use-admin-session";
 import type {
+  AdminRole,
   AdminSession,
   JobStatus,
   StorageStatus,
   UserStatus,
 } from "@/lib/admin/types";
 
+type CmsAccessRole = Extract<AdminRole, "admin" | "support">;
+
 const navItems = [
-  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard },
-  { to: "/admin/users", label: "Người dùng", icon: Users },
-  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity },
-  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio },
-  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal },
-  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield },
-  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge },
-  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3 },
-  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList },
-  { to: "/admin/settings", label: "Cài đặt", icon: Settings },
+  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard, roles: ["admin"] },
+  { to: "/admin/users", label: "Người dùng", icon: Users, roles: ["admin"] },
+  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity, roles: ["admin"] },
+  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio, roles: ["admin"] },
+  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal, roles: ["admin"] },
+  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield, roles: ["admin"] },
+  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge, roles: ["admin"] },
+  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, roles: ["admin"] },
+  {
+    to: "/admin/support",
+    label: "Phản hồi hỗ trợ",
+    icon: MessageSquare,
+    roles: ["admin", "support"],
+  },
+  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList, roles: ["admin"] },
+  { to: "/admin/settings", label: "Cài đặt", icon: Settings, roles: ["admin"] },
 ] as const;
 
 export function AdminRouteShell() {
@@ -62,6 +74,15 @@ function AdminGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const current = readAdminSession();
+    if (current?.user.role === "user") {
+      logoutAdmin();
+      setSession(null);
+      void navigate({
+        to: "/admin/login",
+        search: { from: window.location.pathname },
+      });
+      return;
+    }
     setSession(current);
     if (!current) {
       void navigate({
@@ -85,21 +106,61 @@ function AdminLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const session = useAdminSession();
+  const [openSupportCount, setOpenSupportCount] = useState(0);
+  const visibleNavItems = useMemo(
+    () =>
+      navItems.filter((item) =>
+        item.roles.includes((session?.user.role || "support") as CmsAccessRole),
+      ),
+    [session?.user.role],
+  );
   const current = useMemo(() => {
-    const found = [...navItems]
+    const found = [...visibleNavItems]
       .reverse()
       .find(
         (item) =>
           location.pathname === item.to ||
           location.pathname.startsWith(`${item.to}/`),
       );
-    return found ?? navItems[0];
-  }, [location.pathname]);
+    return found ?? visibleNavItems[0] ?? navItems[0];
+  }, [location.pathname, visibleNavItems]);
 
   function handleLogout() {
     logoutAdmin();
     void navigate({ to: "/admin/login", search: { from: "/admin" } });
   }
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+
+    async function loadOpenSupportCount() {
+      try {
+        const result = await listSupportTickets({
+          page: 1,
+          limit: 1,
+          status: "open",
+        });
+        if (!cancelled) setOpenSupportCount(result.total);
+      } catch {
+        if (!cancelled) setOpenSupportCount(0);
+      }
+    }
+
+    void loadOpenSupportCount();
+    const timer = window.setInterval(() => void loadOpenSupportCount(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (session?.user.role !== "support") return;
+    if (location.pathname !== "/admin/support") {
+      void navigate({ to: "/admin/support" });
+    }
+  }, [location.pathname, navigate, session?.user.role]);
 
   return (
     <div className="min-h-screen bg-[#f7f4ec] text-[#21104a]">
@@ -114,7 +175,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
         <nav className="space-y-1 p-3">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const active = current.to === item.to;
             return (
@@ -128,7 +189,12 @@ function AdminLayout({ children }: { children: ReactNode }) {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.to === "/admin/support" && openSupportCount > 0 && (
+                  <span className="grid min-h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-black leading-none text-white">
+                    {openSupportCount > 99 ? "99+" : openSupportCount}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -148,7 +214,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
               <div className="rounded-md border border-[#e4ddcf] bg-[#fbf8ef] px-3 py-2 text-sm">
                 <span className="font-bold">{session?.user.name}</span>
                 <span className="ml-2 text-xs uppercase text-[#756894]">
-                  {session?.user.role}
+                  {session?.user.role ? roleLabel[session.user.role] : ""}
                 </span>
               </div>
               <button
@@ -161,7 +227,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="flex gap-2 overflow-x-auto border-t border-[#efe7d8] px-4 py-2 lg:hidden">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
@@ -172,6 +238,11 @@ function AdminLayout({ children }: { children: ReactNode }) {
                 }`}
               >
                 {item.label}
+                {item.to === "/admin/support" && openSupportCount > 0 && (
+                  <span className="ml-2 inline-grid min-h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-black leading-none text-white">
+                    {openSupportCount > 99 ? "99+" : openSupportCount}
+                  </span>
+                )}
               </Link>
             ))}
           </div>

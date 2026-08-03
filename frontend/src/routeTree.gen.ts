@@ -29,9 +29,11 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as TranscriptIdRouteImport } from './routes/transcript.$id'
 import { Route as CheckoutOrderIdRouteImport } from './routes/checkout.$orderId'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminUsageRouteImport } from './routes/admin.usage'
+import { Route as AdminSupportRouteImport } from './routes/admin.support'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminReportsRouteImport } from './routes/admin.reports'
 import { Route as AdminProvidersRouteImport } from './routes/admin.providers'
@@ -141,6 +143,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const TranscriptIdRoute = TranscriptIdRouteImport.update({
+  id: '/transcript/$id',
+  path: '/transcript/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CheckoutOrderIdRoute = CheckoutOrderIdRouteImport.update({
   id: '/checkout/$orderId',
   path: '/checkout/$orderId',
@@ -154,6 +161,11 @@ const AdminUsersRoute = AdminUsersRouteImport.update({
 const AdminUsageRoute = AdminUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminSupportRoute = AdminSupportRouteImport.update({
+  id: '/support',
+  path: '/support',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
@@ -225,9 +237,11 @@ export interface FileRoutesByFullPath {
   '/admin/providers': typeof AdminProvidersRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/support': typeof AdminSupportRoute
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/transcript/$id': typeof TranscriptIdRoute
   '/admin/': typeof AdminIndexRoute
 }
 export interface FileRoutesByTo {
@@ -257,9 +271,11 @@ export interface FileRoutesByTo {
   '/admin/providers': typeof AdminProvidersRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/support': typeof AdminSupportRoute
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/transcript/$id': typeof TranscriptIdRoute
   '/admin': typeof AdminIndexRoute
 }
 export interface FileRoutesById {
@@ -291,9 +307,11 @@ export interface FileRoutesById {
   '/admin/providers': typeof AdminProvidersRoute
   '/admin/reports': typeof AdminReportsRoute
   '/admin/settings': typeof AdminSettingsRoute
+  '/admin/support': typeof AdminSupportRoute
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/transcript/$id': typeof TranscriptIdRoute
   '/admin/': typeof AdminIndexRoute
 }
 export interface FileRouteTypes {
@@ -326,9 +344,11 @@ export interface FileRouteTypes {
     | '/admin/providers'
     | '/admin/reports'
     | '/admin/settings'
+    | '/admin/support'
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/transcript/$id'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -358,9 +378,11 @@ export interface FileRouteTypes {
     | '/admin/providers'
     | '/admin/reports'
     | '/admin/settings'
+    | '/admin/support'
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/transcript/$id'
     | '/admin'
   id:
     | '__root__'
@@ -391,9 +413,11 @@ export interface FileRouteTypes {
     | '/admin/providers'
     | '/admin/reports'
     | '/admin/settings'
+    | '/admin/support'
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/transcript/$id'
     | '/admin/'
   fileRoutesById: FileRoutesById
 }
@@ -418,6 +442,7 @@ export interface RootRouteChildren {
   TranscriptionSettingsRoute: typeof TranscriptionSettingsRoute
   UploadRoute: typeof UploadRoute
   CheckoutOrderIdRoute: typeof CheckoutOrderIdRoute
+  TranscriptIdRoute: typeof TranscriptIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -562,6 +587,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/transcript/$id': {
+      id: '/transcript/$id'
+      path: '/transcript/$id'
+      fullPath: '/transcript/$id'
+      preLoaderRoute: typeof TranscriptIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/checkout/$orderId': {
       id: '/checkout/$orderId'
       path: '/checkout/$orderId'
@@ -581,6 +613,13 @@ declare module '@tanstack/react-router' {
       path: '/usage'
       fullPath: '/admin/usage'
       preLoaderRoute: typeof AdminUsageRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/support': {
+      id: '/admin/support'
+      path: '/support'
+      fullPath: '/admin/support'
+      preLoaderRoute: typeof AdminSupportRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/settings': {
@@ -651,6 +690,7 @@ interface AdminRouteChildren {
   AdminProvidersRoute: typeof AdminProvidersRoute
   AdminReportsRoute: typeof AdminReportsRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
+  AdminSupportRoute: typeof AdminSupportRoute
   AdminUsageRoute: typeof AdminUsageRoute
   AdminUsersRoute: typeof AdminUsersRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -665,6 +705,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminProvidersRoute: AdminProvidersRoute,
   AdminReportsRoute: AdminReportsRoute,
   AdminSettingsRoute: AdminSettingsRoute,
+  AdminSupportRoute: AdminSupportRoute,
   AdminUsageRoute: AdminUsageRoute,
   AdminUsersRoute: AdminUsersRoute,
   AdminIndexRoute: AdminIndexRoute,
@@ -693,6 +734,7 @@ const rootRouteChildren: RootRouteChildren = {
   TranscriptionSettingsRoute: TranscriptionSettingsRoute,
   UploadRoute: UploadRoute,
   CheckoutOrderIdRoute: CheckoutOrderIdRoute,
+  TranscriptIdRoute: TranscriptIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

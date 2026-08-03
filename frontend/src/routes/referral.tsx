@@ -19,10 +19,9 @@ import {
   VbeePublicHeader,
 } from "@/components/vbee-public-chrome";
 import { useAuth } from "@/context/AuthContext";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 type ReferralSummary = {
   referralCode: string;

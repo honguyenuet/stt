@@ -10,6 +10,7 @@ const AUTH_REDIRECT_ALLOWLIST = new Set([
   "/pricing",
   "/custom-dictionary",
   "/transcription-settings",
+  "/admin",
 ]);
 
 export function getSafeAuthRedirect(from?: string | null) {

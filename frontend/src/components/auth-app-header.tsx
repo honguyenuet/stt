@@ -10,6 +10,7 @@ import {
   Pencil,
   PlugZap,
   Radio,
+  ShieldCheck,
   Upload,
   User,
 } from "lucide-react";
@@ -43,6 +44,9 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const canAccessCms = ["support", "admin"].includes(
+    user?.role || "user",
+  );
 
   useEffect(() => {
     if (!token) {
@@ -144,6 +148,14 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                   Không gian làm việc
                 </Link>
               </DropdownMenuItem>
+              {canAccessCms && (
+                <DropdownMenuItem asChild className="gap-2 cursor-pointer">
+                  <Link to="/admin">
+                    <ShieldCheck className="h-4 w-4 text-[#21104a]" />
+                    Trung tâm quản trị
+                  </Link>
+                </DropdownMenuItem>
+              )}
               {onEditProfile && (
                 <>
                   <DropdownMenuSeparator />

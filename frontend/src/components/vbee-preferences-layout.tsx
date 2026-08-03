@@ -8,7 +8,6 @@ type AccountUsageCardProps = {
   firstName: string;
   refreshKey?: number;
   onQuotaChange?: (quota: QuotaStatus) => void;
-  showAlert?: boolean;
   showReferral?: boolean;
   compact?: boolean;
 };
@@ -17,7 +16,6 @@ export function VbeeAccountUsageCard({
   firstName,
   refreshKey,
   onQuotaChange,
-  showAlert = true,
   showReferral = true,
   compact = false,
 }: AccountUsageCardProps) {
@@ -38,7 +36,6 @@ export function VbeeAccountUsageCard({
         <QuotaStatusPanel
           compact={compact}
           variant="account"
-          showAlert={showAlert}
           refreshKey={refreshKey}
           onQuotaChange={onQuotaChange}
         />

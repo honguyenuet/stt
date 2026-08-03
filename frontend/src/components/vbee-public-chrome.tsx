@@ -27,14 +27,20 @@ const NAVIGATION = [
       {
         title: "Tải file",
         desc: "Audio/video thành văn bản.",
-        href: "/#features",
+        href: "/upload",
         icon: UploadCloud,
       },
       {
         title: "Ghi âm",
         desc: "Thu âm và lưu transcript.",
-        href: "/#features",
+        href: "/record",
         icon: Mic2,
+      },
+      {
+        title: "Nói realtime",
+        desc: "Chuyển lời nói trực tiếp thành văn bản.",
+        href: "/realtime",
+        icon: Zap,
       },
       {
         title: "Vbee API",
@@ -138,66 +144,70 @@ export function VbeePublicHeader() {
             const menuId = `public-navigation-${groupIndex}`;
 
             return (
-            <div
-              key={group.label}
-              className="group relative"
-              onMouseEnter={() => setDesktopOpenMenu(group.label)}
-              onMouseLeave={() => setDesktopOpenMenu(null)}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  setDesktopOpenMenu(null);
-                }
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setDesktopOpenMenu(group.label)}
-                onFocus={() => setDesktopOpenMenu(group.label)}
-                aria-expanded={isOpen}
-                aria-haspopup="menu"
-                aria-controls={menuId}
-                className="inline-flex items-center gap-1 rounded-full px-2 py-2 text-[13px] font-black text-[#21104a] transition hover:text-[#6b5200]"
-              >
-                {group.label}
-                <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : "group-hover:rotate-180"}`} />
-              </button>
               <div
-                id={menuId}
-                role="menu"
-                className={`absolute left-0 top-full z-40 w-[320px] pt-2 transition-opacity ${
-                  isOpen
-                    ? "visible opacity-100"
-                    : "invisible opacity-0"
-                }`}
+                key={group.label}
+                className="group relative"
+                onMouseEnter={() => setDesktopOpenMenu(group.label)}
+                onMouseLeave={() => setDesktopOpenMenu(null)}
+                onBlur={(event) => {
+                  if (
+                    !event.currentTarget.contains(
+                      event.relatedTarget as Node | null,
+                    )
+                  ) {
+                    setDesktopOpenMenu(null);
+                  }
+                }}
               >
-                <div className="rounded-2xl border border-[#eee8ff] bg-white p-3 shadow-[0_24px_80px_rgba(33,16,74,.18)]">
-                  {group.items.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <a
-                        key={item.title}
-                        href={item.href}
-                        role="menuitem"
-                        onClick={() => setDesktopOpenMenu(null)}
-                        className="flex gap-3 rounded-xl p-3 transition hover:bg-[#f8f5ff] focus:bg-[#f8f5ff] focus:outline-none"
-                      >
-                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#fff3a6] text-[#21104a]">
-                          <Icon className="h-5 w-5" />
-                        </span>
-                        <span>
-                          <span className="block text-sm font-black text-[#21104a]">
-                            {item.title}
+                <button
+                  type="button"
+                  onClick={() => setDesktopOpenMenu(group.label)}
+                  onFocus={() => setDesktopOpenMenu(group.label)}
+                  aria-expanded={isOpen}
+                  aria-haspopup="menu"
+                  aria-controls={menuId}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-2 text-[13px] font-black text-[#21104a] transition hover:text-[#6b5200]"
+                >
+                  {group.label}
+                  <ChevronDown
+                    className={`h-4 w-4 transition ${isOpen ? "rotate-180" : "group-hover:rotate-180"}`}
+                  />
+                </button>
+                <div
+                  id={menuId}
+                  role="menu"
+                  className={`absolute left-0 top-full z-40 w-[320px] pt-2 transition-opacity ${
+                    isOpen ? "visible opacity-100" : "invisible opacity-0"
+                  }`}
+                >
+                  <div className="rounded-2xl border border-[#eee8ff] bg-white p-3 shadow-[0_24px_80px_rgba(33,16,74,.18)]">
+                    {group.items.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <a
+                          key={item.title}
+                          href={item.href}
+                          role="menuitem"
+                          onClick={() => setDesktopOpenMenu(null)}
+                          className="flex gap-3 rounded-xl p-3 transition hover:bg-[#f8f5ff] focus:bg-[#f8f5ff] focus:outline-none"
+                        >
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[#fff3a6] text-[#21104a]">
+                            <Icon className="h-5 w-5" />
                           </span>
-                          <span className="mt-0.5 block text-xs font-semibold leading-5 text-[#756894]">
-                            {item.desc}
+                          <span>
+                            <span className="block text-sm font-black text-[#21104a]">
+                              {item.title}
+                            </span>
+                            <span className="mt-0.5 block text-xs font-semibold leading-5 text-[#756894]">
+                              {item.desc}
+                            </span>
                           </span>
-                        </span>
-                      </a>
-                    );
-                  })}
+                        </a>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
             );
           })}
           <a
@@ -219,7 +229,8 @@ export function VbeePublicHeader() {
             href={workspaceHref}
             className="inline-flex items-center gap-2 rounded-full bg-[#ffcb05] px-5 py-2.5 text-[13px] font-black text-[#21104a] shadow-[0_12px_30px_rgba(255,203,5,.35)] transition hover:-translate-y-0.5 hover:bg-[#ffdc45]"
           >
-            {user ? "Mở ứng dụng" : "Dùng thử"} <ArrowRight className="h-4 w-4" />
+            {user ? "Mở ứng dụng" : "Dùng thử"}{" "}
+            <ArrowRight className="h-4 w-4" />
           </a>
         </div>
 
@@ -228,7 +239,11 @@ export function VbeePublicHeader() {
           className="grid h-11 w-11 place-items-center rounded-full bg-[#f2f0f7] text-[#21104a] lg:hidden"
           aria-label={mobileOpen ? "Đóng menu" : "Mở menu"}
         >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          {mobileOpen ? (
+            <X className="h-5 w-5" />
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
         </button>
       </nav>
 
@@ -236,7 +251,10 @@ export function VbeePublicHeader() {
         <div className="border-t border-[#eee8ff] bg-white px-4 py-4 lg:hidden">
           <div className="space-y-3">
             {NAVIGATION.map((group) => (
-              <details key={group.label} className="rounded-xl bg-[#f8f5ff] p-3">
+              <details
+                key={group.label}
+                className="rounded-xl bg-[#f8f5ff] p-3"
+              >
                 <summary className="flex cursor-pointer list-none items-center justify-between font-black text-[#21104a]">
                   {group.label} <ChevronDown className="h-4 w-4" />
                 </summary>
@@ -308,13 +326,10 @@ export function VbeePublicFooter() {
     <footer className="bg-[#21104a] px-4 py-10 text-white md:px-6">
       <div className="mx-auto grid max-w-7xl gap-8 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
         <div>
-          <VbeeBrandLogo
-            size="compact"
-            className="rounded-lg bg-white p-1.5"
-          />
+          <VbeeBrandLogo size="compact" className="rounded-lg bg-white p-1.5" />
           <p className="mt-4 max-w-sm text-[13px] font-semibold leading-6 text-white/68">
-            Vbee Speech Workspace giúp đội ngũ biến âm thanh, cuộc họp và
-            video thành dữ liệu văn bản có thể tìm kiếm, dịch và chia sẻ.
+            Vbee Speech Workspace giúp đội ngũ biến âm thanh, cuộc họp và video
+            thành dữ liệu văn bản có thể tìm kiếm, dịch và chia sẻ.
           </p>
         </div>
         {FOOTER_COLUMNS.map((column) => (
@@ -324,7 +339,11 @@ export function VbeePublicFooter() {
             </h2>
             <div className="mt-3 grid gap-2 text-[13px] font-semibold text-white/68">
               {column.links.map(([label, href]) => (
-                <a key={label} href={href} className="transition hover:text-[#ffdc45]">
+                <a
+                  key={label}
+                  href={href}
+                  className="transition hover:text-[#ffdc45]"
+                >
                   {label}
                 </a>
               ))}
@@ -335,8 +354,12 @@ export function VbeePublicFooter() {
       <div className="mx-auto mt-8 flex max-w-7xl flex-col gap-2 border-t border-white/12 pt-5 text-xs font-semibold text-white/45 md:flex-row md:items-center md:justify-between">
         <p>© 2026 Vbee Speech Workspace. Bảo lưu mọi quyền.</p>
         <div className="flex gap-4">
-          <a href="/" className="transition hover:text-white">Điều khoản dịch vụ</a>
-          <a href="/" className="transition hover:text-white">Chính sách bảo mật</a>
+          <a href="/" className="transition hover:text-white">
+            Điều khoản dịch vụ
+          </a>
+          <a href="/" className="transition hover:text-white">
+            Chính sách bảo mật
+          </a>
         </div>
       </div>
     </footer>

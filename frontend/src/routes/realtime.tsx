@@ -24,10 +24,9 @@ import {
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
 
@@ -574,7 +573,6 @@ function RealtimePage() {
           <aside className="space-y-4">
             <VbeeAccountUsageCard
               firstName={user.firstName}
-              showAlert={false}
               refreshKey={quotaRefreshKey}
               onQuotaChange={setQuota}
             />

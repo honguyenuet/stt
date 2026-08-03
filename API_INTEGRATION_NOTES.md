@@ -35,13 +35,47 @@ Authorization: Bearer vbee_sk_YOUR_API_KEY
 
 ## Provider chuyển giọng nói thành văn bản
 
-Backend hiện hỗ trợ 3 provider:
+### Dự phòng API và circuit breaker
 
+Backend đọc thứ tự nhà cung cấp từ `TRANSCRIPTION_PROVIDER_CHAIN`. Mỗi nhà cung
+cấp được thử lại tối đa `PROVIDER_RETRY_ATTEMPTS` lần. Các lỗi xác thực, hết hạn
+mức, giới hạn tốc độ, timeout, lỗi mạng và lỗi 5xx sẽ chuyển sang nhà cung cấp kế
+tiếp. Lỗi dữ liệu người dùng như file sai định dạng hoặc file quá lớn sẽ dừng ngay,
+không gọi thêm API.
+
+Sau `PROVIDER_CIRCUIT_FAILURE_THRESHOLD` yêu cầu lỗi liên tiếp, circuit được mở và
+các job mới bỏ qua nhà cung cấp đó. Hết thời gian chờ, chỉ một job được phép thăm
+dò ở trạng thái `half_open`; thành công sẽ đóng circuit, thất bại sẽ mở lại với
+thời gian chờ tăng dần. Trạng thái dùng PostgreSQL nên được chia sẻ giữa nhiều
+worker/server. Lịch sử nhà cung cấp đã thử được lưu ở `provider_attempts`.
+
+Lưu ý: nếu một API đã nhận job nhưng kết nối bị timeout trước khi trả mã yêu cầu,
+việc chuyển sang API khác có thể phát sinh hai lần tính phí. Muốn đảm bảo chính
+xác tuyệt đối cần nhà cung cấp hỗ trợ idempotency key hoặc API tra cứu theo mã job.
+
+Backend hiện hỗ trợ 4 provider:
+
+- `vbee` — Vbee Batch STT: hỗ trợ một API key qua header tùy chỉnh, gửi job bất đồng bộ và polling transcript.
 - `sonix` — mô phỏng luồng như Sonix.ai: upload media, poll trạng thái, lấy transcript JSON có timestamp từng từ.
 - `deepgram` — gửi file trực tiếp tới Deepgram pre-recorded endpoint, lấy transcript, word timestamps, duration và speaker labels khi bật diarization.
 - `assemblyai` — provider cũ của dự án.
 
-Trong `backend/.env`:
+Trong `backend/.env`, cấu hình Vbee UAT bằng một API key:
+
+```env
+TRANSCRIPTION_PROVIDER=auto
+TRANSCRIPTION_PROVIDER_CHAIN=vbee,assemblyai,deepgram,sonix
+VBEE_API_KEY=your_vbee_api_key
+VBEE_API_KEY_HEADER=X-API-Key
+VBEE_API_KEY_SCHEME=
+VBEE_STT_API_BASE_URL=https://uat-api.vbeelabs.ai
+```
+
+Khi `TRANSCRIPTION_PROVIDER=auto`, Vbee được chọn nếu `VBEE_API_KEY` hợp lệ.
+Nếu key trống hoặc provider lỗi, hệ thống chuyển sang provider tiếp theo trong
+`TRANSCRIPTION_PROVIDER_CHAIN`.
+
+Muốn dùng Sonix:
 
 ```env
 TRANSCRIPTION_PROVIDER=sonix
@@ -122,6 +156,16 @@ ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 ```
 
 Không có key provider thì API quản lý key vẫn chạy, nhưng chức năng chuyển âm thanh thành văn bản sẽ trả lỗi cấu hình.
+
+## Luồng Vbee đang được implement
+
+1. Chuẩn hóa file upload/ghi âm thành WAV mono 16 kHz bằng FFmpeg.
+2. Gửi job bất đồng bộ đến endpoint STT với API key trong header đã cấu hình.
+3. Poll trạng thái transcript mỗi 2-5 giây.
+4. Chuẩn hóa transcript, utterances, thời lượng và ngôn ngữ về response chung.
+
+Với `VBEE_API_KEY_HEADER=X-API-Key`, để trống `VBEE_API_KEY_SCHEME`. Khi API
+yêu cầu `Authorization`, đổi header và scheme tương ứng, ví dụ `Bearer`.
 
 ## Luồng Sonix đang được implement
 

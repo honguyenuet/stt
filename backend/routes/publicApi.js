@@ -1,10 +1,8 @@
 require("../config/env");
 const express = require("express");
-const multer = require("multer");
 const pool = require("../db");
 const { hashApiKey } = require("./apiKeys");
 const {
-  MAX_SIZE_MB,
   assertTranscriptionProviderReady,
   getTranscriptionProvider,
   probeMediaFile,
@@ -27,7 +25,7 @@ const {
 const { normalizeFilename } = require("../services/filenameEncoding");
 const {
   cleanupStagedFile,
-  createMediaUpload,
+  createPlanAwareMediaUpload,
   materializeFileBuffer,
 } = require("../services/uploadStorage");
 const { publicApiLimiter } = require("../middleware/security");
@@ -36,7 +34,10 @@ const { writeSecurityAudit } = require("../services/securityAuditService");
 
 const router = express.Router();
 
-const upload = createMediaUpload(MAX_SIZE_MB);
+const upload = createPlanAwareMediaUpload(async (req) => {
+  const quota = await getQuotaStatus(req.user.id);
+  return quota.limits.maxUploadMb;
+});
 const SYNC_API_MAX_MB = Math.max(
   1,
   Number.parseInt(process.env.SYNC_API_MAX_MB || "25", 10),
@@ -68,7 +69,7 @@ async function apiKeyAuth(req, res, next) {
   try {
     const { rows } = await pool.query(
       `SELECT api_key.id, api_key.user_id, api_key.name,
-              account.plan, account.plan_expires_at
+              account.plan, account.plan_expires_at, account.account_status
        FROM api_keys api_key
        JOIN users account ON account.id = api_key.user_id
        WHERE api_key.key_hash = $1 AND api_key.revoked_at IS NULL
@@ -80,6 +81,10 @@ async function apiKeyAuth(req, res, next) {
       return res
         .status(401)
         .json({ error: "API key không hợp lệ hoặc đã bị thu hồi" });
+
+    if (rows[0].account_status !== "active") {
+      return res.status(403).json({ error: "Tài khoản đã bị khóa" });
+    }
 
     if (
       rows[0].plan === "free" ||
@@ -147,17 +152,7 @@ router.post(
   "/transcribe",
   apiKeyAuth,
   publicApiLimiter,
-  (req, res, next) => {
-    upload.single("audio")(req, res, (err) => {
-      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-        return res
-          .status(413)
-          .json({ error: `File quá lớn (tối đa ${MAX_SIZE_MB}MB)` });
-      }
-      if (err) return res.status(400).json({ error: err.message });
-      return next();
-    });
-  },
+  upload,
   async (req, res) => {
     try {
       if (!req.file) {

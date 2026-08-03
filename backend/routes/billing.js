@@ -6,8 +6,10 @@ const {
   webhookLimiter,
 } = require("../middleware/security");
 const { writeSecurityAudit } = require("../services/securityAuditService");
+const { getRequestFrontendUrl } = require("../config/security");
 const {
   cancelActivePlan,
+  cancelPendingOrder,
   confirmDemoPayment,
   createCheckoutOrder,
   getOrderForUser,
@@ -70,6 +72,34 @@ router.get("/orders/:orderId", requireAuth, billingLimiter, async (req, res) => 
   }
 });
 
+router.post("/orders/:orderId/cancel", requireAuth, billingLimiter, async (req, res) => {
+  try {
+    const order = await cancelPendingOrder({
+      userId: req.user.id,
+      orderId: req.params.orderId,
+    });
+    await writeSecurityAudit({
+      event: "billing.order_cancelled",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: { orderId: order.id },
+    });
+    res.json({ order });
+  } catch (error) {
+    await writeSecurityAudit({
+      event: "billing.order_cancelled",
+      outcome: "rejected",
+      req,
+      userId: req.user.id,
+      metadata: { orderId: req.params.orderId, reason: error.message },
+    });
+    res
+      .status(error.statusCode || 500)
+      .json({ error: error.message || "Không hủy được đơn hàng" });
+  }
+});
+
 router.post("/checkout", requireAuth, billingLimiter, async (req, res) => {
   try {
     const checkout = await createCheckoutOrder({
@@ -78,6 +108,7 @@ router.post("/checkout", requireAuth, billingLimiter, async (req, res) => {
       billingCycle: req.body.billingCycle,
       productType: req.body.productType,
       productCode: req.body.productCode,
+      frontendUrl: getRequestFrontendUrl(req),
     });
     await writeSecurityAudit({
       event: "billing.checkout_created",

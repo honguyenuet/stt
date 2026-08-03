@@ -1,7 +1,8 @@
 const pool = require("../db");
 const { rewardReferralAfterFirstUsage } = require("./referralService");
+const { syncQuotaAlertState } = require("./quotaAlertService");
 
-const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 200);
+const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 102400);
 
 function createHttpError(statusCode, message, details = {}) {
   const error = new Error(message);
@@ -18,41 +19,58 @@ function getEnvInt(name, fallback) {
 const PLAN_CONFIG = {
   free: {
     name: "free",
-    label: "Free",
+    label: "Theo lượt",
     quotaSeconds: getEnvInt("FREE_PLAN_SECONDS", 30 * 60),
-    maxUploadMb: getEnvInt("FREE_MAX_UPLOAD_MB", 50),
+    maxUploadMb: getEnvInt("FREE_MAX_UPLOAD_MB", 100),
     maxRecordSeconds: getEnvInt("FREE_MAX_RECORD_SECONDS", 10 * 60),
     maxFileSeconds: getEnvInt("FREE_MAX_FILE_SECONDS", 30 * 60),
     queueWeight: 1,
     seats: 1,
-    retentionDays: 7,
+    retentionDays: 30,
     apiAccess: false,
+    webhookAccess: false,
+    maxConcurrentJobs: 1,
+    transcriptLimit: 5,
+    rolloverLabel: "Không cộng dồn",
+    supportLevel: "Email",
   },
   standard: {
     name: "standard",
     label: "Tiêu chuẩn",
     quotaSeconds: getEnvInt("STANDARD_MONTHLY_SECONDS", 300 * 60),
     yearlyQuotaSeconds: getEnvInt("STANDARD_YEARLY_SECONDS", 3600 * 60),
-    maxUploadMb: getEnvInt("STANDARD_MAX_UPLOAD_MB", 200),
-    maxRecordSeconds: getEnvInt("STANDARD_MAX_RECORD_SECONDS", 60 * 60),
-    maxFileSeconds: getEnvInt("STANDARD_MAX_FILE_SECONDS", 2 * 60 * 60),
+    maxUploadMb: getEnvInt("STANDARD_MAX_UPLOAD_MB", 300),
+    maxRecordSeconds: getEnvInt("STANDARD_MAX_RECORD_SECONDS", 3 * 60 * 60),
+    maxFileSeconds: getEnvInt("STANDARD_MAX_FILE_SECONDS", 3 * 60 * 60),
     queueWeight: 2,
     seats: 1,
-    retentionDays: 90,
+    retentionDays: 180,
     apiAccess: true,
+    apiAccessLabel: "Có giới hạn",
+    webhookAccess: false,
+    maxConcurrentJobs: 3,
+    transcriptLimit: 100,
+    rolloverLabel: "1 tháng",
+    supportLevel: "Ưu tiên",
   },
   special: {
     name: "special",
     label: "Đặc biệt",
-    quotaSeconds: getEnvInt("SPECIAL_MONTHLY_SECONDS", 1200 * 60),
-    yearlyQuotaSeconds: getEnvInt("SPECIAL_YEARLY_SECONDS", 14400 * 60),
+    quotaSeconds: getEnvInt("SPECIAL_MONTHLY_SECONDS", 20 * 60 * 60),
+    yearlyQuotaSeconds: getEnvInt("SPECIAL_YEARLY_SECONDS", 240 * 60 * 60),
     maxUploadMb: getEnvInt("SPECIAL_MAX_UPLOAD_MB", 1024),
-    maxRecordSeconds: getEnvInt("SPECIAL_MAX_RECORD_SECONDS", 2 * 60 * 60),
+    maxRecordSeconds: getEnvInt("SPECIAL_MAX_RECORD_SECONDS", 4 * 60 * 60),
     maxFileSeconds: getEnvInt("SPECIAL_MAX_FILE_SECONDS", 4 * 60 * 60),
     queueWeight: 4,
     seats: 1,
     retentionDays: 365,
     apiAccess: true,
+    apiAccessLabel: "Mở rộng",
+    webhookAccess: true,
+    maxConcurrentJobs: 5,
+    transcriptLimit: null,
+    rolloverLabel: "2 tháng",
+    supportLevel: "Ưu tiên",
   },
   business: {
     name: "business",
@@ -60,12 +78,18 @@ const PLAN_CONFIG = {
     quotaSeconds: getEnvInt("BUSINESS_MONTHLY_SECONDS", 40 * 60 * 60),
     yearlyQuotaSeconds: getEnvInt("BUSINESS_YEARLY_SECONDS", 480 * 60 * 60),
     maxUploadMb: getEnvInt("BUSINESS_MAX_UPLOAD_MB", 2048),
-    maxRecordSeconds: getEnvInt("BUSINESS_MAX_RECORD_SECONDS", 8 * 60 * 60),
-    maxFileSeconds: getEnvInt("BUSINESS_MAX_FILE_SECONDS", 8 * 60 * 60),
+    maxRecordSeconds: getEnvInt("BUSINESS_MAX_RECORD_SECONDS", 10 * 60 * 60),
+    maxFileSeconds: getEnvInt("BUSINESS_MAX_FILE_SECONDS", 10 * 60 * 60),
     queueWeight: 8,
-    seats: 1,
-    retentionDays: 365,
+    seats: 5,
+    retentionDays: 36500,
     apiAccess: true,
+    apiAccessLabel: "Đầy đủ",
+    webhookAccess: true,
+    maxConcurrentJobs: 10,
+    transcriptLimit: null,
+    rolloverLabel: "3 tháng",
+    supportLevel: "Ưu tiên + Chat",
   },
 };
 
@@ -81,7 +105,7 @@ function normalizePlan(plan) {
     return "standard";
   }
   if (
-    ["special", "pro", "premium", "dac_biet", "đặc_biệt"].includes(clean)
+    ["special", "pro", "premium", "professional", "chuyen_nghiep", "chuyên_nghiệp", "dac_biet", "đặc_biệt"].includes(clean)
   ) {
     return "special";
   }
@@ -151,6 +175,11 @@ async function getUserBilling(userId, db = pool) {
       maxUploadMb: Math.min(config.maxUploadMb, SYSTEM_MAX_UPLOAD_MB),
       maxRecordSeconds: config.maxRecordSeconds,
       maxFileSeconds: config.maxFileSeconds,
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      transcriptLimit: config.transcriptLimit,
+      retentionDays: config.retentionDays,
+      webhookAccess: Boolean(config.webhookAccess),
+      apiAccess: Boolean(config.apiAccess),
     },
   };
 }
@@ -252,11 +281,26 @@ async function validateBeforeTranscription({
   db = pool,
 }) {
   const quota = await getQuotaStatus(userId, { db });
+  await syncQuotaAlertState({ userId, quota, source, db });
   const fileSizeMb = file?.size ? file.size / 1024 / 1024 : 0;
   const expected =
     expectedDurationSeconds !== null && expectedDurationSeconds !== undefined
       ? Math.ceil(Number(expectedDurationSeconds))
       : null;
+
+  if (quota.limits.transcriptLimit !== null) {
+    const transcriptCount = await db.query(
+      "SELECT COUNT(*)::integer AS total FROM transcriptions WHERE user_id = $1",
+      [userId],
+    );
+    if (Number(transcriptCount.rows[0]?.total || 0) >= quota.limits.transcriptLimit) {
+      throw createHttpError(
+        403,
+        `Gói ${quota.label} chỉ lưu tối đa ${quota.limits.transcriptLimit} transcript. Vui lòng xóa bớt lịch sử hoặc nâng cấp gói.`,
+        { quota },
+      );
+    }
+  }
 
   if (quota.isLimitReached) {
     throw createHttpError(
@@ -307,7 +351,13 @@ async function validateAfterTranscription({
   const quota = await getQuotaStatus(userId, { excludeJobId, db });
   const duration = Math.ceil(Number(durationSeconds || 0));
 
-  if (duration <= 0) return quota;
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw createHttpError(
+      422,
+      "Không xác định được thời lượng hợp lệ của file âm thanh.",
+      { quota },
+    );
+  }
 
   if (duration > quota.limits.maxFileSeconds) {
     throw createHttpError(
@@ -360,10 +410,16 @@ async function recordQuotaUsage({
   userId,
   transcriptionId,
   durationSeconds,
+  source = "transcription",
   db = pool,
 }) {
   const seconds = Math.ceil(Number(durationSeconds || 0));
-  if (seconds <= 0) return null;
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw createHttpError(
+      422,
+      "Không thể ghi nhận quota vì thời lượng âm thanh không hợp lệ.",
+    );
+  }
 
   await db.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
   const billing = await getUserBilling(userId, db);
@@ -424,7 +480,19 @@ async function recordQuotaUsage({
     }
   }
 
-  return rows[0];
+  const quota = await getQuotaStatus(userId, { db });
+  const quotaAlert = await syncQuotaAlertState({
+    userId,
+    quota,
+    source,
+    db,
+  });
+
+  return {
+    ...rows[0],
+    quotaAlert: quotaAlert.alert,
+    quotaAlertCreated: quotaAlert.created,
+  };
 }
 
 async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly") {
@@ -454,13 +522,16 @@ async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly
      WHERE id = $4`,
     [planName, quotaSeconds, expiresAt, userId],
   );
-  return getQuotaStatus(userId);
+  const quota = await getQuotaStatus(userId);
+  await syncQuotaAlertState({ userId, quota, source: "plan_upgrade" });
+  return quota;
 }
 
 module.exports = {
   PLAN_CONFIG,
   DEFAULT_ALERT_SECONDS,
   createHttpError,
+  getPlanConfig,
   normalizePlan,
   normalizeBillingCycle,
   getPurchasedQuotaSeconds,

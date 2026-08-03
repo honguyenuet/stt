@@ -1,6 +1,6 @@
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+import { getApiBaseUrl } from "./api-base-url";
+
+const API_URL = getApiBaseUrl();
 
 export interface SupportTicket {
   id: number;
@@ -13,8 +13,17 @@ export interface SupportTicket {
   pageUrl: string | null;
   userPlan: string | null;
   latestMessage: string;
+  adminMessageCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SupportMessage {
+  id: number;
+  ticketId: number;
+  sender: "user" | "admin";
+  message: string;
+  createdAt: string;
 }
 
 export interface CreateSupportTicketPayload {
@@ -58,4 +67,27 @@ export async function createSupportTicket(
     body: JSON.stringify(payload),
   });
   return readJson<{ ticket: SupportTicket }>(res);
+}
+
+export async function fetchSupportMessages(token: string, ticketId: number) {
+  const res = await fetch(`${API_URL}/api/support/tickets/${ticketId}/messages`, {
+    headers: authHeaders(token),
+  });
+  return readJson<{ messages: SupportMessage[] }>(res);
+}
+
+export async function replySupportTicket(
+  token: string,
+  ticketId: number,
+  message: string,
+) {
+  const res = await fetch(`${API_URL}/api/support/tickets/${ticketId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(token),
+    },
+    body: JSON.stringify({ message }),
+  });
+  return readJson<{ message: SupportMessage }>(res);
 }

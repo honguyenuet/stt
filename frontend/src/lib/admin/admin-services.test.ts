@@ -6,7 +6,12 @@ import {
   validateQuotaAdjustment,
 } from "./formatters";
 import { loginAdmin, readAdminSession } from "./admin-auth";
-import { listUsers } from "./users-service";
+import {
+  adjustUserQuota,
+  deleteUserAccount,
+  listUsers,
+  updateUserPlan,
+} from "./users-service";
 import {
   listTranscriptionJobs,
   retryTranscriptionJob,
@@ -48,7 +53,7 @@ function seedSession() {
       id: "admin_test",
       name: "Test Admin",
       email: "admin@test.local",
-      role: "super_admin",
+      role: "admin",
     },
   });
 }
@@ -81,7 +86,7 @@ describe("admin utilities", () => {
               id: "1",
               name: "Vbee Admin",
               email: "superadmin@vbee.local",
-              role: "super_admin",
+              role: "admin",
             },
           }),
         ),
@@ -89,7 +94,7 @@ describe("admin utilities", () => {
     );
 
     await loginAdmin("superadmin@vbee.local", "admin123");
-    expect(readAdminSession()?.user.role).toBe("super_admin");
+    expect(readAdminSession()?.user.role).toBe("admin");
   });
 });
 
@@ -109,7 +114,7 @@ describe("admin services", () => {
               id: "2",
               name: "Tran Hoang Nam",
               email: "nam.tran@example.com",
-              role: "viewer",
+              role: "support",
               status: "active",
               quota_minutes: 300,
               used_minutes: 20,
@@ -130,15 +135,78 @@ describe("admin services", () => {
       page: 1,
       limit: 10,
       search: "nam.tran",
-      role: "viewer",
+      role: "support",
       status: "active",
     });
 
     expect(result.total).toBe(1);
     expect(result.data[0]?.email).toBe("nam.tran@example.com");
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/api/admin/users?page=1&limit=10&search=nam.tran&role=viewer&status=active",
+      "/api/admin/users?page=1&limit=10&search=nam.tran&role=support&status=active",
     );
+  });
+
+  it("sets user quota with an absolute minute value", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          id: "2",
+          name: "Tran Hoang Nam",
+          email: "nam.tran@example.com",
+          role: "user",
+          status: "active",
+          plan: "standard",
+          quota_minutes: 120,
+          used_minutes: 20,
+          created_at: new Date().toISOString(),
+          last_login_at: null,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await adjustUserQuota("2", 120, "Set quota theo hợp đồng");
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      quotaMinutes: 120,
+      reason: "Set quota theo hợp đồng",
+    });
+  });
+
+  it("updates user plan and deletes users through admin API", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          id: "2",
+          name: "Tran Hoang Nam",
+          email: "nam.tran@example.com",
+          role: "user",
+          status: "deleted",
+          plan: "business",
+          quota_minutes: 2400,
+          used_minutes: 20,
+          created_at: new Date().toISOString(),
+          last_login_at: null,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateUserPlan("2", "business", "yearly");
+    await deleteUserAccount("2");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users/2/plan",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      plan: "business",
+      billingCycle: "yearly",
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      "/api/admin/users/2",
+    );
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("DELETE");
   });
 
   it("retries failed jobs through backend API", async () => {

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -27,6 +27,8 @@ import { useAuth } from "@/context/AuthContext";
 import {
   createCheckout,
   createTopUpCheckout,
+  fetchBillingCatalog,
+  type BillingCatalog,
   type TopUpCode,
 } from "@/lib/billing";
 import { type PlanCode } from "@/lib/quota";
@@ -62,6 +64,17 @@ type TopUp = {
   popular?: boolean;
 };
 
+function formatVnd(value: number | null | undefined) {
+  return Number.isFinite(value)
+    ? `${new Intl.NumberFormat("vi-VN").format(Number(value))}đ`
+    : "Liên hệ";
+}
+
+function formatQuotaHours(seconds: number, yearly: boolean) {
+  const hours = Math.round(seconds / 3600);
+  return `${hours} giờ${yearly ? "/năm" : ""}`;
+}
+
 export const Route = createFileRoute("/pricing")({
   head: () => ({
     meta: [
@@ -75,7 +88,7 @@ export const Route = createFileRoute("/pricing")({
       {
         property: "og:description",
         content:
-          "So sánh gói theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp cho nền tảng chuyển giọng nói thành văn bản.",
+          "So sánh gói Theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp cho nền tảng chuyển giọng nói thành văn bản.",
       },
     ],
   }),
@@ -86,25 +99,26 @@ const monthlyPlans: Plan[] = [
   {
     code: "standard",
     name: "Tiêu chuẩn",
-    label: "Cá nhân",
-    desc: "Dành cho học tập, ghi chú, phỏng vấn và nhu cầu cá nhân hằng tháng.",
-    price: "150.000đ",
+    label: "Cá nhân dùng ít",
+    desc: "Dành cho cá nhân cần xử lý đều đặn với quota hằng tháng và tính năng xuất file đầy đủ.",
+    price: "149.000đ",
     unit: "/tháng",
     minutes: "5 giờ",
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "5 giờ xử lý mỗi tháng",
-      "File dài tối đa 2 giờ",
-      "Lưu dữ liệu 90 ngày",
-      "API và ưu tiên queue 2×",
+      "Upload tối đa 300MB",
+      "File dài tối đa 3 giờ",
+      "Lưu transcript 180 ngày",
+      "API có giới hạn",
     ],
   },
   {
     code: "special",
     name: "Đặc biệt",
-    label: "Phổ biến",
-    desc: "Cho người sáng tạo và chuyên viên cần xử lý nhiều file thường xuyên.",
-    price: "449.000đ",
+    label: "Freelancer / Creator",
+    desc: "Cho creator, freelancer và người dùng thường xuyên cần nhiều giờ hơn.",
+    price: "499.000đ",
     unit: "/tháng",
     minutes: "20 giờ",
     badge: "Khuyên dùng",
@@ -112,25 +126,27 @@ const monthlyPlans: Plan[] = [
     cta: "Đăng ký Đặc biệt",
     features: [
       "20 giờ xử lý mỗi tháng",
+      "Upload tối đa 1GB",
       "File dài tối đa 4 giờ",
+      "API mở rộng và webhook",
       "Nhận diện nhiều người nói",
-      "API và ưu tiên queue 4×",
     ],
   },
   {
     code: "business",
     name: "Chuyên nghiệp",
     label: "Nâng cao",
-    desc: "Cho chuyên gia và đơn vị có khối lượng chuyển đổi lớn mỗi tháng.",
+    desc: "Cho nhóm nhỏ và chuyên gia cần 40 giờ xử lý, tốc độ cao và API đầy đủ.",
     price: "799.000đ",
     unit: "/tháng",
     minutes: "40 giờ",
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "40 giờ xử lý mỗi tháng",
-      "File dài tối đa 8 giờ",
-      "Lưu dữ liệu 1 năm",
-      "API, webhook và queue 8×",
+      "Upload tối đa 2GB",
+      "File dài tối đa 10 giờ",
+      "API và webhook đầy đủ",
+      "Xử lý song song 10 file",
     ],
   },
 ];
@@ -140,53 +156,55 @@ const yearlyPlans: Plan[] = [
     code: "standard",
     name: "Tiêu chuẩn",
     label: "Tiết kiệm",
-    desc: "Thanh toán năm cho người dùng cá nhân cần dùng đều đặn.",
-    price: "1.650.000đ",
+    desc: "Thanh toán năm cho cá nhân dùng đều đặn và muốn tiết kiệm chi phí.",
+    price: "1.490.000đ",
     unit: "/năm",
     minutes: "60 giờ/năm",
-    saving: "Tiết kiệm 1 tháng",
+    saving: "Tiết kiệm 2 tháng",
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "Cấp đủ 60 giờ ngay sau thanh toán",
-      "File dài tối đa 2 giờ",
-      "Lưu dữ liệu 90 ngày",
-      "API và ưu tiên queue 2×",
+      "Upload tối đa 300MB",
+      "File dài tối đa 3 giờ",
+      "Lưu transcript 180 ngày",
+      "API có giới hạn",
     ],
   },
   {
     code: "special",
     name: "Đặc biệt",
     label: "Tốt nhất",
-    desc: "Gói năm tối ưu chi phí cho người dùng thường xuyên.",
-    price: "4.939.000đ",
+    desc: "Gói năm tối ưu cho creator và freelancer cần xử lý nhiều file.",
+    price: "4.990.000đ",
     unit: "/năm",
     minutes: "240 giờ/năm",
     badge: "Tối ưu nhất",
-    saving: "Tiết kiệm 1 tháng",
+    saving: "Tiết kiệm 2 tháng",
     highlight: true,
     cta: "Đăng ký Đặc biệt năm",
     features: [
       "Cấp đủ 240 giờ ngay sau thanh toán",
+      "Upload tối đa 1GB",
       "File dài tối đa 4 giờ",
+      "API mở rộng và webhook",
       "Nhận diện nhiều người nói",
-      "API và ưu tiên queue 4×",
     ],
   },
   {
     code: "business",
     name: "Chuyên nghiệp",
     label: "Nâng cao",
-    desc: "Gói năm cho chuyên gia và đơn vị có khối lượng xử lý lớn.",
-    price: "8.789.000đ",
+    desc: "Gói năm cho nhóm nhỏ và chuyên gia có khối lượng xử lý lớn.",
+    price: "7.990.000đ",
     unit: "/năm",
     minutes: "480 giờ/năm",
-    saving: "Tiết kiệm 1 tháng",
+    saving: "Tiết kiệm 2 tháng",
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "Cấp đủ 480 giờ ngay sau thanh toán",
-      "File dài tối đa 8 giờ",
-      "Lưu dữ liệu 1 năm",
-      "API, webhook và queue 8×",
+      "Upload tối đa 2GB",
+      "File dài tối đa 10 giờ",
+      "API, webhook và queue cao nhất",
     ],
   },
 ];
@@ -244,7 +262,7 @@ const faqs = [
   },
   {
     q: "Gói theo tháng và theo năm khác nhau như thế nào?",
-    a: "Gói theo tháng linh hoạt, phù hợp dùng ngắn hạn. Gói theo năm có cùng bộ tính năng, được cấp đủ thời lượng của năm và có giá tương đương 11 tháng.",
+    a: "Gói theo tháng linh hoạt, phù hợp dùng ngắn hạn. Gói theo năm có cùng bộ tính năng, được cấp đủ thời lượng của năm và có giá tương đương 10 tháng, tiết kiệm 2 tháng.",
   },
   {
     q: "Hết số phút xử lý thì có dùng tiếp được không?",
@@ -252,7 +270,7 @@ const faqs = [
   },
   {
     q: "Có thể xuất file Word không?",
-    a: "Có. Từ gói Tiêu chuẩn trở lên có thể xuất DOCX/TXT; gói Đặc biệt hỗ trợ thêm định dạng phục vụ chia sẻ và lưu trữ.",
+    a: "Có. Theo lượt, Tiêu chuẩn, Đặc biệt và Chuyên nghiệp đều hỗ trợ xuất TXT/DOCX; PDF và SRT/VTT khả dụng từ gói Tiêu chuẩn trở lên.",
   },
   {
     q: "Doanh nghiệp có thể tích hợp API không?",
@@ -275,42 +293,82 @@ const featureGroups: Array<{
   }>;
 }> = [
   {
-    title: "Dung lượng và xử lý",
+    title: "Thanh toán và quota",
     rows: [
       {
+        feature: "Thanh toán",
+        free: "Theo lượt",
+        basic: "Theo tháng/năm",
+        pro: "Theo tháng/năm",
+        business: "Theo tháng/năm",
+      },
+      {
         feature: "Thời lượng xử lý",
-        free: "Theo giờ đã mua",
+        free: "Theo sử dụng",
         basic: "5 giờ/tháng",
         pro: "20 giờ/tháng",
         business: "40 giờ/tháng",
       },
       {
-        feature: "Thời lượng tối đa mỗi file",
-        free: "30 phút",
-        basic: "2 giờ",
-        pro: "4 giờ",
-        business: "8 giờ",
-      },
-      {
-        feature: "Kích thước file tối đa",
-        free: "50MB",
-        basic: "200MB",
-        pro: "200MB",
-        business: "Theo cấu hình hạ tầng",
-      },
-      {
-        feature: "Trọng số ưu tiên queue",
-        free: "1×",
-        basic: "2×",
-        pro: "4×",
-        business: "8×",
-      },
-      {
-        feature: "Nhận diện nhiều người nói",
-        free: false,
-        basic: false,
+        feature: "Mua thêm giờ",
+        free: true,
+        basic: true,
         pro: true,
         business: true,
+      },
+      {
+        feature: "Cộng dồn giờ chưa dùng",
+        free: false,
+        basic: "1 tháng",
+        pro: "2 tháng",
+        business: "3 tháng",
+      },
+    ],
+  },
+  {
+    title: "Dung lượng và xử lý",
+    rows: [
+      {
+        feature: "Upload tối đa",
+        free: "100MB",
+        basic: "300MB",
+        pro: "1GB",
+        business: "2GB",
+      },
+      {
+        feature: "Thời lượng tối đa mỗi file",
+        free: "30 phút",
+        basic: "3 giờ",
+        pro: "4 giờ",
+        business: "10 giờ",
+      },
+      {
+        feature: "Lưu transcript",
+        free: "5",
+        basic: "100",
+        pro: "Không giới hạn",
+        business: "Không giới hạn",
+      },
+      {
+        feature: "Lưu trữ",
+        free: "30 ngày",
+        basic: "180 ngày",
+        pro: "1 năm",
+        business: "Không giới hạn",
+      },
+      {
+        feature: "Tốc độ xử lý",
+        free: "Tiêu chuẩn",
+        basic: "Ưu tiên",
+        pro: "Ưu tiên cao",
+        business: "Cao nhất",
+      },
+      {
+        feature: "Xử lý song song",
+        free: "1 file",
+        basic: "3 file",
+        pro: "5 file",
+        business: "10 file",
       },
     ],
   },
@@ -326,14 +384,14 @@ const featureGroups: Array<{
       },
       {
         feature: "Xuất TXT",
-        free: false,
+        free: true,
         basic: true,
         pro: true,
         business: true,
       },
       {
         feature: "Xuất DOCX",
-        free: false,
+        free: true,
         basic: true,
         pro: true,
         business: true,
@@ -341,16 +399,37 @@ const featureGroups: Array<{
       {
         feature: "Xuất PDF",
         free: false,
-        basic: false,
+        basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Lưu dữ liệu",
-        free: "7 ngày",
-        basic: "90 ngày",
-        pro: "1 năm",
-        business: "1 năm",
+        feature: "Xuất SRT/VTT",
+        free: false,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Dịch đa ngôn ngữ",
+        free: false,
+        basic: true,
+        pro: true,
+        business: true,
+      },
+      {
+        feature: "Tóm tắt AI",
+        free: false,
+        basic: "Giới hạn",
+        pro: "Không giới hạn",
+        business: "Không giới hạn",
+      },
+      {
+        feature: "Nhận diện người nói",
+        free: false,
+        basic: true,
+        pro: true,
+        business: true,
       },
     ],
   },
@@ -358,32 +437,46 @@ const featureGroups: Array<{
     title: "Quản trị và hỗ trợ",
     rows: [
       {
-        feature: "Số người dùng",
-        free: "1",
-        basic: "1",
-        pro: "1",
-        business: "1",
-      },
-      {
-        feature: "API / Webhook",
+        feature: "API",
         free: false,
-        basic: true,
-        pro: true,
-        business: true,
+        basic: "Có giới hạn",
+        pro: "Mở rộng",
+        business: "Đầy đủ",
       },
       {
-        feature: "Hỗ trợ email",
-        free: false,
-        basic: true,
-        pro: true,
-        business: true,
-      },
-      {
-        feature: "Hỗ trợ ưu tiên",
+        feature: "Webhook",
         free: false,
         basic: false,
         pro: true,
         business: true,
+      },
+      {
+        feature: "Quản lý nhóm",
+        free: false,
+        basic: false,
+        pro: false,
+        business: "5 người",
+      },
+      {
+        feature: "Quyền thành viên",
+        free: false,
+        basic: false,
+        pro: false,
+        business: true,
+      },
+      {
+        feature: "Nhật ký hoạt động",
+        free: false,
+        basic: false,
+        pro: false,
+        business: true,
+      },
+      {
+        feature: "Hỗ trợ",
+        free: "Email",
+        basic: "Ưu tiên",
+        pro: "Ưu tiên",
+        business: "Ưu tiên + Chat",
       },
     ],
   },
@@ -393,10 +486,63 @@ function PricingPage() {
   const [billing, setBilling] = useState<BillingCycle>("monthly");
   const [planMessage, setPlanMessage] = useState("");
   const [upgradingPlan, setUpgradingPlan] = useState("");
+  const [catalog, setCatalog] = useState<BillingCatalog | null>(null);
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const pendingPurchaseStarted = useRef(false);
-  const plans = billing === "monthly" ? monthlyPlans : yearlyPlans;
+  const plans = useMemo(() => {
+    const basePlans = billing === "monthly" ? monthlyPlans : yearlyPlans;
+    return basePlans.map((plan) => {
+      const catalogPlan = catalog?.plans.find(
+        (item) => item.code === plan.code,
+      );
+      const cycle = catalogPlan?.[billing];
+      return cycle
+        ? {
+            ...plan,
+            price: formatVnd(cycle.price),
+            minutes: formatQuotaHours(cycle.quotaSeconds, billing === "yearly"),
+          }
+        : plan;
+    });
+  }, [billing, catalog]);
+  const resolvedTopUps = useMemo(
+    () =>
+      topUps.map((product) => {
+        const catalogProduct = catalog?.topUps.find(
+          (item) => item.code === product.code,
+        );
+        return catalogProduct
+          ? {
+              ...product,
+              hours: formatQuotaHours(catalogProduct.quotaSeconds, false),
+              price: formatVnd(catalogProduct.price),
+            }
+          : product;
+      }),
+    [catalog],
+  );
+  const hourlyPrice =
+    resolvedTopUps.find((product) => product.code === "topup_1h")?.price ||
+    "39.000đ";
+
+  useEffect(() => {
+    let active = true;
+    void fetchBillingCatalog()
+      .then((nextCatalog) => {
+        if (active) setCatalog(nextCatalog);
+      })
+      .catch(() => {
+        if (active) {
+          setPlanMessage(
+            "Không tải được bảng giá mới nhất. Vui lòng thử lại trước khi thanh toán.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!user || !token || pendingPurchaseStarted.current) return;
@@ -458,8 +604,7 @@ function PricingPage() {
     if (!user || !token) {
       if (
         plan.code === "standard" ||
-        plan.code === "special" ||
-        plan.code === "business"
+        plan.code === "special"
       ) {
         savePendingPlanPurchase(plan.code, billing, plan.name);
       }
@@ -539,17 +684,24 @@ function PricingPage() {
       )}
       <PlanCards
         plans={plans}
+        hourlyPrice={hourlyPrice}
         billing={billing}
         upgradingPlan={upgradingPlan}
         onSelectPlan={(plan) => void handleSelectPlan(plan)}
       />
       <TopUpCards
-        products={topUps}
+        products={resolvedTopUps}
+        hourlyPrice={hourlyPrice}
         busyProduct={upgradingPlan}
         onSelect={(product) => void handleSelectTopUp(product)}
       />
       <PricingValueBand />
-      <CompareTable billing={billing} setBilling={setBilling} />
+      <CompareTable
+        billing={billing}
+        setBilling={setBilling}
+        hourlyPrice={hourlyPrice}
+        plans={plans}
+      />
       <PricingFaq />
       <EnterpriseCta onStart={handleStart} />
       <PricingFooter />
@@ -659,11 +811,13 @@ function BillingToggle({
 
 function PlanCards({
   plans,
+  hourlyPrice,
   billing,
   upgradingPlan,
   onSelectPlan,
 }: {
   plans: Plan[];
+  hourlyPrice: string;
   billing: BillingCycle;
   upgradingPlan: string;
   onSelectPlan: (plan: Plan) => void;
@@ -697,7 +851,7 @@ function PlanCards({
                 <span className="rounded-full bg-[#fff7c2] px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#725a00]">
                   Không thuê bao
                 </span>
-                <h3 className="mt-5 text-2xl font-black">Theo lượt sử dụng</h3>
+                <h3 className="mt-5 text-2xl font-black">Trả theo giờ</h3>
               </div>
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#f7f3ff] text-[#21104a]">
                 <Clock3 className="h-5 w-5" />
@@ -705,8 +859,8 @@ function PlanCards({
             </div>
 
             <p className="mt-4 min-h-[72px] text-sm leading-6 text-[#6a5a8f]">
-              Chỉ trả tiền cho số giờ cần dùng. Thời lượng đã mua được giữ đến
-              khi dùng hết.
+              Chỉ trả tiền cho số giờ cần dùng. Không có quota thuê bao cố định
+              hoặc cộng dồn giờ theo chu kỳ.
             </p>
 
             <div className="mt-5 rounded-2xl border border-current/10 p-4">
@@ -716,7 +870,7 @@ function PlanCards({
 
             <div className="mt-6 flex items-end gap-1">
               <span className="text-2xl font-black tracking-tight md:text-3xl">
-                39.000đ
+                {hourlyPrice}
               </span>
               <span className="pb-1 text-sm font-bold text-[#6a5a8f]">
                 /giờ
@@ -735,7 +889,7 @@ function PlanCards({
               {[
                 "Không yêu cầu đăng ký",
                 "Không có mức dùng tối thiểu",
-                "Thời lượng không hết hạn",
+                "Theo sử dụng, không cộng dồn chu kỳ",
                 "Thanh toán trực tuyến qua PayOS",
               ].map((feature) => (
                 <div
@@ -865,10 +1019,12 @@ function PlanCards({
 
 function TopUpCards({
   products,
+  hourlyPrice,
   busyProduct,
   onSelect,
 }: {
   products: TopUp[];
+  hourlyPrice: string;
   busyProduct: string;
   onSelect: (product: TopUp) => void;
 }) {
@@ -899,8 +1055,8 @@ function TopUpCards({
 
             <div className="mt-7 space-y-4 border-t border-white/15 pt-6 text-sm font-semibold text-white/82">
               {[
-                "39.000đ cho mỗi giờ chuyển đổi",
-                "Thời lượng đã mua không hết hạn",
+                `${hourlyPrice} cho mỗi giờ chuyển đổi`,
+                "Không có quota thuê bao cố định",
                 "Cộng trực tiếp vào quota hiện có",
                 "Thanh toán QR ngay trên website",
               ].map((item) => (
@@ -1032,9 +1188,13 @@ function PricingValueBand() {
 function CompareTable({
   billing,
   setBilling,
+  hourlyPrice,
+  plans,
 }: {
   billing: BillingCycle;
   setBilling: (billing: BillingCycle) => void;
+  hourlyPrice: string;
+  plans: Plan[];
 }) {
   const yearlyMultiplier = billing === "yearly";
 
@@ -1044,7 +1204,7 @@ function CompareTable({
       if (!yearlyMultiplier || row.feature !== "Thời lượng xử lý") return row;
       return {
         ...row,
-        free: "Theo giờ đã mua",
+        free: "Theo sử dụng",
         basic: "60 giờ/năm",
         pro: "240 giờ/năm",
         business: "480 giờ/năm",
@@ -1079,19 +1239,28 @@ function CompareTable({
                   <th className="w-[28%] px-5 py-5 text-xs font-black uppercase tracking-wide text-[#6a5a8f]">
                     Tính năng
                   </th>
-                  <PlanHead name="Theo lượt" price="39.000đ/giờ" />
+                  <PlanHead name="Theo lượt" price={`${hourlyPrice}/giờ`} />
                   <PlanHead
                     name="Tiêu chuẩn"
-                    price={billing === "monthly" ? "150.000đ" : "1.650.000đ"}
+                    price={
+                      plans.find((plan) => plan.code === "standard")?.price ||
+                      "Liên hệ"
+                    }
                   />
                   <PlanHead
                     name="Đặc biệt"
-                    price={billing === "monthly" ? "449.000đ" : "4.939.000đ"}
+                    price={
+                      plans.find((plan) => plan.code === "special")?.price ||
+                      "Liên hệ"
+                    }
                     highlight
                   />
                   <PlanHead
                     name="Chuyên nghiệp"
-                    price={billing === "monthly" ? "799.000đ" : "8.789.000đ"}
+                    price={
+                      plans.find((plan) => plan.code === "business")?.price ||
+                      "Liên hệ"
+                    }
                   />
                 </tr>
               </thead>
@@ -1354,7 +1523,7 @@ function PricingFooter() {
           ],
           [
             "Bảng giá",
-            ["Miễn phí", "Tiêu chuẩn", "Đặc biệt", "Doanh nghiệp"],
+            ["Theo lượt", "Tiêu chuẩn", "Đặc biệt", "Chuyên nghiệp"],
           ],
           [
             "Liên hệ",

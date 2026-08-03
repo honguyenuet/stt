@@ -7,21 +7,41 @@ const fs = require("fs");
 const pool = require("../db");
 const { encryptProviderSecret } = require("../services/providerSecrets");
 const { UPLOADS_DIR } = require("../services/transcriptionService");
-const { transcriptionQueue } = require("../services/jobQueue");
+const {
+  cancelTranscriptionJobForUser,
+  kickTranscriptionWorker,
+} = require("../services/transcriptionQueue");
+const { revokeAllSessions } = require("../services/sessionService");
+const {
+  PLAN_CONFIG,
+  getPurchasedQuotaSeconds,
+  normalizeBillingCycle,
+  normalizePlan: normalizeUserPlan,
+} = require("../services/quotaService");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 const ADMIN_TOKEN_TTL = "8h";
 
-const ADMIN_ROLES = new Set(["super_admin", "admin", "viewer"]);
-const MUTATION_ROLES = new Set(["super_admin", "admin"]);
+const ADMIN_ROLES = new Set(["admin", "support", "super_admin"]);
+const ASSIGNABLE_ADMIN_ROLES = new Set(["admin", "support", "user"]);
+const MUTATION_ROLES = new Set(["admin"]);
+const SUPPORT_MUTATION_ROLES = new Set(["admin", "support"]);
+const SUPPORT_STATUSES = new Set(["open", "pending", "resolved", "closed"]);
+
+function normalizeAdminRole(role) {
+  if (role === "super_admin") return "admin";
+  if (role === "admin" || role === "support") return role;
+  return "user";
+}
 
 function generateToken(user) {
+  const adminRole = normalizeAdminRole(user.admin_role);
   return jwt.sign(
     {
       id: user.id,
       email: user.email,
-      adminRole: user.admin_role,
+      adminRole,
       scope: "admin",
     },
     JWT_SECRET,
@@ -35,11 +55,12 @@ function readBearerToken(req) {
 }
 
 function normalizeAdminUser(row) {
+  const role = normalizeAdminRole(row.admin_role);
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role: ADMIN_ROLES.has(row.admin_role) ? row.admin_role : "viewer",
+    role: role === "admin" || role === "support" ? role : "support",
   };
 }
 
@@ -59,21 +80,42 @@ async function requireAdmin(req, res, next) {
       [decoded.id],
     );
     const user = rows[0];
+    const adminRole = normalizeAdminRole(user?.admin_role);
     if (
       !user ||
       user.status !== "active" ||
-      !ADMIN_ROLES.has(user.admin_role)
+      !ADMIN_ROLES.has(user.admin_role) ||
+      !["admin", "support"].includes(adminRole)
     ) {
       return res.status(403).json({ error: "Tài khoản admin không hợp lệ" });
     }
 
-    req.admin = user;
+    if (
+      adminRole === "support" &&
+      req.path !== "/auth/me" &&
+      !req.path.startsWith("/support/")
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Hỗ trợ viên chỉ được truy cập phản hồi hỗ trợ" });
+    }
+
+    req.admin = { ...user, admin_role: adminRole };
     next();
   } catch {
     return res
       .status(401)
       .json({ error: "Token admin không hợp lệ hoặc đã hết hạn" });
   }
+}
+
+function requireAdminManagement(req, res, next) {
+  if (req.admin.admin_role !== "admin") {
+    return res
+      .status(403)
+      .json({ error: "Bạn không có quyền truy cập mục quản trị này" });
+  }
+  next();
 }
 
 function requireMutation(req, res, next) {
@@ -85,11 +127,11 @@ function requireMutation(req, res, next) {
   next();
 }
 
-function requireSuperAdmin(req, res, next) {
-  if (req.admin.admin_role !== "super_admin") {
+function requireSupportMutation(req, res, next) {
+  if (!SUPPORT_MUTATION_ROLES.has(req.admin.admin_role)) {
     return res
       .status(403)
-      .json({ error: "Chỉ super_admin được thực hiện thao tác này" });
+      .json({ error: "Bạn không có quyền phản hồi hỗ trợ" });
   }
   next();
 }
@@ -132,8 +174,8 @@ async function writeAudit({
 
 function userSelectSql() {
   return `
-    SELECT u.id, u.first_name, u.last_name, u.email, u.admin_role, u.status,
-      u.quota_seconds, u.created_at, u.last_login_at,
+    SELECT u.id, u.first_name, u.last_name, u.email, u.admin_role, u.status, u.plan,
+      u.quota_seconds, u.plan_started_at, u.plan_expires_at, u.created_at, u.last_login_at,
       COALESCE(SUM(CASE WHEN t.status = 'completed' THEN COALESCE(t.duration, 0) ELSE 0 END), 0) AS used_seconds
     FROM users u
     LEFT JOIN transcriptions t ON t.user_id = u.id
@@ -141,14 +183,18 @@ function userSelectSql() {
 }
 
 function normalizeManagedUser(row) {
+  const role = normalizeAdminRole(row.admin_role);
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role: ADMIN_ROLES.has(row.admin_role) ? row.admin_role : "viewer",
+    role,
     status: row.status || "active",
+    plan: normalizeUserPlan(row.plan),
     quota_minutes: Math.ceil(Number(row.quota_seconds || 0) / 60),
     used_minutes: Math.ceil(Number(row.used_seconds || 0) / 60),
+    plan_started_at: row.plan_started_at,
+    plan_expires_at: row.plan_expires_at,
     created_at: row.created_at,
     last_login_at: row.last_login_at,
   };
@@ -177,51 +223,6 @@ function normalizeJob(row) {
     error_message: row.error_message || undefined,
     transcript: row.text || "",
   };
-}
-
-function normalizeQueueJob(job, userRow) {
-  const fileName = job.input?.filename || "queued-audio";
-  return {
-    job_id: job.id,
-    user_id: String(job.userId || ""),
-    user_name: userRow
-      ? `${userRow.first_name || ""} ${userRow.last_name || ""}`.trim() ||
-        userRow.email
-      : "Unknown user",
-    user_email: userRow?.email || "",
-    file_id: `queue_${job.id}`,
-    file_name: fileName,
-    language: job.result?.sourceLanguage || "auto",
-    duration: Math.round(Number(job.result?.duration || 0)),
-    status: job.status,
-    processing_time:
-      job.startedAt && job.finishedAt
-        ? Math.round(
-            (new Date(job.finishedAt).getTime() -
-              new Date(job.startedAt).getTime()) /
-              1000,
-          )
-        : null,
-    created_at: job.createdAt,
-    completed_at: job.finishedAt,
-    error_message: job.error?.message || undefined,
-    transcript: job.result?.text || "",
-  };
-}
-
-async function getAdminQueueJobs() {
-  const jobs = transcriptionQueue.listAll(100);
-  const userIds = [...new Set(jobs.map((job) => job.userId).filter(Boolean))];
-  if (userIds.length === 0)
-    return jobs.map((job) => normalizeQueueJob(job, null));
-  const { rows } = await pool.query(
-    "SELECT id, first_name, last_name, email FROM users WHERE id = ANY($1::int[])",
-    [userIds],
-  );
-  const usersById = new Map(rows.map((row) => [String(row.id), row]));
-  return jobs.map((job) =>
-    normalizeQueueJob(job, usersById.get(String(job.userId))),
-  );
 }
 
 function normalizeFile(row) {
@@ -258,6 +259,38 @@ function normalizeFile(row) {
       audio_filename: row.audio_filename || "",
       processing_seconds: Number(row.processing_seconds || 0),
     },
+  };
+}
+
+function normalizeSupportTicket(row) {
+  return {
+    id: String(row.id),
+    user_id: row.user_id ? String(row.user_id) : null,
+    user_name:
+      `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+      row.name ||
+      row.email ||
+      "Khách chưa đăng nhập",
+    user_email: row.email || row.user_email || "",
+    subject: row.subject || "Yêu cầu hỗ trợ Vbee",
+    category: row.category || "general",
+    priority: row.priority || "normal",
+    status: SUPPORT_STATUSES.has(row.status) ? row.status : "open",
+    page_url: row.page_url || null,
+    user_plan: row.user_plan || null,
+    latest_message: row.latest_message || "",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function normalizeSupportMessage(row) {
+  return {
+    id: String(row.id),
+    ticket_id: String(row.ticket_id),
+    sender: row.sender === "admin" ? "admin" : "user",
+    message: row.message || "",
+    created_at: row.created_at,
   };
 }
 
@@ -381,7 +414,6 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
         `),
     ]);
 
-    const queueJobs = await getAdminQueueJobs();
     const jobsByStatus = {
       uploaded: 0,
       queued: 0,
@@ -395,22 +427,17 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
         jobsByStatus[row.status] = row.count;
       }
     });
-    queueJobs.forEach((job) => {
-      if (Object.prototype.hasOwnProperty.call(jobsByStatus, job.status)) {
-        jobsByStatus[job.status] += 1;
-      }
-    });
     const completed = jobsByStatus.completed;
     const failed = jobsByStatus.failed;
     const terminal = completed + failed + jobsByStatus.cancelled;
-    const jobs = [...queueJobs, ...recentResult.rows.map(normalizeJob)].sort(
+    const jobs = recentResult.rows.map(normalizeJob).sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at),
     );
 
     return res.json({
       total_users: usersResult.rows[0].count,
       total_files: filesResult.rows[0].count,
-      total_jobs: jobsResult.rows[0].count + queueJobs.length,
+      total_jobs: jobsResult.rows[0].count,
       processed_minutes: usageResult.rows.reduce(
         (sum, row) =>
           sum + Number(row.web_minutes || 0) + Number(row.api_minutes || 0),
@@ -452,8 +479,16 @@ router.get("/users", requireAdmin, async (req, res) => {
       );
     }
     if (role !== "all") {
-      params.push(role);
-      filters.push(`u.admin_role = $${params.length}`);
+      if (role === "admin") {
+        filters.push(`u.admin_role IN ('admin', 'super_admin')`);
+      } else if (role === "support") {
+        params.push(role);
+        filters.push(`u.admin_role = $${params.length}`);
+      } else if (role === "user") {
+        filters.push(
+          `(u.admin_role IS NULL OR u.admin_role NOT IN ('admin', 'support', 'super_admin'))`,
+        );
+      }
     }
     if (status !== "all") {
       params.push(status);
@@ -497,13 +532,23 @@ router.patch(
       if (!["active", "suspended"].includes(status)) {
         return res.status(400).json({ error: "Status không hợp lệ" });
       }
+      const accountStatus = status === "active" ? "active" : "suspended";
+      const authVersionIncrement = status === "suspended" ? 1 : 0;
       const { rows } = await pool.query(
-        `UPDATE users SET status = $1 WHERE id = $2
-       RETURNING id, first_name, last_name, email, admin_role, status, quota_seconds, created_at, last_login_at`,
-        [status, req.params.id],
+        `UPDATE users
+         SET status = $1,
+             account_status = $2,
+             auth_version = auth_version + $3
+         WHERE id = $4
+       RETURNING id, first_name, last_name, email, admin_role, status, plan,
+         quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+        [status, accountStatus, authVersionIncrement, req.params.id],
       );
       if (!rows[0])
         return res.status(404).json({ error: "Không tìm thấy user" });
+      if (status === "suspended") {
+        await revokeAllSessions(req.params.id);
+      }
       await writeAudit({
         actorRow: req.admin,
         action: status === "active" ? "user.activate" : "user.suspend",
@@ -523,16 +568,19 @@ router.patch(
 router.patch(
   "/users/:id/role",
   requireAdmin,
-  requireSuperAdmin,
+  requireAdminManagement,
   async (req, res) => {
     try {
       const role = String(req.body.role || "");
-      if (!ADMIN_ROLES.has(role))
+      if (!ASSIGNABLE_ADMIN_ROLES.has(role))
         return res.status(400).json({ error: "Role không hợp lệ" });
+      const storedRole = role === "user" ? "none" : role;
+      const accountRole = role === "user" ? "user" : role;
       const { rows } = await pool.query(
-        `UPDATE users SET admin_role = $1 WHERE id = $2
-       RETURNING id, first_name, last_name, email, admin_role, status, quota_seconds, created_at, last_login_at`,
-        [role, req.params.id],
+        `UPDATE users SET admin_role = $1, role = $2 WHERE id = $3
+       RETURNING id, first_name, last_name, email, admin_role, status, plan,
+         quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+        [storedRole, accountRole, req.params.id],
       );
       if (!rows[0])
         return res.status(404).json({ error: "Không tìm thấy user" });
@@ -558,10 +606,10 @@ router.post(
   requireMutation,
   async (req, res) => {
     try {
-      const deltaMinutes = Number(req.body.deltaMinutes);
+      const quotaMinutes = Number(req.body.quotaMinutes);
       const reason = String(req.body.reason || "").trim();
-      if (!Number.isFinite(deltaMinutes) || deltaMinutes === 0) {
-        return res.status(400).json({ error: "Quota thay đổi phải khác 0" });
+      if (!Number.isFinite(quotaMinutes) || quotaMinutes < 0) {
+        return res.status(400).json({ error: "Quota không được âm" });
       }
       if (!reason)
         return res
@@ -574,15 +622,15 @@ router.post(
       );
       if (!current.rows[0])
         return res.status(404).json({ error: "Không tìm thấy user" });
-      const nextSeconds =
-        Number(current.rows[0].quota_seconds || 0) +
-        Math.round(deltaMinutes * 60);
-      if (nextSeconds < 0)
-        return res.status(400).json({ error: "Quota không được âm" });
+      const previousMinutes = Math.ceil(
+        Number(current.rows[0].quota_seconds || 0) / 60,
+      );
+      const nextSeconds = Math.round(quotaMinutes * 60);
 
       const { rows } = await pool.query(
         `UPDATE users SET quota_seconds = $1 WHERE id = $2
-       RETURNING id, first_name, last_name, email, admin_role, status, quota_seconds, created_at, last_login_at`,
+       RETURNING id, first_name, last_name, email, admin_role, status, plan,
+         quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
         [nextSeconds, req.params.id],
       );
       await writeAudit({
@@ -590,13 +638,115 @@ router.post(
         action: "quota.adjust",
         targetType: "quota",
         targetId: req.params.id,
-        details: { delta_minutes: deltaMinutes, reason },
+        details: {
+          quota_minutes: quotaMinutes,
+          previous_quota_minutes: previousMinutes,
+          reason,
+        },
       });
       rows[0].used_seconds = 0;
       return res.json(normalizeManagedUser(rows[0]));
     } catch (error) {
       console.error("Admin quota error:", error);
       return res.status(500).json({ error: "Không điều chỉnh được quota" });
+    }
+  },
+);
+
+router.patch(
+  "/users/:id/plan",
+  requireAdmin,
+  requireMutation,
+  async (req, res) => {
+    try {
+      const requestedPlan = String(req.body.plan || "").trim().toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(PLAN_CONFIG, requestedPlan)) {
+        return res.status(400).json({ error: "Gói không hợp lệ" });
+      }
+      const plan = normalizeUserPlan(requestedPlan);
+      const billingCycle = normalizeBillingCycle(req.body.billingCycle);
+      const quotaSeconds = getPurchasedQuotaSeconds(plan, billingCycle);
+      const planExpiresAt =
+        plan === "free"
+          ? null
+          : new Date(
+              Date.now() +
+                (billingCycle === "yearly" ? 365 : 30) * 24 * 60 * 60 * 1000,
+            );
+
+      const { rows } = await pool.query(
+        `UPDATE users
+         SET plan = $1,
+             quota_seconds = $2,
+             plan_started_at = NOW(),
+             plan_expires_at = $3,
+             plan_cancel_at_period_end = FALSE,
+             plan_cancellation_requested_at = NULL
+         WHERE id = $4
+         RETURNING id, first_name, last_name, email, admin_role, status, plan,
+           quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+        [plan, quotaSeconds, planExpiresAt, req.params.id],
+      );
+      if (!rows[0])
+        return res.status(404).json({ error: "Không tìm thấy user" });
+      await writeAudit({
+        actorRow: req.admin,
+        action: "plan.update",
+        targetType: "user",
+        targetId: req.params.id,
+        details: {
+          plan,
+          billing_cycle: billingCycle,
+          quota_minutes: Math.ceil(quotaSeconds / 60),
+        },
+      });
+      rows[0].used_seconds = 0;
+      return res.json(normalizeManagedUser(rows[0]));
+    } catch (error) {
+      console.error("Admin update user plan error:", error);
+      return res.status(500).json({ error: "Không cập nhật được gói" });
+    }
+  },
+);
+
+router.delete(
+  "/users/:id",
+  requireAdmin,
+  requireMutation,
+  async (req, res) => {
+    try {
+      if (String(req.admin.id) === String(req.params.id)) {
+        return res
+          .status(400)
+          .json({ error: "Không thể xóa tài khoản đang đăng nhập" });
+      }
+      const { rows } = await pool.query(
+        `UPDATE users
+         SET status = 'deleted',
+             account_status = 'deleted',
+             admin_role = 'none',
+             role = 'user',
+             auth_version = auth_version + 1
+         WHERE id = $1
+         RETURNING id, first_name, last_name, email, admin_role, status, plan,
+           quota_seconds, plan_started_at, plan_expires_at, created_at, last_login_at`,
+        [req.params.id],
+      );
+      if (!rows[0])
+        return res.status(404).json({ error: "Không tìm thấy user" });
+      await revokeAllSessions(req.params.id);
+      await writeAudit({
+        actorRow: req.admin,
+        action: "user.delete",
+        targetType: "user",
+        targetId: req.params.id,
+        details: { status: "deleted" },
+      });
+      rows[0].used_seconds = 0;
+      return res.json(normalizeManagedUser(rows[0]));
+    } catch (error) {
+      console.error("Admin delete user error:", error);
+      return res.status(500).json({ error: "Không xóa được user" });
     }
   },
 );
@@ -634,19 +784,7 @@ router.get("/jobs", requireAdmin, async (req, res) => {
        LIMIT 500`,
       params,
     );
-    const queueJobs = await getAdminQueueJobs();
-    const cleanSearch = search.toLowerCase();
-    const filteredQueueJobs = queueJobs.filter((job) => {
-      const matchesSearch =
-        !cleanSearch ||
-        job.job_id.toLowerCase().includes(cleanSearch) ||
-        job.file_name.toLowerCase().includes(cleanSearch) ||
-        job.user_email.toLowerCase().includes(cleanSearch);
-      const matchesStatus = status === "all" || job.status === status;
-      const matchesLanguage = language === "all" || job.language === language;
-      return matchesSearch && matchesStatus && matchesLanguage;
-    });
-    const combined = [...filteredQueueJobs, ...rows.map(normalizeJob)].sort(
+    const combined = rows.map(normalizeJob).sort(
       (a, b) => new Date(b.created_at) - new Date(a.created_at),
     );
     const start = (page - 1) * limit;
@@ -671,7 +809,11 @@ router.post(
   async (req, res) => {
     const id = String(req.params.jobId).replace(/^job_/, "");
     const { rows } = await pool.query(
-      `SELECT t.*, u.first_name, u.last_name, u.email FROM transcriptions t JOIN users u ON u.id = t.user_id WHERE t.id = $1`,
+      `SELECT t.*, q.id AS queue_job_id, u.first_name, u.last_name, u.email
+       FROM transcriptions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN transcription_jobs q ON q.transcription_id = t.id
+       WHERE t.id = $1`,
       [id],
     );
     const job = rows[0];
@@ -681,10 +823,39 @@ router.post(
         .status(400)
         .json({ error: "Không thể retry job đã hoàn thành" });
     }
-    const updated = await pool.query(
-      `UPDATE transcriptions SET status = 'queued', error_message = NULL, completed_at = NULL WHERE id = $1 RETURNING *`,
-      [id],
-    );
+    if (!job.queue_job_id) {
+      return res.status(409).json({
+        error: "Job cũ không còn bản ghi hàng đợi để chạy lại.",
+      });
+    }
+    const client = await pool.connect();
+    let updated;
+    try {
+      await client.query("BEGIN");
+      updated = await client.query(
+        `UPDATE transcriptions
+         SET status = 'queued', error_message = NULL, completed_at = NULL
+         WHERE id = $1
+         RETURNING *`,
+        [id],
+      );
+      await client.query(
+        `UPDATE transcription_jobs
+         SET status = 'queued', progress = 0, attempts = 0,
+             cancel_requested = FALSE, error_message = NULL,
+             available_at = NOW(), locked_at = NULL, lock_token = NULL,
+             started_at = NULL, completed_at = NULL, updated_at = NOW()
+         WHERE id = $1`,
+        [job.queue_job_id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    kickTranscriptionWorker();
     await writeAudit({
       actorRow: req.admin,
       action: "transcription.retry",
@@ -710,7 +881,11 @@ router.post(
   async (req, res) => {
     const id = String(req.params.jobId).replace(/^job_/, "");
     const { rows } = await pool.query(
-      `SELECT t.*, u.first_name, u.last_name, u.email FROM transcriptions t JOIN users u ON u.id = t.user_id WHERE t.id = $1`,
+      `SELECT t.*, q.id AS queue_job_id, u.first_name, u.last_name, u.email
+       FROM transcriptions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN transcription_jobs q ON q.transcription_id = t.id
+       WHERE t.id = $1`,
       [id],
     );
     const job = rows[0];
@@ -720,8 +895,14 @@ router.post(
         .status(400)
         .json({ error: "Chỉ hủy job queued hoặc processing" });
     }
+    if (!job.queue_job_id) {
+      return res.status(409).json({
+        error: "Job cũ không còn bản ghi hàng đợi để hủy.",
+      });
+    }
+    await cancelTranscriptionJobForUser(job.queue_job_id, job.user_id);
     const updated = await pool.query(
-      `UPDATE transcriptions SET status = 'cancelled', completed_at = NOW() WHERE id = $1 RETURNING *`,
+      `SELECT * FROM transcriptions WHERE id = $1`,
       [id],
     );
     await writeAudit({
@@ -891,6 +1072,217 @@ router.get("/usage", requireAdmin, async (_req, res) => {
   });
 });
 
+router.get("/support/tickets", requireAdmin, async (req, res) => {
+  const page = toInt(req.query.page, 1);
+  const limit = Math.min(toInt(req.query.limit, 10), 100);
+  const offset = (page - 1) * limit;
+  const search = String(req.query.search || "").trim();
+  const status = String(req.query.status || "all");
+  const category = String(req.query.category || "").trim();
+  const filters = [];
+  const params = [];
+
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    filters.push(
+      `(LOWER(COALESCE(t.subject, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.email, u.email, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.name, u.first_name || ' ' || u.last_name, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(latest.message, '')) LIKE $${params.length})`,
+    );
+  }
+  if (status !== "all" && SUPPORT_STATUSES.has(status)) {
+    params.push(status);
+    filters.push(`t.status = $${params.length}`);
+  }
+  if (category && category !== "all") {
+    params.push(category.toLowerCase());
+    filters.push(`LOWER(t.category) = $${params.length}`);
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const baseSql = `
+    FROM support_tickets t
+    LEFT JOIN users u ON u.id = t.user_id
+    LEFT JOIN LATERAL (
+      SELECT message
+      FROM support_messages m
+      WHERE m.ticket_id = t.id
+      ORDER BY m.created_at DESC
+      LIMIT 1
+    ) latest ON TRUE
+    ${where}
+  `;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.user_id, t.name, COALESCE(t.email, u.email) AS email,
+              u.first_name, u.last_name, t.subject, t.category, t.priority,
+              t.status, t.page_url, t.user_plan, latest.message AS latest_message,
+              t.created_at, t.updated_at
+       ${baseSql}
+       ORDER BY t.updated_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+    const totalResult = await pool.query(
+      `SELECT COUNT(*)::int AS count ${baseSql}`,
+      params,
+    );
+    return res.json(
+      paginate(
+        rows.map(normalizeSupportTicket),
+        page,
+        limit,
+        totalResult.rows[0].count,
+      ),
+    );
+  } catch (error) {
+    console.error("Admin support list error:", error);
+    return res.status(500).json({ error: "Không tải được phản hồi hỗ trợ" });
+  }
+});
+
+router.get("/support/tickets/:id/messages", requireAdmin, async (req, res) => {
+  const ticketId = Number(req.params.id);
+  if (!Number.isInteger(ticketId) || ticketId <= 0) {
+    return res.status(400).json({ error: "Ticket không hợp lệ" });
+  }
+
+  try {
+    const ticket = await pool.query("SELECT id FROM support_tickets WHERE id = $1", [
+      ticketId,
+    ]);
+    if (ticket.rows.length === 0) {
+      return res.status(404).json({ error: "Không tìm thấy ticket" });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, ticket_id, sender, message, created_at
+       FROM support_messages
+       WHERE ticket_id = $1
+       ORDER BY created_at ASC`,
+      [ticketId],
+    );
+    return res.json({ messages: rows.map(normalizeSupportMessage) });
+  } catch (error) {
+    console.error("Admin support messages error:", error);
+    return res.status(500).json({ error: "Không tải được hội thoại hỗ trợ" });
+  }
+});
+
+router.post(
+  "/support/tickets/:id/messages",
+  requireAdmin,
+  requireSupportMutation,
+  async (req, res) => {
+    const ticketId = Number(req.params.id);
+    const message = String(req.body.message || "").trim();
+
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({ error: "Ticket không hợp lệ" });
+    }
+    if (message.length < 2 || message.length > 10_000) {
+      return res.status(400).json({ error: "Vui lòng nhập nội dung phản hồi" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        "SELECT id FROM support_tickets WHERE id = $1 FOR UPDATE",
+        [ticketId],
+      );
+      if (existing.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Không tìm thấy ticket" });
+      }
+
+      const messageResult = await client.query(
+        `INSERT INTO support_messages (ticket_id, sender, message)
+         VALUES ($1, 'admin', $2)
+         RETURNING id, ticket_id, sender, message, created_at`,
+        [ticketId, message],
+      );
+      const ticketResult = await client.query(
+        `UPDATE support_tickets
+         SET updated_at = NOW(), status = 'pending'
+         WHERE id = $1
+         RETURNING *`,
+        [ticketId],
+      );
+      await client.query("COMMIT");
+
+      await writeAudit({
+        actorRow: req.admin,
+        action: "support.reply",
+        targetType: "support",
+        targetId: ticketId,
+        details: { ticket_id: ticketId },
+      });
+
+      return res.status(201).json({
+        ticket: normalizeSupportTicket({
+          ...ticketResult.rows[0],
+          latest_message: message,
+        }),
+        message: normalizeSupportMessage(messageResult.rows[0]),
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Admin support reply error:", error);
+      return res.status(500).json({ error: "Không gửi được phản hồi" });
+    } finally {
+      client.release();
+    }
+  },
+);
+
+router.patch(
+  "/support/tickets/:id/status",
+  requireAdmin,
+  requireMutation,
+  async (req, res) => {
+    const ticketId = Number(req.params.id);
+    const status = String(req.body.status || "").trim();
+
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({ error: "Ticket không hợp lệ" });
+    }
+    if (!SUPPORT_STATUSES.has(status)) {
+      return res.status(400).json({ error: "Trạng thái hỗ trợ không hợp lệ" });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        `UPDATE support_tickets
+         SET status = $1,
+             updated_at = NOW(),
+             resolved_at = CASE WHEN $1 IN ('resolved', 'closed') THEN NOW() ELSE NULL END
+         WHERE id = $2
+         RETURNING *`,
+        [status, ticketId],
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: "Không tìm thấy ticket" });
+      }
+
+      await writeAudit({
+        actorRow: req.admin,
+        action: "support.status_update",
+        targetType: "support",
+        targetId: ticketId,
+        details: { status },
+      });
+
+      return res.json(normalizeSupportTicket(rows[0]));
+    } catch (error) {
+      console.error("Admin support status error:", error);
+      return res.status(500).json({ error: "Không cập nhật được trạng thái" });
+    }
+  },
+);
+
 router.get("/audit-logs", requireAdmin, async (req, res) => {
   const page = toInt(req.query.page, 1);
   const limit = Math.min(toInt(req.query.limit, 20), 100);
@@ -936,7 +1328,7 @@ router.get("/settings", requireAdmin, async (_req, res) => {
   return res.json({ ...defaultAdminSettings(), ...(rows[0]?.value || {}) });
 });
 
-router.put("/settings", requireAdmin, requireSuperAdmin, async (req, res) => {
+router.put("/settings", requireAdmin, requireAdminManagement, async (req, res) => {
   const settings = req.body || {};
   await pool.query(
     `INSERT INTO admin_settings (key, value, updated_by, updated_at)
@@ -1010,7 +1402,7 @@ router.get("/plans", requireAdmin, async (_req, res) => {
   return res.json(rows.map(normalizePlan));
 });
 
-router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
+router.put("/plans/:id", requireAdmin, requireAdminManagement, async (req, res) => {
   const body = req.body || {};
   const { rows } = await pool.query(
     `UPDATE service_plans
@@ -1061,7 +1453,7 @@ router.get("/providers", requireAdmin, async (_req, res) => {
 router.put(
   "/providers/:id",
   requireAdmin,
-  requireSuperAdmin,
+  requireAdminManagement,
   async (req, res) => {
     const client = await pool.connect();
     try {
@@ -1084,6 +1476,7 @@ router.put(
         ? Number.parseInt(String(body.failover_provider_id), 10)
         : null;
       const costPerMinute = Number(body.cost_per_minute_usd || 0);
+      const monthlyCost = Number(body.monthly_cost_usd || 0);
       const isDefault = Boolean(body.is_default);
       const apiKey = normalizeProviderApiKey(body.api_key);
 
@@ -1102,6 +1495,9 @@ router.put(
       if (!Number.isFinite(costPerMinute) || costPerMinute < 0) {
         return res.status(400).json({ error: "Chi phí provider không hợp lệ" });
       }
+      if (!Number.isFinite(monthlyCost) || monthlyCost < 0) {
+        return res.status(400).json({ error: "Chi phí tháng không hợp lệ" });
+      }
 
       await client.query("BEGIN");
       if (isDefault) {
@@ -1117,9 +1513,10 @@ router.put(
            routing_rules = $6::jsonb,
            failover_provider_id = $7,
            cost_per_minute_usd = $8,
-           api_key_encrypted = COALESCE($9, api_key_encrypted),
+           monthly_cost_usd = $9,
+           api_key_encrypted = COALESCE($10, api_key_encrypted),
            updated_at = NOW()
-       WHERE id = $10
+       WHERE id = $11
        RETURNING *`,
         [
           name,
@@ -1130,6 +1527,7 @@ router.put(
           JSON.stringify(routingRules),
           failoverProviderId,
           costPerMinute,
+          monthlyCost,
           apiKey,
           providerId,
         ],
@@ -1303,13 +1701,30 @@ router.get("/reports/export", requireAdmin, async (_req, res) => {
 });
 
 router.get("/system/status", requireAdmin, async (_req, res) => {
-  const providers = await pool.query(
-    "SELECT code, health_status, enabled FROM stt_providers ORDER BY id ASC",
-  );
+  const [providers, queue] = await Promise.all([
+    pool.query(
+      "SELECT code, health_status, enabled FROM stt_providers ORDER BY id ASC",
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*)::integer AS total,
+         COUNT(*) FILTER (WHERE status = 'queued')::integer AS queued,
+         COUNT(*) FILTER (WHERE status = 'processing')::integer AS active
+       FROM transcription_jobs`,
+    ),
+  ]);
   return res.json({
     database: "ok",
     backend: "ok",
-    transcription_queue: transcriptionQueue.stats(),
+    transcription_queue: {
+      concurrency: Number.parseInt(
+        process.env.TRANSCRIPTION_QUEUE_CONCURRENCY || "2",
+        10,
+      ),
+      total: Number(queue.rows[0]?.total || 0),
+      queued: Number(queue.rows[0]?.queued || 0),
+      active: Number(queue.rows[0]?.active || 0),
+    },
     providers: providers.rows,
     generated_at: new Date().toISOString(),
   });

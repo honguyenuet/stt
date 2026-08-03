@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -17,13 +18,137 @@ import {
   Send,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import { Toaster } from "@/components/ui/sonner";
 import { VbeeSupportWidget } from "@/components/vbee-support-widget";
 
 import appCss from "../styles.css?url";
 import vbeeLogoUrl from "../assets/vbee-logo.png?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+
+const QUOTA_NOTIFICATION_POLL_MS = 60_000;
+const TEN_MINUTES_SECONDS = 10 * 60;
+
+function isAdminPath(pathname: string) {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+function getQuotaNotification(quota: QuotaStatus, userId: number) {
+  const remaining = Math.max(0, Math.round(Number(quota.remainingSeconds || 0)));
+  const period = quota.planStartedAt || "current";
+  const accountKey = `user-${userId}`;
+
+  if (quota.isLimitReached) {
+    return {
+      id: `quota-exhausted-${accountKey}-${quota.plan}-${period}`,
+      type: "error" as const,
+      title:
+        quota.plan === "free"
+          ? "Bạn đã dùng hết quota Theo lượt"
+          : "Bạn đã dùng hết quota",
+      description:
+        quota.plan === "free"
+          ? "Vui lòng nâng cấp gói hoặc mua thêm thời lượng để tiếp tục xử lý file mới."
+          : "Hãy mua thêm thời lượng hoặc nâng cấp gói để tiếp tục sử dụng.",
+      duration: Infinity,
+    };
+  }
+
+  if (quota.shouldAlert) {
+    return {
+      id: `quota-alert-${accountKey}-${quota.plan}-${period}`,
+      type: "warning" as const,
+      title: "Quota đã chạm mức cảnh báo",
+      description: `Tài khoản còn ${formatQuotaTime(remaining)}. Bạn có thể mua thêm thời lượng hoặc nâng cấp trước khi bị gián đoạn.`,
+      duration: 12_000,
+    };
+  }
+
+  if (remaining <= TEN_MINUTES_SECONDS) {
+    return {
+      id: `quota-10-minutes-${accountKey}-${quota.plan}-${period}`,
+      type: "warning" as const,
+      title: "Quota còn dưới 10 phút",
+      description: `Bạn còn ${formatQuotaTime(remaining)} để xử lý âm thanh trong chu kỳ hiện tại.`,
+      duration: 10_000,
+    };
+  }
+
+  return null;
+}
+
+function QuotaNotificationCenter() {
+  const { token, user, isLoading, updateUser } = useAuth();
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const userId = user?.id;
+  const userPlan = user?.plan;
+  const isAdminRoute = isAdminPath(pathname);
+
+  useEffect(() => {
+    if (isAdminRoute || isLoading || !token || !userId) return;
+
+    let cancelled = false;
+
+    async function checkQuota() {
+      try {
+        const quota = await fetchQuota(token);
+        if (cancelled) return;
+        if (quota.userId !== undefined && quota.userId !== userId) return;
+
+        if (quota.plan !== userPlan) {
+          updateUser({ plan: quota.plan });
+        }
+        const notification = getQuotaNotification(quota, userId);
+        if (!notification) return;
+
+        const storageKey = `vbee:${notification.id}:shown`;
+        if (window.sessionStorage.getItem(storageKey)) return;
+        window.sessionStorage.setItem(storageKey, new Date().toISOString());
+
+        const toastOptions = {
+          id: notification.id,
+          description: notification.description,
+          duration: notification.duration,
+          action: {
+            label: "Nâng cấp",
+            onClick: () => {
+              window.location.assign("/pricing");
+            },
+          },
+        };
+
+        if (notification.type === "error") {
+          toast.error(notification.title, toastOptions);
+        } else {
+          toast.warning(notification.title, toastOptions);
+        }
+      } catch {
+        // Quota notification is non-blocking; other screens still handle errors locally.
+      }
+    }
+
+    void checkQuota();
+    const timer = window.setInterval(() => void checkQuota(), QUOTA_NOTIFICATION_POLL_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void checkQuota();
+    };
+    window.addEventListener("focus", checkQuota);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", checkQuota);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [isAdminRoute, isLoading, token, updateUser, userId, userPlan]);
+
+  return null;
+}
 
 function SupportChat() {
   const { token } = useAuth();
@@ -353,12 +478,18 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const isAdminRoute = isAdminPath(pathname);
 
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <QuotaNotificationCenter />
         <Outlet />
-        <VbeeSupportWidget />
+        {!isAdminRoute && <VbeeSupportWidget />}
+        {!isAdminRoute && <Toaster richColors closeButton position="top-center" />}
       </AuthProvider>
     </QueryClientProvider>
   );

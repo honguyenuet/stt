@@ -1,10 +1,8 @@
 import type { AdminSession, PaginatedResponse } from "./types";
+import { getAdminApiBaseUrl } from "../api-base-url";
 
 const ADMIN_SESSION_KEY = "vbee_admin_session";
-const API_URL =
-  (import.meta.env.VITE_ADMIN_API_URL as string | undefined) ||
-  (import.meta.env.VITE_API_URL as string | undefined) ||
-  "http://localhost:3001";
+const API_URL = getAdminApiBaseUrl();
 
 export class AdminApiError extends Error {
   constructor(

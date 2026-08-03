@@ -62,4 +62,55 @@ async function sendPasswordResetEmail({ to, firstName, resetUrl, expiresMinutes 
   return true;
 }
 
-module.exports = { hasSmtpConfig, sendPasswordResetEmail };
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return hours > 0 ? `${hours} giờ ${minutes} phút` : `${minutes} phút`;
+}
+
+async function sendQuotaAdminAlertEmail({ recipients, alert }) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+
+  const levelLabels = {
+    warning: "Sắp hết quota",
+    critical: "Quota ở mức khẩn cấp",
+    exhausted: "Đã hết quota",
+  };
+  const levelLabel = levelLabels[alert.level] || "Cảnh báo quota";
+  const customerName = `${alert.first_name || ""} ${alert.last_name || ""}`.trim();
+  const safeName = escapeHtml(customerName || "Khách hàng");
+  const safeEmail = escapeHtml(alert.email || "-");
+  const safePlan = escapeHtml(alert.plan || "free");
+  const remaining = formatDuration(alert.remaining_seconds);
+  const used = formatDuration(alert.used_seconds);
+  const quota = formatDuration(alert.quota_seconds);
+
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: recipients,
+    subject: `[Vbee CMS] ${levelLabel}: ${alert.email || customerName || `user #${alert.user_id}`}`,
+    text: `${levelLabel}\nKhách hàng: ${customerName || "-"} (${alert.email || "-"})\nGói: ${alert.plan}\nĐã dùng: ${used} / ${quota}\nCòn lại: ${remaining}\nNguồn: ${alert.source || "transcription"}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#21104a;line-height:1.6">
+        <div style="border-top:6px solid #ffcb05;border-radius:12px;border-left:1px solid #e5deef;border-right:1px solid #e5deef;border-bottom:1px solid #e5deef;padding:24px">
+          <p style="margin:0;color:#9a7b00;font-size:12px;font-weight:700;text-transform:uppercase">Vbee CMS</p>
+          <h2 style="margin:8px 0 18px">${escapeHtml(levelLabel)}</h2>
+          <p><strong>Khách hàng:</strong> ${safeName} (${safeEmail})</p>
+          <p><strong>Gói:</strong> ${safePlan}</p>
+          <p><strong>Đã dùng:</strong> ${escapeHtml(used)} / ${escapeHtml(quota)}</p>
+          <p><strong>Còn lại:</strong> ${escapeHtml(remaining)}</p>
+          <p style="margin-top:20px;color:#756894;font-size:13px">Mở Vbee CMS → Cảnh báo quota để xác nhận hoặc xử lý cảnh báo này.</p>
+        </div>
+      </div>
+    `,
+  });
+  return true;
+}
+
+module.exports = {
+  hasSmtpConfig,
+  sendPasswordResetEmail,
+  sendQuotaAdminAlertEmail,
+};

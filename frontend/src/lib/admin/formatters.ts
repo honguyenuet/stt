@@ -55,9 +55,9 @@ export const userStatusLabel: Record<UserStatus, string> = {
 };
 
 export const roleLabel: Record<AdminRole, string> = {
-  super_admin: "Quản trị cao nhất",
   admin: "Quản trị viên",
-  viewer: "Chỉ xem",
+  support: "Hỗ trợ viên",
+  user: "Người dùng",
 };
 
 export const storageStatusLabel: Record<StorageStatus, string> = {
@@ -70,6 +70,7 @@ export const storageStatusLabel: Record<StorageStatus, string> = {
 export const auditActionLabel: Record<AuditAction, string> = {
   "user.suspend": "Khóa người dùng",
   "user.activate": "Mở khóa người dùng",
+  "user.delete": "Xóa người dùng",
   "user.role_update": "Cập nhật vai trò",
   "quota.adjust": "Điều chỉnh quota",
   "transcription.retry": "Chạy lại chuyển giọng nói",
@@ -78,11 +79,19 @@ export const auditActionLabel: Record<AuditAction, string> = {
   "settings.update": "Cập nhật cài đặt",
   "plan.update": "Cập nhật gói",
   "provider.update": "Cập nhật nhà cung cấp",
+  "support.reply": "Phản hồi hỗ trợ",
+  "support.status_update": "Cập nhật trạng thái hỗ trợ",
 };
 
 export function validateQuotaAdjustment(currentQuota: number, delta: number) {
   if (!Number.isFinite(delta) || delta === 0)
     return "Quota thay đổi phải khác 0";
   if (currentQuota + delta < 0) return "Quota không được âm";
+  return "";
+}
+
+export function validateQuotaMinutes(quotaMinutes: number) {
+  if (!Number.isFinite(quotaMinutes)) return "Quota không hợp lệ";
+  if (quotaMinutes < 0) return "Quota không được âm";
   return "";
 }

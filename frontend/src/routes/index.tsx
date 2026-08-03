@@ -57,19 +57,19 @@ const homeNavigation = [
       {
         title: "Tải file",
         desc: "Audio/video thành văn bản có tính thời lượng.",
-        href: "#features",
+        href: "/upload",
         icon: UploadCloud,
       },
       {
         title: "Ghi âm",
         desc: "Thu âm trên trình duyệt và lưu transcript.",
-        href: "#features",
+        href: "/record",
         icon: Mic2,
       },
       {
         title: "Nói realtime",
         desc: "Ghi chú trực tiếp cho họp và trao đổi công việc.",
-        href: "#features",
+        href: "/realtime",
         icon: AudioLines,
       },
     ],
@@ -147,7 +147,7 @@ const homeNavigation = [
 
 const metrics = [
   { value: "50h", label: "Gói dùng thử có quản lý quota" },
-  { value: "200MB", label: "Giới hạn file tải lên" },
+  { value: "2GB", label: "Upload tối đa gói Chuyên nghiệp" },
   { value: "3 cách", label: "Tải tệp, ghi âm, realtime" },
   { value: "4 định dạng", label: "TXT, DOCX, SRT, copy" },
 ];
@@ -203,30 +203,30 @@ const plans = [
     name: "Theo lượt",
     label: "Không thuê bao",
     price: "39.000đ · 1 giờ",
-    desc: "Mua đúng số giờ cần dùng, thời lượng không hết hạn.",
-    points: ["Từ 1 đến 100 giờ", "Không phí duy trì", "Thanh toán qua PayOS"],
+    desc: "Mua đúng số giờ cần dùng, không có quota thuê bao cố định.",
+    points: ["Theo sử dụng", "Không phí duy trì", "Thanh toán qua PayOS"],
   },
   {
     name: "Tiêu chuẩn",
     label: "Cá nhân",
-    price: "150.000đ · 5 giờ",
-    desc: "Cho cá nhân, chuyên viên và công việc hằng tháng.",
-    points: ["File tối đa 2 giờ", "API / Webhook", "Queue 2×"],
+    price: "149.000đ · 5 giờ",
+    desc: "Cho cá nhân dùng ít nhưng cần quota hằng tháng ổn định.",
+    points: ["Upload 300MB", "File tối đa 3 giờ", "API có giới hạn"],
   },
   {
     name: "Đặc biệt",
-    label: "Phổ biến",
-    price: "449.000đ · 20 giờ",
-    desc: "Cho người sáng tạo cần nhiều thời lượng và tốc độ hơn.",
-    points: ["File tối đa 4 giờ", "Lưu dữ liệu 1 năm", "Queue 4×"],
+    label: "Creator",
+    price: "499.000đ · 20 giờ",
+    desc: "Cho freelancer, creator và người dùng thường xuyên.",
+    points: ["Upload 1GB", "File tối đa 4 giờ", "Webhook mở rộng"],
     featured: true,
   },
   {
     name: "Chuyên nghiệp",
     label: "Nâng cao",
     price: "799.000đ · 40 giờ",
-    desc: "Dành cho chuyên gia cần API và ưu tiên xử lý cao nhất.",
-    points: ["File tối đa 8 giờ", "API / Webhook", "Queue 8×"],
+    desc: "Cho nhóm nhỏ và chuyên gia cần API đầy đủ.",
+    points: ["Upload 2GB", "File tối đa 10 giờ", "Xử lý song song 10 file"],
   },
 ];
 

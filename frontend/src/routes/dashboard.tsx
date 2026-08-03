@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import type { ComponentType } from "react";
 import {
   AudioLines,
+  AlertCircle,
   ArrowRight,
   BookOpen,
   Camera,
@@ -22,6 +23,7 @@ import {
   MessageCircle,
   Mic,
   Radio,
+  RefreshCw,
   Settings,
   SlidersHorizontal,
   Upload,
@@ -39,10 +41,13 @@ import {
 } from "@/components/ui/dialog";
 import { PhilosophyQuoteCard } from "@/components/philosophy-quote-card";
 import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
+import {
+  formatMediaDuration as formatDuration,
+  sumMediaDurations,
+} from "@/lib/format-duration";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 const SPARKLES = [
   { top: "6%", left: "18%", delay: 0, size: "h-1.5 w-1.5" },
@@ -76,14 +81,6 @@ type ActionDialogState = {
   to?: string;
 };
 
-function formatDuration(seconds?: number | null) {
-  if (!seconds) return "Chưa xử lý";
-  const total = Math.round(seconds);
-  const mins = Math.floor(total / 60);
-  const secs = total % 60;
-  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-}
-
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("vi-VN", {
     day: "numeric",
@@ -101,6 +98,8 @@ function DashboardPage() {
   const navigate = useNavigate();
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const [historyRetryKey, setHistoryRetryKey] = useState(0);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -111,12 +110,28 @@ function DashboardPage() {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
-        const data = response.ok
-          ? ((await response.json()) as HistoryItem[])
-          : [];
-        if (active) setHistory(data.slice(0, 3));
-      } catch {
-        // Keep the current workspace list when a background refresh fails.
+        const body = (await response.json().catch(() => [])) as
+          | HistoryItem[]
+          | { error?: string };
+        if (!response.ok || !Array.isArray(body)) {
+          throw new Error(
+            !Array.isArray(body) && body.error
+              ? body.error
+              : "Không tải được lịch sử chuyển đổi",
+          );
+        }
+        if (active) {
+          setHistory(body.slice(0, 3));
+          setHistoryError("");
+        }
+      } catch (error) {
+        if (active) {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Không tải được lịch sử chuyển đổi",
+          );
+        }
       }
     };
     void loadHistory();
@@ -127,7 +142,7 @@ function DashboardPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [user, token]);
+  }, [historyRetryKey, user, token]);
 
   // ── Edit profile state ──────────────────────────────────────────────
   const [editOpen, setEditOpen] = useState(false);
@@ -575,7 +590,24 @@ function DashboardPage() {
               </div>
             </div>
 
-            {history.length === 0 ? (
+            {historyError && (
+              <div className="m-5 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
+                <span className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  {historyError}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setHistoryRetryKey((value) => value + 1)}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-destructive/30 bg-white px-4 py-2 text-xs font-bold"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Thử lại
+                </button>
+              </div>
+            )}
+
+            {!historyError && history.length === 0 ? (
               <div className="m-5 rounded-2xl border border-dashed border-border bg-background/35 p-8 text-center">
                 <UploadCloud className="mx-auto h-12 w-12 text-primary" />
                 <h2 className="mt-4 text-xl font-black">
@@ -602,23 +634,27 @@ function DashboardPage() {
                   </Link>
                 </div>
               </div>
-            ) : (
+            ) : !historyError ? (
               history.map((item) => (
                 <WorkspaceFileRow key={item.id} item={item} />
               ))
-            )}
+            ) : null}
 
             <div className="border-t border-border bg-background/35 px-5 py-4 text-center text-sm font-black text-primary">
               {history.length} tệp,{" "}
               {formatDuration(
-                history.reduce((sum, item) => sum + (item.duration ?? 0), 0),
+                sumMediaDurations(history.map((item) => item.duration)),
               )}
             </div>
           </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             {[
-              [Languages, "54+ ngôn ngữ", "Chuyển giọng nói và dịch nhiều ngôn ngữ"],
+              [
+                Languages,
+                "54+ ngôn ngữ",
+                "Chuyển giọng nói và dịch nhiều ngôn ngữ",
+              ],
               [
                 AudioLines,
                 "Mốc thời gian từng từ",
@@ -656,7 +692,6 @@ function DashboardPage() {
           />
 
           <div className="rounded-2xl border border-border bg-card/85 p-6 shadow-soft">
-
             <DashboardSideSection
               title="TÙY CHỈNH"
               items={[
@@ -833,8 +868,8 @@ function DashboardPage() {
                     Đổi mật khẩu
                   </h3>
                   <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                    Mật khẩu mới cần ít nhất 12 ký tự. Sau khi đổi, bạn sẽ
-                    đăng nhập lại trên các thiết bị.
+                    Mật khẩu mới cần ít nhất 12 ký tự. Sau khi đổi, bạn sẽ đăng
+                    nhập lại trên các thiết bị.
                   </p>
                 </div>
               </div>
@@ -1269,7 +1304,8 @@ function WorkspaceFileRow({ item }: { item: HistoryItem }) {
           )}
           {!isFailed && item.translation_error && (
             <p className="mt-2 text-xs font-semibold leading-5 text-destructive">
-              Transcript đã hoàn thành nhưng bản dịch bị lỗi: {item.translation_error}
+              Transcript đã hoàn thành nhưng bản dịch bị lỗi:{" "}
+              {item.translation_error}
             </p>
           )}
         </div>

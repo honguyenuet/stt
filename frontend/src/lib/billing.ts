@@ -1,8 +1,7 @@
 import type { BillingCycle, PlanCode, QuotaStatus } from "@/lib/quota";
+import { getApiBaseUrl } from "./api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 export type OrderStatus =
   | "pending"
@@ -51,10 +50,52 @@ export interface CheckoutResponse {
   paymentUrl: string;
 }
 
+export interface BillingCatalogPlan {
+  code: PlanCode;
+  label: string;
+  monthly: { price: number | null; quotaSeconds: number };
+  yearly: { price: number | null; quotaSeconds: number };
+  limits: {
+    maxUploadMb: number;
+    maxRecordSeconds: number;
+    maxFileSeconds: number;
+  };
+  queueWeight: number;
+  seats: number | null;
+  retentionDays: number;
+  apiAccess: boolean;
+  apiAccessLabel?: string;
+  webhookAccess?: boolean;
+  maxConcurrentJobs?: number | null;
+  transcriptLimit?: number | null;
+  rolloverLabel?: string;
+  supportLevel?: string;
+}
+
+export interface BillingCatalogTopUp {
+  code: TopUpCode;
+  label: string;
+  quotaSeconds: number;
+  price: number;
+  validDays: number | null;
+}
+
+export interface BillingCatalog {
+  plans: BillingCatalogPlan[];
+  topUps: BillingCatalogTopUp[];
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) throw new Error(data.error || "Yêu cầu không thành công");
   return data;
+}
+
+export async function fetchBillingCatalog(): Promise<BillingCatalog> {
+  const res = await fetch(`${API_URL}/api/billing/plans`, {
+    cache: "no-store",
+  });
+  return readJson<BillingCatalog>(res);
 }
 
 export async function createCheckout(
@@ -104,19 +145,16 @@ export async function fetchBillingOrder(
   return data.order;
 }
 
-export async function confirmDemoPayment(
+export async function cancelBillingOrder(
   token: string,
   orderId: string,
-): Promise<{ order: BillingOrder; quota: QuotaStatus }> {
-  const res = await fetch(`${API_URL}/api/billing/demo/confirm`, {
+): Promise<BillingOrder> {
+  const res = await fetch(`${API_URL}/api/billing/orders/${orderId}/cancel`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ orderId }),
+    headers: { Authorization: `Bearer ${token}` },
   });
-  return readJson<{ order: BillingOrder; quota: QuotaStatus }>(res);
+  const data = await readJson<{ order: BillingOrder }>(res);
+  return data.order;
 }
 
 async function updateSubscription(

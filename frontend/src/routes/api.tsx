@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   ArrowRight,
   Check,
@@ -27,9 +28,7 @@ import {
   type TranslationResult,
 } from "@/lib/language-options";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 type ApiKeyItem = {
   id: number;
@@ -257,14 +256,14 @@ function ApiPage() {
   if (!user) return null;
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
       <AuthenticatedHeader />
 
       <section className="relative overflow-hidden bg-gradient-hero text-foreground">
         <div className="absolute -left-24 top-10 h-56 w-56 rounded-full bg-[#ffcb05]/18 blur-3xl" />
         <div className="absolute -right-16 bottom-0 h-56 w-56 rounded-full bg-[#21104a]/8 blur-3xl" />
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 md:grid-cols-[1fr_.85fr] md:px-6 md:py-12">
-          <div className="relative z-10">
+          <div className="relative z-10 min-w-0">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-bold text-primary">
               <PlugZap className="h-4 w-4" /> API chuyển giọng nói thành văn bản của Vbee
             </div>
@@ -292,9 +291,9 @@ function ApiPage() {
             </div>
           </div>
 
-          <div className="relative z-10 rounded-lg border border-border bg-white p-4 text-foreground shadow-soft">
-            <div className="rounded-lg bg-[#fbf8ef] p-4">
-              <div className="mb-4 flex items-center justify-between">
+          <div className="relative z-10 min-w-0 rounded-lg border border-border bg-white p-4 text-foreground shadow-soft">
+            <div className="min-w-0 rounded-lg bg-[#fbf8ef] p-4">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
                   <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                     <KeyRound className="h-5 w-5" />
@@ -310,7 +309,7 @@ function ApiPage() {
                   Sẵn sàng
                 </span>
               </div>
-              <pre className="overflow-x-auto rounded-lg bg-white p-4 text-xs leading-6 text-primary">
+              <pre className="max-w-full overflow-x-auto rounded-lg bg-white p-4 text-xs leading-6 text-primary">
                 <code>{curlSample}</code>
               </pre>
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -340,7 +339,7 @@ function ApiPage() {
         id="keys"
         className="mx-auto grid max-w-7xl gap-5 px-4 py-10 md:grid-cols-[.9fr_1.1fr] md:px-6"
       >
-        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
           <div className="mb-4 flex items-center gap-3">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
               <KeyRound className="h-6 w-6" />
@@ -404,7 +403,7 @@ function ApiPage() {
           )}
         </div>
 
-        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black">Danh sách API key</h2>
@@ -481,7 +480,7 @@ function ApiPage() {
             </p>
           </div>
 
-          <div className="rounded-lg border border-border bg-[#fbf8ef] p-4 text-foreground">
+          <div className="min-w-0 rounded-lg border border-border bg-[#fbf8ef] p-4 text-foreground">
             <label className="text-sm font-black">API key</label>
             <input
               value={testKey}
@@ -588,8 +587,8 @@ function DocCard({
   onCopy: (value: string) => Promise<void>;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="min-w-0 rounded-lg border border-border bg-white p-4 shadow-soft">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xl font-black">
           <Code2 className="h-5 w-5" /> {title}
         </div>
@@ -600,7 +599,7 @@ function DocCard({
           <Clipboard className="h-4 w-4" /> Sao chép
         </button>
       </div>
-      <pre className="overflow-x-auto rounded-lg bg-[#fbf8ef] p-4 text-xs leading-6 text-primary">
+      <pre className="max-w-full overflow-x-auto rounded-lg bg-[#fbf8ef] p-4 text-xs leading-6 text-primary">
         <code>{code}</code>
       </pre>
     </div>

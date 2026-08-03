@@ -3,9 +3,11 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Eye, EyeOff, LogIn, Mail, LockKeyhole } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { redirectAfterAuth } from "@/lib/auth-redirect";
+import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 const SPARKLES = [
   { top: "8%", left: "7%", delay: 0, size: "h-1.5 w-1.5" },
@@ -36,7 +38,6 @@ function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
     if (!isLoading && user) redirectAfterAuth(from);
@@ -80,15 +81,20 @@ function LoginPage() {
     }
   }
 
-  function handleGoogleLogin() {
-    setIsRedirecting(true);
-    window.location.href = `${API_URL}/api/auth/google`;
-  }
-
   const errorMessages: Record<string, string> = {
     google_failed: "Đăng nhập Google thất bại. Vui lòng thử lại.",
     google_email_exists: "Email này đã đăng ký bằng mật khẩu. Hãy đăng nhập bằng email để bảo vệ tài khoản.",
     google_not_configured: "Google OAuth chưa được cấu hình. Hãy dùng email/password hoặc điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET.",
+    google_email_required: "Google chưa cung cấp email đã xác minh.",
+    facebook_failed: "Đăng nhập Facebook thất bại hoặc đã bị hủy.",
+    facebook_email_exists: "Email Facebook đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    facebook_email_required: "Facebook chưa cung cấp email. Hãy kiểm tra quyền email của ứng dụng Facebook.",
+    facebook_not_configured: "Facebook Login chưa được cấu hình trên máy chủ.",
+    apple_failed: "Đăng nhập Apple thất bại hoặc đã bị hủy.",
+    apple_email_exists: "Email Apple đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    apple_email_required: "Apple chưa cung cấp email đã xác minh cho tài khoản này.",
+    apple_not_configured: "Sign in with Apple chưa được cấu hình trên máy chủ.",
+    account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
     server_error: "Có lỗi xảy ra. Vui lòng thử lại sau.",
   };
 
@@ -116,7 +122,7 @@ function LoginPage() {
             Đăng nhập vào <span className="mt-1 block text-[#21104a]">Vbee AIVoice</span>
           </h1>
           <p className="mt-4 text-sm text-muted-foreground max-w-sm">
-            Dùng email/password để vào dashboard ngay. Google Login vẫn hỗ trợ khi bạn cấu hình OAuth.
+            Đăng nhập bằng email, Google, Facebook hoặc Apple để tiếp tục vào không gian làm việc.
           </p>
 
           <div className="mt-6 grid w-full max-w-sm grid-cols-3 gap-2">
@@ -193,7 +199,12 @@ function LoginPage() {
                     placeholder="Nhập mật khẩu"
                     className="w-full rounded-xl border border-border bg-background px-10 py-3 pr-12 text-sm text-foreground placeholder:text-muted-foreground/35 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition"
                   />
-                  <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition">
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-foreground"
+                    aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                  >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
@@ -215,24 +226,9 @@ function LoginPage() {
               <div className="h-px flex-1 bg-border" />
             </div>
 
-            <button
-              onClick={handleGoogleLogin}
-              disabled={isRedirecting}
-              className="mt-5 group w-full relative flex items-center justify-center gap-3 rounded-full border border-border bg-yellow-400 text-gray-900 py-3.5 px-6 font-semibold text-sm hover:bg-yellow-300 transition-all shadow hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed overflow-hidden"
-            >
-              <span className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/50 to-transparent" />
-              {isRedirecting ? (
-                <span className="h-5 w-5 rounded-full border-2 border-gray-500 border-t-gray-900 animate-spin" />
-              ) : (
-                <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-                </svg>
-              )}
-              <span>{isRedirecting ? "Đang chuyển hướng..." : "Đăng nhập bằng Google"}</span>
-            </button>
+            <div className="mt-5">
+              <SocialAuthButtons mode="login" from={from} />
+            </div>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Chưa có tài khoản?{" "}

@@ -53,6 +53,31 @@ function createMediaUpload(maxSizeMb) {
   });
 }
 
+function createPlanAwareMediaUpload(resolveMaxSizeMb, fieldName = "audio") {
+  return async (req, res, next) => {
+    let maxSizeMb;
+    try {
+      maxSizeMb = Number(await resolveMaxSizeMb(req));
+      if (!Number.isFinite(maxSizeMb) || maxSizeMb <= 0) {
+        throw new Error("Giới hạn tải file không hợp lệ");
+      }
+    } catch (error) {
+      return next(error);
+    }
+
+    req.mediaUploadLimitMb = maxSizeMb;
+    return createMediaUpload(maxSizeMb).single(fieldName)(req, res, (error) => {
+      if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+        return res
+          .status(413)
+          .json({ error: `File quá lớn (tối đa ${maxSizeMb}MB)` });
+      }
+      if (error) return res.status(400).json({ error: error.message });
+      return next();
+    });
+  };
+}
+
 async function cleanupStagedFile(file) {
   if (!isInsideStaging(file?.path)) return;
   await fs.promises.unlink(file.path).catch(() => {});
@@ -107,6 +132,7 @@ module.exports = {
   cleanupExpiredStagingFiles,
   cleanupStagedFile,
   createMediaUpload,
+  createPlanAwareMediaUpload,
   isInsideStaging,
   materializeFileBuffer,
 };

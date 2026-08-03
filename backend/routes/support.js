@@ -18,8 +18,19 @@ function normalizeTicket(row) {
     pageUrl: row.page_url,
     userPlan: row.user_plan,
     latestMessage: row.latest_message || "",
+    adminMessageCount: Number(row.admin_message_count || 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function normalizeMessage(row) {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    sender: row.sender === "admin" ? "admin" : "user",
+    message: row.message,
+    createdAt: row.created_at,
   };
 }
 
@@ -33,7 +44,12 @@ router.get("/tickets", requireAuth, async (req, res) => {
                 WHERE m.ticket_id = t.id
                 ORDER BY m.created_at DESC
                 LIMIT 1
-              ) AS latest_message
+              ) AS latest_message,
+              (
+                SELECT COUNT(*)::int
+                FROM support_messages m
+                WHERE m.ticket_id = t.id AND m.sender = 'admin'
+              ) AS admin_message_count
        FROM support_tickets t
        WHERE t.user_id = $1
        ORDER BY t.updated_at DESC
@@ -119,6 +135,7 @@ router.post("/tickets", supportLimiter, optionalAuth, async (req, res) => {
       ticket: normalizeTicket({
         ...ticketResult.rows[0],
         latest_message: message,
+        admin_message_count: 0,
       }),
       message: messageResult.rows[0],
     });
@@ -128,6 +145,37 @@ router.post("/tickets", supportLimiter, optionalAuth, async (req, res) => {
     return res.status(500).json({ error: "Không gửi được yêu cầu hỗ trợ" });
   } finally {
     client.release();
+  }
+});
+
+router.get("/tickets/:id/messages", requireAuth, async (req, res) => {
+  const ticketId = Number(req.params.id);
+
+  if (!Number.isInteger(ticketId) || ticketId <= 0) {
+    return res.status(400).json({ error: "Ticket không hợp lệ" });
+  }
+
+  try {
+    const owner = await pool.query(
+      "SELECT id FROM support_tickets WHERE id = $1 AND user_id = $2",
+      [ticketId, req.user.id],
+    );
+    if (owner.rows.length === 0) {
+      return res.status(404).json({ error: "Không tìm thấy ticket" });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, ticket_id, sender, message, created_at
+       FROM support_messages
+       WHERE ticket_id = $1
+       ORDER BY created_at ASC`,
+      [ticketId],
+    );
+
+    return res.json({ messages: rows.map(normalizeMessage) });
+  } catch (error) {
+    console.error("Support messages error:", error);
+    return res.status(500).json({ error: "Không tải được tin nhắn hỗ trợ" });
   }
 });
 
@@ -163,7 +211,7 @@ router.post("/tickets/:id/messages", requireAuth, supportLimiter, async (req, re
       [ticketId],
     );
 
-    return res.status(201).json({ message: rows[0] });
+    return res.status(201).json({ message: normalizeMessage(rows[0]) });
   } catch (error) {
     console.error("Support message error:", error);
     return res.status(500).json({ error: "Không gửi được tin nhắn" });
