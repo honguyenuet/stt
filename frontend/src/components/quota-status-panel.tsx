@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CalendarX2, Clock3, Crown, RotateCcw, Save } from "lucide-react";
+import { ArrowRight, CalendarX2, Clock3, Crown, RotateCcw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import {
   cancelPlanAtPeriodEnd,
@@ -19,7 +19,6 @@ import {
 import {
   fetchQuota,
   formatQuotaTime,
-  saveQuotaAlert,
   type QuotaStatus,
 } from "@/lib/quota";
 
@@ -33,21 +32,17 @@ function formatPlanDate(value?: string | null) {
 export function QuotaStatusPanel({
   compact = false,
   variant = "default",
-  showAlert = true,
   refreshKey = 0,
   onQuotaChange,
 }: {
   compact?: boolean;
   variant?: "default" | "account";
-  showAlert?: boolean;
   refreshKey?: number;
   onQuotaChange?: (quota: QuotaStatus) => void;
 }) {
   const { token, updateUser } = useAuth();
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [message, setMessage] = useState("");
-  const [alertMinutes, setAlertMinutes] = useState(1);
-  const [savingAlert, setSavingAlert] = useState(false);
   const [changingPlan, setChangingPlan] = useState(false);
 
   async function loadQuota() {
@@ -56,7 +51,6 @@ export function QuotaStatusPanel({
       const data = await fetchQuota(token);
       setQuota(data);
       updateUser({ plan: data.plan });
-      setAlertMinutes(Math.max(1, Math.round(data.alertSeconds / 60)));
       onQuotaChange?.(data);
     } catch (error) {
       setMessage(
@@ -72,35 +66,6 @@ export function QuotaStatusPanel({
 
   function handleUpgrade() {
     window.location.assign("/pricing");
-  }
-
-  async function handleSaveAlert() {
-    if (!token || !quota) return;
-    const minutes = Math.round(Number(alertMinutes));
-    const maxMinutes = Math.max(
-      1,
-      Math.floor((quota.maxAlertSeconds || quota.quotaSeconds) / 60),
-    );
-    if (!Number.isFinite(minutes) || minutes < 1 || minutes > maxMinutes) {
-      setMessage(`Mức cảnh báo cần từ 1 đến ${maxMinutes} phút.`);
-      return;
-    }
-
-    setSavingAlert(true);
-    setMessage("");
-    try {
-      const updatedQuota = await saveQuotaAlert(token, minutes);
-      setQuota(updatedQuota);
-      setAlertMinutes(Math.max(1, Math.round(updatedQuota.alertSeconds / 60)));
-      onQuotaChange?.(updatedQuota);
-      setMessage("Đã lưu mức cảnh báo quota.");
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Không lưu được cảnh báo",
-      );
-    } finally {
-      setSavingAlert(false);
-    }
   }
 
   async function handleCancelPlan() {
@@ -169,35 +134,6 @@ export function QuotaStatusPanel({
           />
         </div>
 
-        {showAlert && (
-          <label className="mt-4 block text-sm font-bold text-[#756894]">
-            Alert khi còn dưới X phút
-            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_104px] gap-2">
-              <input
-                type="number"
-                min="1"
-                max={Math.max(
-                  1,
-                  Math.floor((quota.maxAlertSeconds || quota.quotaSeconds) / 60),
-                )}
-                value={alertMinutes}
-                onChange={(event) => setAlertMinutes(Number(event.target.value))}
-                className="h-12 w-full rounded-lg border border-[#e8decc] bg-white px-4 text-lg font-black text-[#21104a] outline-none transition focus:border-[#ffcb05]"
-                aria-label="Cảnh báo quota còn lại theo phút"
-              />
-              <button
-                type="button"
-                onClick={() => void handleSaveAlert()}
-                disabled={savingAlert}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-[#e8decc] bg-white px-3 text-sm font-black text-[#21104a] transition hover:border-[#ffcb05] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Save className="h-4 w-4" />
-                {savingAlert ? "Lưu..." : "Lưu"}
-              </button>
-            </div>
-          </label>
-        )}
-
         <div className={`grid grid-cols-3 border-t border-[#eee7da] font-semibold text-[#756894] ${compact ? "mt-3 gap-2 pt-3 text-xs leading-4" : "mt-4 gap-3 pt-4 text-sm leading-5"}`}>
           <span>
             Tải lên:
@@ -259,7 +195,7 @@ export function QuotaStatusPanel({
                   </AlertDialogTitle>
                   <AlertDialogDescription className="leading-6 text-[#756894]">
                     Gói vẫn hoạt động đến {formatPlanDate(quota.planExpiresAt)} rồi
-                    chuyển về Free. Thao tác này không tự động hoàn tiền và bạn có
+                    chuyển về Theo lượt. Thao tác này không tự động hoàn tiền và bạn có
                     thể hoàn tác trước ngày hết hạn.
                   </AlertDialogDescription>
                 </AlertDialogHeader>

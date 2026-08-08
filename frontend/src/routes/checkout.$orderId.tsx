@@ -16,7 +16,7 @@ import {
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { useAuth } from "@/context/AuthContext";
 import {
-  confirmDemoPayment,
+  cancelBillingOrder,
   fetchBillingOrder,
   type BillingOrder,
 } from "@/lib/billing";
@@ -50,7 +50,7 @@ function CheckoutPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loadingOrder, setLoadingOrder] = useState(true);
-  const [confirming, setConfirming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showPaymentQr, setShowPaymentQr] = useState(false);
   const [paymentQrImage, setPaymentQrImage] = useState("");
@@ -200,31 +200,32 @@ function CheckoutPage() {
     };
   }, [order?.paymentQrCode]);
 
-  async function handleConfirmPayment() {
-    if (!token || !order) return;
+  function handleShowPaymentQr() {
+    if (!order) return;
+    setShowPaymentQr(true);
+  }
 
-    setConfirming(true);
+  async function handleCancelOrder() {
+    if (!token || !order || order.status !== "pending") return;
+
+    setCancelling(true);
     setError("");
     setMessage("");
     try {
-      const result = await confirmDemoPayment(token, order.id);
-      setOrder(result.order);
-      updateUser({ plan: result.quota.plan });
-      setMessage(
-        result.order.productType === "top_up"
-          ? `Thanh toán thành công. ${result.order.label} đã được cộng; tài khoản còn ${formatQuotaTime(
-              result.quota.remainingSeconds,
-            )} sử dụng.`
-          : `Thanh toán thành công. Tài khoản đã lên gói ${result.quota.label}, còn ${formatQuotaTime(
-              result.quota.remainingSeconds,
-            )} sử dụng.`,
-      );
+      const nextOrder = await cancelBillingOrder(token, order.id);
+      setOrder(nextOrder);
+      setShowPaymentQr(false);
+      setMessage("Đơn thanh toán đã được hủy. Bạn có thể tạo đơn mới ở bảng giá.");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Không xác nhận được thanh toán",
-      );
+      setError(err instanceof Error ? err.message : "Không hủy được đơn hàng");
+      try {
+        const latest = await fetchBillingOrder(token, order.id);
+        setOrder(latest);
+      } catch {
+        // Keep the visible order if the refresh also fails.
+      }
     } finally {
-      setConfirming(false);
+      setCancelling(false);
     }
   }
 
@@ -314,7 +315,7 @@ function CheckoutPage() {
                         order.productType === "top_up"
                           ? order.validDays
                             ? `Có hiệu lực ${order.validDays} ngày, không đổi chu kỳ chính`
-                            : "Thời lượng đã mua không hết hạn"
+                            : "Theo sử dụng, không đổi chu kỳ chính"
                           : order.billingCycle === "yearly"
                             ? "Thanh toán năm"
                             : "Thanh toán tháng"
@@ -419,33 +420,31 @@ function CheckoutPage() {
               </div>
 
               {order?.provider === "payos" && order.status === "pending" ? (
-                order.paymentUrl ? (
+                <div className="mt-7 space-y-3">
+                  {order.paymentUrl ? (
+                    <button
+                      type="button"
+                      onClick={handleShowPaymentQr}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5"
+                    >
+                      Hiện QR thanh toán
+                      <QrCode className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <div className="rounded-full bg-[#eee8ff] px-5 py-3 text-center text-sm font-black text-[#6a5a8f]">
+                      Link thanh toán chưa sẵn sàng
+                    </div>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setShowPaymentQr(true)}
-                    className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5"
+                    onClick={() => void handleCancelOrder()}
+                    disabled={cancelling}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#eadfcf] bg-white px-5 py-3 text-sm font-black text-[#5f5278] transition hover:bg-[#fff7d8] disabled:cursor-not-allowed disabled:opacity-55"
                   >
-                    Hiện QR thanh toán
-                    <QrCode className="h-4 w-4" />
+                    {cancelling ? "Đang hủy đơn..." : "Hủy đơn thanh toán"}
+                    <X className="h-4 w-4" />
                   </button>
-                ) : (
-                  <div className="mt-7 rounded-full bg-[#eee8ff] px-5 py-3 text-center text-sm font-black text-[#6a5a8f]">
-                    Link thanh toán chưa sẵn sàng
-                  </div>
-                )
-              ) : order?.provider === "demo" ? (
-                <button
-                  type="button"
-                  onClick={() => void handleConfirmPayment()}
-                  disabled={!order || order.status === "paid" || confirming}
-                  className="mt-7 w-full rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
-                >
-                  {order?.status === "paid"
-                    ? "Đã thanh toán"
-                    : confirming
-                      ? "Đang xác nhận..."
-                      : "Xác nhận thanh toán demo"}
-                </button>
+                </div>
               ) : null}
 
               {order?.status === "paid" && (

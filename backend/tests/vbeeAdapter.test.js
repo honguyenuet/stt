@@ -21,7 +21,7 @@ test("Vbee UAT uses the OpenAI-compatible transcription endpoint", () => {
   assert.equal(usesOpenAiCompatibleVbeeApi("/stt"), false);
 });
 
-test("Vbee UAT multipart body uses file, model and JSON response", () => {
+test("Vbee UAT multipart body uses file, model and timestamped response", () => {
   const form = buildVbeeTranscriptionForm(
     { buffer: Buffer.from("wav") },
     "sample.wav",
@@ -30,7 +30,7 @@ test("Vbee UAT multipart body uses file, model and JSON response", () => {
   const entries = Object.fromEntries(form.entries());
 
   assert.equal(entries.model, "vbee-stt");
-  assert.equal(entries.response_format, "json");
+  assert.equal(entries.response_format, "verbose_json");
   assert.equal(entries.language, "vi");
   assert.ok(entries.file instanceof Blob);
   assert.equal(entries.mode, undefined);

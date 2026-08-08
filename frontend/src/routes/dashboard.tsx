@@ -45,10 +45,9 @@ import {
   formatMediaDuration as formatDuration,
   sumMediaDurations,
 } from "@/lib/format-duration";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 const SPARKLES = [
   { top: "6%", left: "18%", delay: 0, size: "h-1.5 w-1.5" },

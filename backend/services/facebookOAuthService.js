@@ -41,14 +41,15 @@ function hasFacebookOAuth() {
   }
 }
 
-function createFacebookAuthorizationUrl(state) {
+function createFacebookAuthorizationUrl(state, callbackUrl) {
   const config = getFacebookConfig();
+  const redirectUri = String(callbackUrl || config.callbackUrl).trim();
   const url = new URL(
     `https://www.facebook.com/${config.version}/dialog/oauth`,
   );
   url.search = new URLSearchParams({
     client_id: config.appId,
-    redirect_uri: config.callbackUrl,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: "public_profile,email",
     state,
@@ -68,8 +69,9 @@ async function readJsonResponse(response, fallbackMessage) {
   return body;
 }
 
-async function exchangeFacebookCode(code) {
+async function exchangeFacebookCode(code, callbackUrl) {
   const config = getFacebookConfig();
+  const redirectUri = String(callbackUrl || config.callbackUrl).trim();
   const tokenResponse = await fetch(
     `https://graph.facebook.com/${config.version}/oauth/access_token`,
     {
@@ -78,7 +80,7 @@ async function exchangeFacebookCode(code) {
       body: new URLSearchParams({
         client_id: config.appId,
         client_secret: config.appSecret,
-        redirect_uri: config.callbackUrl,
+        redirect_uri: redirectUri,
         code: String(code || ""),
       }),
       signal: AbortSignal.timeout(15_000),

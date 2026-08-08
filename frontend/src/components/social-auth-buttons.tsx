@@ -1,14 +1,12 @@
 import { useState } from "react";
-
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
 type SocialProvider = "google" | "facebook" | "apple";
 
 interface SocialAuthButtonsProps {
   mode: "login" | "register";
   referralCode?: string;
+  from?: string;
 }
 
 const PROVIDERS: Array<{
@@ -81,15 +79,20 @@ function ProviderIcon({
 export function SocialAuthButtons({
   mode,
   referralCode,
+  from,
 }: SocialAuthButtonsProps) {
   const [redirecting, setRedirecting] = useState<SocialProvider | null>(null);
 
   function startOAuth(provider: SocialProvider) {
     setRedirecting(provider);
-    const query = referralCode
-      ? `?ref=${encodeURIComponent(referralCode)}`
-      : "";
-    window.location.href = `${API_URL}/api/auth/${provider}${query}`;
+    const params = new URLSearchParams({ mode });
+    if (typeof window !== "undefined") {
+      params.set("frontendOrigin", window.location.origin);
+    }
+    if (referralCode) params.set("ref", referralCode);
+    if (from) params.set("from", from);
+    const query = `?${params.toString()}`;
+    window.location.href = `${getApiBaseUrl()}/api/auth/${provider}${query}`;
   }
 
   return (

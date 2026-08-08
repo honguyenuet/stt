@@ -50,3 +50,11 @@ export function canMutate(role: AdminRole) {
 export function canManageSettings(role: AdminRole) {
   return role === "super_admin";
 }
+
+export function canReplySupport(role: AdminRole) {
+  return role === "admin" || role === "super_admin" || role === "support";
+}
+
+export function canUpdateSupportStatus(role: AdminRole) {
+  return role === "admin" || role === "super_admin";
+}

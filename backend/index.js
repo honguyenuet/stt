@@ -38,9 +38,10 @@ const {
 const app = express();
 app.disable("x-powered-by");
 const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || "", 10);
-if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
-  app.set("trust proxy", trustProxyHops);
-}
+app.set(
+  "trust proxy",
+  Number.isInteger(trustProxyHops) && trustProxyHops > 0 ? trustProxyHops : 1,
+);
 
 app.use(requestId);
 app.use(securityHeaders);

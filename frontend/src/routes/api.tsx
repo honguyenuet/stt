@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   ArrowRight,
   Check,
@@ -27,9 +28,7 @@ import {
   type TranslationResult,
 } from "@/lib/language-options";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 type ApiKeyItem = {
   id: number;

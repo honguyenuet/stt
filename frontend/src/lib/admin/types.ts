@@ -1,5 +1,8 @@
-export type AdminRole = "super_admin" | "admin" | "viewer";
+export type AdminRole = "admin" | "support" | "viewer" | "user";
+export type AssignableAdminRole = Exclude<AdminRole, "viewer">;
 export type UserStatus = "active" | "suspended" | "deleted";
+export type ManagedUserPlan = "free" | "standard" | "special" | "business";
+export type BillingCycle = "monthly" | "yearly";
 export type JobStatus =
   | "uploaded"
   | "queued"
@@ -9,9 +12,12 @@ export type JobStatus =
   | "cancelled";
 export type StorageStatus = "available" | "archived" | "missing" | "error";
 export type FileType = "audio" | "video";
+export type SupportTicketStatus = "open" | "pending" | "resolved" | "closed";
+export type SupportMessageSender = "user" | "admin";
 export type AuditAction =
   | "user.suspend"
   | "user.activate"
+  | "user.delete"
   | "user.role_update"
   | "quota.adjust"
   | "transcription.retry"
@@ -19,7 +25,9 @@ export type AuditAction =
   | "file.delete"
   | "settings.update"
   | "plan.update"
-  | "provider.update";
+  | "provider.update"
+  | "support.reply"
+  | "support.status_update";
 
 export type RoutingMode = "manual" | "auto" | "rule_based";
 
@@ -53,8 +61,11 @@ export interface AdminUser {
   email: string;
   role: AdminRole;
   status: UserStatus;
+  plan: ManagedUserPlan;
   quota_minutes: number;
   used_minutes: number;
+  plan_started_at: string | null;
+  plan_expires_at: string | null;
   created_at: string;
   last_login_at: string | null;
 }
@@ -91,6 +102,30 @@ export interface ManagedFile {
   media_url?: string;
   has_audio_track: boolean;
   metadata: Record<string, string | number | boolean>;
+}
+
+export interface AdminSupportTicket {
+  id: string;
+  user_id: string | null;
+  user_name: string;
+  user_email: string;
+  subject: string;
+  category: string;
+  priority: string;
+  status: SupportTicketStatus;
+  page_url: string | null;
+  user_plan: string | null;
+  latest_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminSupportMessage {
+  id: string;
+  ticket_id: string;
+  sender: SupportMessageSender;
+  message: string;
+  created_at: string;
 }
 
 export interface UsagePoint {
@@ -130,7 +165,13 @@ export interface AuditLog {
   id: string;
   actor: string;
   action: AuditAction;
-  target_type: "user" | "quota" | "transcription" | "file" | "settings";
+  target_type:
+    | "user"
+    | "quota"
+    | "transcription"
+    | "file"
+    | "settings"
+    | "support";
   target_id: string;
   details: Record<string, unknown>;
   created_at: string;
@@ -210,7 +251,7 @@ export interface SystemStatus {
 
 export interface ListUsersParams extends PaginationParams {
   search?: string;
-  role?: AdminRole | "all";
+  role?: AssignableAdminRole | "all";
   status?: UserStatus | "all";
 }
 
@@ -225,6 +266,12 @@ export interface ListFilesParams extends PaginationParams {
   fileType?: FileType | "all";
   storageStatus?: StorageStatus | "all";
   transcriptionStatus?: JobStatus | "all";
+}
+
+export interface ListSupportTicketsParams extends PaginationParams {
+  search?: string;
+  status?: SupportTicketStatus | "all";
+  category?: string;
 }
 
 export interface ListAuditLogsParams extends PaginationParams {

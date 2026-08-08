@@ -48,10 +48,9 @@ import {
   replaceTimedWordInText,
   summarizeConfidence,
 } from "@/lib/transcript-playback";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 12_000;
 const AUTO_SAVE_DELAY_MS = 1_200;
 const MAX_SYNC_WORDS = 5_000;

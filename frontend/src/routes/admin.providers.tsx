@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -177,9 +178,11 @@ function AdminProvidersPage() {
                             JSON.stringify(provider.routing_rules, null, 2),
                           );
                         }}
-                        className="font-black underline"
+                        aria-label={`Chỉnh sửa ${provider.name}`}
+                        title={`Chỉnh sửa ${provider.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Sửa
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>

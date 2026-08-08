@@ -28,6 +28,8 @@ const actions: Array<AuditAction | "all"> = [
   "transcription.cancel",
   "file.delete",
   "settings.update",
+  "support.reply",
+  "support.status_update",
 ];
 
 function AdminAuditLogsPage() {

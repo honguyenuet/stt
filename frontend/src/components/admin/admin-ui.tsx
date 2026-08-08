@@ -7,6 +7,7 @@ import {
   Gauge,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Settings,
   Shield,
   SlidersHorizontal,
@@ -15,7 +16,9 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
+import { useAuth } from "@/context/AuthContext";
 import {
+  exchangeAdminSession,
   logoutAdmin,
   readAdminSession,
   validateAdminSession,
@@ -25,26 +28,42 @@ import {
   storageStatusLabel,
   userStatusLabel,
 } from "@/lib/admin/formatters";
+import { listSupportTickets } from "@/lib/admin/support-service";
 import { useAdminSession } from "@/lib/admin/use-admin-session";
 import type {
+  AdminRole,
   AdminSession,
   JobStatus,
   StorageStatus,
   UserStatus,
 } from "@/lib/admin/types";
 
-const navItems = [
-  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard },
-  { to: "/admin/users", label: "Người dùng", icon: Users },
-  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity },
-  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio },
-  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal },
-  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield },
-  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge },
-  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3 },
-  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList },
-  { to: "/admin/settings", label: "Cài đặt", icon: Settings },
-] as const;
+type CmsNavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  roles: readonly string[];
+};
+
+const adminRoles = ["admin", "super_admin"] as const;
+const navItems: readonly CmsNavItem[] = [
+  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard, roles: adminRoles },
+  { to: "/admin/users", label: "Người dùng", icon: Users, roles: adminRoles },
+  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity, roles: adminRoles },
+  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio, roles: adminRoles },
+  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal, roles: adminRoles },
+  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield, roles: adminRoles },
+  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge, roles: adminRoles },
+  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, roles: adminRoles },
+  {
+    to: "/admin/support",
+    label: "Phản hồi hỗ trợ",
+    icon: MessageSquare,
+    roles: ["admin", "super_admin", "support"],
+  },
+  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList, roles: adminRoles },
+  { to: "/admin/settings", label: "Cài đặt", icon: Settings, roles: adminRoles },
+];
 
 export function AdminRouteShell() {
   const location = useLocation();
@@ -61,6 +80,7 @@ export function AdminRouteShell() {
 
 function AdminGuard({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const { isLoading, token } = useAuth();
   const [session, setSession] = useState<AdminSession | null>(() =>
     readAdminSession(),
   );
@@ -68,37 +88,42 @@ function AdminGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    const current = readAdminSession();
-    if (!current) {
-      setChecking(false);
-      void navigate({
-        to: "/admin/login",
-        search: { from: window.location.pathname },
-      });
-      return () => {
-        active = false;
-      };
-    }
-    void validateAdminSession()
-      .then(({ user }) => {
+    async function ensureAdminSession() {
+      const current = readAdminSession();
+      try {
+        if (current) {
+          const { user } = await validateAdminSession();
+          if (active) setSession({ ...current, user });
+          return;
+        }
+        if (isLoading) return;
+        if (!token) {
+          void navigate({
+            to: "/admin/login",
+            search: { from: window.location.pathname },
+          });
+          return;
+        }
+        const nextSession = await exchangeAdminSession(token);
+        if (active) setSession(nextSession);
+      } catch {
         if (!active) return;
-        setSession({ ...current, user });
-      })
-      .catch(() => {
-        if (!active) return;
+        logoutAdmin();
         setSession(null);
         void navigate({
           to: "/admin/login",
           search: { from: window.location.pathname },
         });
-      })
-      .finally(() => {
-        if (active) setChecking(false);
-      });
+      } finally {
+        if (active && !isLoading) setChecking(false);
+      }
+    }
+
+    void ensureAdminSession();
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [isLoading, navigate, token]);
 
   if (checking || !session) {
     return (
@@ -114,21 +139,61 @@ function AdminLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const session = useAdminSession();
+  const [openSupportCount, setOpenSupportCount] = useState(0);
+  const visibleNavItems = useMemo(
+    () =>
+      navItems.filter((item) =>
+        item.roles.includes((session?.user.role || "support") as AdminRole),
+      ),
+    [session?.user.role],
+  );
   const current = useMemo(() => {
-    const found = [...navItems]
+    const found = [...visibleNavItems]
       .reverse()
       .find(
         (item) =>
           location.pathname === item.to ||
           location.pathname.startsWith(`${item.to}/`),
       );
-    return found ?? navItems[0];
-  }, [location.pathname]);
+    return found ?? visibleNavItems[0] ?? navItems[0];
+  }, [location.pathname, visibleNavItems]);
 
   function handleLogout() {
     logoutAdmin();
     void navigate({ to: "/admin/login", search: { from: "/admin" } });
   }
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+
+    async function loadOpenSupportCount() {
+      try {
+        const result = await listSupportTickets({
+          page: 1,
+          limit: 1,
+          status: "open",
+        });
+        if (!cancelled) setOpenSupportCount(result.total);
+      } catch {
+        if (!cancelled) setOpenSupportCount(0);
+      }
+    }
+
+    void loadOpenSupportCount();
+    const timer = window.setInterval(() => void loadOpenSupportCount(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (session?.user.role !== "support") return;
+    if (location.pathname !== "/admin/support") {
+      void navigate({ to: "/admin/support" });
+    }
+  }, [location.pathname, navigate, session?.user.role]);
 
   return (
     <div className="min-h-screen bg-[#f7f4ec] text-[#21104a]">
@@ -145,7 +210,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
           </div>
         </Link>
         <nav className="space-y-1 p-3">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const active = current.to === item.to;
             return (
@@ -159,7 +224,12 @@ function AdminLayout({ children }: { children: ReactNode }) {
                 }`}
               >
                 <Icon className="h-4 w-4" />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.to === "/admin/support" && openSupportCount > 0 && (
+                  <span className="grid min-h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-black leading-none text-white">
+                    {openSupportCount > 99 ? "99+" : openSupportCount}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -192,7 +262,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="flex gap-2 overflow-x-auto border-t border-[#efe7d8] px-4 py-2 lg:hidden">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}

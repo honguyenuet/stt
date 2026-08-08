@@ -49,16 +49,16 @@ let billingReconcileRunning = false;
 
 const PLAN_PRICES = {
   standard: {
-    monthly: Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "150000", 10),
-    yearly: Number.parseInt(process.env.STANDARD_YEARLY_PRICE_VND || "1650000", 10),
+    monthly: Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "149000", 10),
+    yearly: Number.parseInt(process.env.STANDARD_YEARLY_PRICE_VND || "1490000", 10),
   },
   special: {
-    monthly: Number.parseInt(process.env.SPECIAL_MONTHLY_PRICE_VND || "449000", 10),
-    yearly: Number.parseInt(process.env.SPECIAL_YEARLY_PRICE_VND || "4939000", 10),
+    monthly: Number.parseInt(process.env.SPECIAL_MONTHLY_PRICE_VND || "499000", 10),
+    yearly: Number.parseInt(process.env.SPECIAL_YEARLY_PRICE_VND || "4990000", 10),
   },
   business: {
     monthly: Number.parseInt(process.env.BUSINESS_MONTHLY_PRICE_VND || "799000", 10),
-    yearly: Number.parseInt(process.env.BUSINESS_YEARLY_PRICE_VND || "8789000", 10),
+    yearly: Number.parseInt(process.env.BUSINESS_YEARLY_PRICE_VND || "7990000", 10),
   },
 };
 
@@ -252,6 +252,12 @@ async function listPlans(db = pool) {
       seats: config.seats,
       retentionDays: config.retentionDays,
       apiAccess: config.apiAccess,
+      apiAccessLabel: config.apiAccessLabel || (config.apiAccess ? "Có" : "Không"),
+      webhookAccess: Boolean(config.webhookAccess),
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      transcriptLimit: config.transcriptLimit,
+      rolloverLabel: config.rolloverLabel,
+      supportLevel: config.supportLevel,
     };
   }),
   );
@@ -326,7 +332,9 @@ async function createCheckoutOrder({
   billingCycle = "monthly",
   productType = "subscription",
   productCode = null,
+  frontendUrl = FRONTEND_URL,
 }) {
+  const checkoutFrontendUrl = String(frontendUrl || FRONTEND_URL).replace(/\/$/, "");
   const normalizedProductType = productType === "top_up" ? "top_up" : "subscription";
   let planName = normalizePlan(plan);
   const cycle = normalizeBillingCycle(billingCycle);
@@ -348,7 +356,7 @@ async function createCheckoutOrder({
     throw createHttpError(400, "Gói mua thêm không hợp lệ");
   }
   if (normalizedProductType === "subscription" && planName === "free") {
-    throw createHttpError(400, "Gói Free không cần thanh toán");
+    throw createHttpError(400, "Gói Theo lượt không cần thanh toán thuê bao");
   }
   if (normalizedProductType === "subscription" && !runtimePlan?.enabled) {
     throw createHttpError(400, "Gói cước này hiện không nhận đăng ký mới");
@@ -386,7 +394,7 @@ async function createCheckoutOrder({
   });
 
   if (provider === "demo") {
-    const paymentUrl = `${FRONTEND_URL}/checkout/${order.id}`;
+    const paymentUrl = `${checkoutFrontendUrl}/checkout/${order.id}`;
     const { rows } = await pool.query(
       `UPDATE billing_orders SET payment_url = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
       [order.id, paymentUrl],
@@ -406,8 +414,8 @@ async function createCheckoutOrder({
         productCode: topUp?.code || planName,
         planLabel: runtimePlan?.label,
       }),
-      returnUrl: getCheckoutUrl(order.id, "return"),
-      cancelUrl: getCheckoutUrl(order.id, "cancel"),
+      cancelUrl: `${checkoutFrontendUrl}/checkout/${order.id}?payment=cancel`,
+      returnUrl: `${checkoutFrontendUrl}/checkout/${order.id}?payment=return`,
       expiresAt: new Date(order.expires_at),
     });
     const { rows } = await pool.query(
@@ -586,6 +594,18 @@ async function reconcileExpiredPendingOrders() {
   return reconciled;
 }
 
+async function expireStalePendingOrders() {
+  const { rowCount } = await pool.query(
+    `UPDATE billing_orders
+     SET status = 'expired',
+         updated_at = NOW()
+     WHERE status = 'pending'
+       AND expires_at IS NOT NULL
+       AND expires_at + INTERVAL '5 minutes' < NOW()`,
+  );
+  return rowCount || 0;
+}
+
 function startBillingReconciliationDispatcher() {
   if (billingReconcileTimer) return;
 
@@ -594,6 +614,7 @@ function startBillingReconciliationDispatcher() {
     billingReconcileRunning = true;
     try {
       await reconcileExpiredPendingOrders();
+      await expireStalePendingOrders();
     } catch (error) {
       console.error("PayOS background reconciliation failed:", error.message);
     } finally {
@@ -633,6 +654,31 @@ async function listUserOrders(userId) {
     [userId],
   );
   return rows.map(serializeOrder);
+}
+
+async function cancelPendingOrder({ userId, orderId }) {
+  const { rows } = await pool.query(
+    `UPDATE billing_orders
+     SET status = 'cancelled',
+         updated_at = NOW()
+     WHERE id = $1
+       AND user_id = $2
+       AND status = 'pending'
+     RETURNING *`,
+    [orderId, userId],
+  );
+
+  if (rows[0]) return serializeOrder(rows[0]);
+
+  const existing = await pool.query(
+    `SELECT * FROM billing_orders WHERE id = $1 AND user_id = $2`,
+    [orderId, userId],
+  );
+  if (!existing.rows[0]) throw createHttpError(404, "Không tìm thấy đơn hàng");
+  throw createHttpError(
+    409,
+    `Không thể hủy đơn hàng ở trạng thái ${existing.rows[0].status}`,
+  );
 }
 
 async function cancelActivePlan(userId) {
@@ -886,8 +932,10 @@ async function confirmDemoPayment({ userId, orderId }) {
 
 module.exports = {
   cancelActivePlan,
+  cancelPendingOrder,
   createCheckoutOrder,
   confirmDemoPayment,
+  expireStalePendingOrders,
   getOrderForUser,
   handlePayosWebhook,
   listPlans,

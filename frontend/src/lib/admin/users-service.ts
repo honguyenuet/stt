@@ -1,8 +1,11 @@
 import { adminRequest, buildQuery } from "./api-client";
 import type {
   AdminRole,
+  AssignableAdminRole,
   AdminUser,
+  BillingCycle,
   ListUsersParams,
+  ManagedUserPlan,
   PaginatedResponse,
   UserStatus,
 } from "./types";
@@ -35,7 +38,7 @@ export function updateUserStatus(
   });
 }
 
-export function updateUserRole(userId: string, role: AdminRole) {
+export function updateUserRole(userId: string, role: AssignableAdminRole) {
   return adminRequest<AdminUser>(`/api/admin/users/${userId}/role`, {
     method: "PATCH",
     body: JSON.stringify({ role }),
@@ -44,11 +47,28 @@ export function updateUserRole(userId: string, role: AdminRole) {
 
 export function adjustUserQuota(
   userId: string,
-  deltaMinutes: number,
+  quotaMinutes: number,
   reason: string,
 ) {
   return adminRequest<AdminUser>(`/api/admin/users/${userId}/quota`, {
     method: "POST",
-    body: JSON.stringify({ deltaMinutes, reason }),
+    body: JSON.stringify({ quotaMinutes, reason }),
+  });
+}
+
+export function updateUserPlan(
+  userId: string,
+  plan: ManagedUserPlan,
+  billingCycle: BillingCycle = "monthly",
+) {
+  return adminRequest<AdminUser>(`/api/admin/users/${userId}/plan`, {
+    method: "PATCH",
+    body: JSON.stringify({ plan, billingCycle }),
+  });
+}
+
+export function deleteUserAccount(userId: string) {
+  return adminRequest<AdminUser>(`/api/admin/users/${userId}`, {
+    method: "DELETE",
   });
 }

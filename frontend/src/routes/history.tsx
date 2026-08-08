@@ -33,10 +33,9 @@ import {
   sumMediaDurations,
 } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 10_000;
 const HISTORY_PAGE_SIZE = 20;
 

@@ -44,7 +44,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const canAccessCms = ["support", "finance", "admin", "super_admin"].includes(
+  const canAccessCms = ["support", "admin"].includes(
     user?.role || "user",
   );
 

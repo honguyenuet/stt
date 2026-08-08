@@ -70,12 +70,13 @@ function createAppleClientSecret(config) {
   });
 }
 
-function createAppleAuthorizationUrl({ state, nonce }) {
+function createAppleAuthorizationUrl({ state, nonce, callbackUrl }) {
   const config = getAppleConfig();
+  const redirectUri = String(callbackUrl || config.callbackUrl).trim();
   const url = new URL(`${APPLE_ISSUER}/auth/authorize`);
   url.search = new URLSearchParams({
     client_id: config.clientId,
-    redirect_uri: config.callbackUrl,
+    redirect_uri: redirectUri,
     response_type: "code id_token",
     response_mode: "form_post",
     scope: "name email",
@@ -136,8 +137,9 @@ async function verifyAppleIdentityToken(idToken, config) {
   });
 }
 
-async function exchangeAppleCode(code) {
+async function exchangeAppleCode(code, callbackUrl) {
   const config = getAppleConfig();
+  const redirectUri = String(callbackUrl || config.callbackUrl).trim();
   const response = await fetch(`${APPLE_ISSUER}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -146,7 +148,7 @@ async function exchangeAppleCode(code) {
       client_secret: createAppleClientSecret(config),
       code: String(code || ""),
       grant_type: "authorization_code",
-      redirect_uri: config.callbackUrl,
+      redirect_uri: redirectUri,
     }),
     signal: AbortSignal.timeout(15_000),
   });

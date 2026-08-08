@@ -39,10 +39,9 @@ import {
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 interface Word {
   text: string;
@@ -480,7 +479,7 @@ function RecordPage() {
   async function startRecording() {
     if (quota?.isLimitReached) {
       setError(
-        "Free đã hết 30 phút. Vui lòng nâng cấp Premium để ghi âm tiếp.",
+        "Quota Theo lượt đã hết. Vui lòng nâng cấp gói để ghi âm tiếp.",
       );
       setStatus("error");
       return;
@@ -770,7 +769,7 @@ function RecordPage() {
             <div className="order-1 min-w-0 xl:order-2">
               <RecorderPanel status={status} recordTime={recordTime} />
               {status === "idle" && (
-                <div className="mt-2 flex flex-col items-center gap-2 text-center">
+                <div className="mt-3 flex flex-col items-center gap-2 text-center">
                   <button
                     onClick={() => void startRecording()}
                     disabled={
@@ -782,15 +781,15 @@ function RecordPage() {
                   >
                     <Mic className="h-6 w-6" />
                     {quota?.isLimitReached
-                      ? "Upgrade to Record"
+                      ? "Nâng cấp để ghi âm"
                       : micStatus === "blocked"
                         ? "Microphone bị chặn"
                         : "Bắt đầu ghi âm"}
                   </button>
                   <p className="max-w-xl text-base leading-7 text-muted-foreground">
                     {quota?.isLimitReached
-                      ? "Free đã hết thời lượng. Nâng cấp Premium để ghi âm tiếp."
-                      : "Microphone access is ready - you're ready to record."}
+                      ? "Quota đã hết. Nâng cấp gói để ghi âm tiếp."
+                      : "Microphone đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
                   </p>
                 </div>
               )}

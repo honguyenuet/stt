@@ -22,6 +22,8 @@ const {
 } = require("../services/transcriptionQueue");
 const {
   ADMIN_ROLES,
+  canReplySupportRole,
+  canUpdateSupportStatusRole,
   getEffectiveAdminRole,
   isAdminAccountActive,
 } = require("../services/adminAccess");
@@ -33,6 +35,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 const ADMIN_TOKEN_TTL = "8h";
 
 const MUTATION_ROLES = new Set(["super_admin", "admin"]);
+const SUPPORT_STATUSES = new Set(["open", "pending", "resolved", "closed"]);
 
 function createAdminError(statusCode, message) {
   const error = new Error(message);
@@ -98,6 +101,15 @@ async function requireAdmin(req, res, next) {
       ...user,
       admin_role: getEffectiveAdminRole(user),
     };
+    if (
+      req.admin.admin_role === "support" &&
+      req.path !== "/auth/me" &&
+      !req.path.startsWith("/support/")
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Hỗ trợ viên chỉ được truy cập phản hồi hỗ trợ" });
+    }
     next();
   } catch {
     return res
@@ -111,6 +123,15 @@ function requireMutation(req, res, next) {
     return res
       .status(403)
       .json({ error: "Bạn không có quyền thực hiện thao tác này" });
+  }
+  next();
+}
+
+function requireSupportMutation(req, res, next) {
+  if (!canReplySupportRole(req.admin.admin_role)) {
+    return res
+      .status(403)
+      .json({ error: "Bạn không có quyền phản hồi hỗ trợ" });
   }
   next();
 }
@@ -266,6 +287,38 @@ function normalizeFile(row) {
       audio_filename: row.audio_filename || "",
       processing_seconds: Number(row.processing_seconds || 0),
     },
+  };
+}
+
+function normalizeSupportTicket(row) {
+  return {
+    id: String(row.id),
+    user_id: row.user_id ? String(row.user_id) : null,
+    user_name:
+      `${row.first_name || ""} ${row.last_name || ""}`.trim() ||
+      row.name ||
+      row.email ||
+      "Khách chưa đăng nhập",
+    user_email: row.email || row.user_email || "",
+    subject: row.subject || "Yêu cầu hỗ trợ Vbee",
+    category: row.category || "general",
+    priority: row.priority || "normal",
+    status: SUPPORT_STATUSES.has(row.status) ? row.status : "open",
+    page_url: row.page_url || null,
+    user_plan: row.user_plan || null,
+    latest_message: row.latest_message || "",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function normalizeSupportMessage(row) {
+  return {
+    id: String(row.id),
+    ticket_id: String(row.ticket_id),
+    sender: row.sender === "admin" ? "admin" : "user",
+    message: row.message || "",
+    created_at: row.created_at,
   };
 }
 
@@ -960,6 +1013,215 @@ router.get("/usage", requireAdmin, async (_req, res) => {
     ),
   });
 });
+
+router.get("/support/tickets", requireAdmin, async (req, res) => {
+  const page = toInt(req.query.page, 1);
+  const limit = Math.min(toInt(req.query.limit, 10), 100);
+  const offset = (page - 1) * limit;
+  const search = String(req.query.search || "").trim();
+  const status = String(req.query.status || "all");
+  const category = String(req.query.category || "").trim();
+  const filters = [];
+  const params = [];
+
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    filters.push(
+      `(LOWER(COALESCE(t.subject, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.email, u.email, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(t.name, u.first_name || ' ' || u.last_name, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(latest.message, '')) LIKE $${params.length})`,
+    );
+  }
+  if (status !== "all" && SUPPORT_STATUSES.has(status)) {
+    params.push(status);
+    filters.push(`t.status = $${params.length}`);
+  }
+  if (category && category !== "all") {
+    params.push(category.toLowerCase());
+    filters.push(`LOWER(t.category) = $${params.length}`);
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const baseSql = `
+    FROM support_tickets t
+    LEFT JOIN users u ON u.id = t.user_id
+    LEFT JOIN LATERAL (
+      SELECT message
+      FROM support_messages m
+      WHERE m.ticket_id = t.id
+      ORDER BY m.created_at DESC
+      LIMIT 1
+    ) latest ON TRUE
+    ${where}
+  `;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.user_id, t.name, COALESCE(t.email, u.email) AS email,
+              u.first_name, u.last_name, t.subject, t.category, t.priority,
+              t.status, t.page_url, t.user_plan, latest.message AS latest_message,
+              t.created_at, t.updated_at
+       ${baseSql}
+       ORDER BY t.updated_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+    const totalResult = await pool.query(
+      `SELECT COUNT(*)::int AS count ${baseSql}`,
+      params,
+    );
+    return res.json(
+      paginate(
+        rows.map(normalizeSupportTicket),
+        page,
+        limit,
+        totalResult.rows[0].count,
+      ),
+    );
+  } catch (error) {
+    console.error("Admin support list error:", error);
+    return res.status(500).json({ error: "Không tải được phản hồi hỗ trợ" });
+  }
+});
+
+router.get("/support/tickets/:id/messages", requireAdmin, async (req, res) => {
+  const ticketId = Number(req.params.id);
+  if (!Number.isInteger(ticketId) || ticketId <= 0) {
+    return res.status(400).json({ error: "Ticket không hợp lệ" });
+  }
+
+  try {
+    const ticket = await pool.query("SELECT id FROM support_tickets WHERE id = $1", [
+      ticketId,
+    ]);
+    if (ticket.rows.length === 0) {
+      return res.status(404).json({ error: "Không tìm thấy ticket" });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, ticket_id, sender, message, created_at
+       FROM support_messages
+       WHERE ticket_id = $1
+       ORDER BY created_at ASC`,
+      [ticketId],
+    );
+    return res.json({ messages: rows.map(normalizeSupportMessage) });
+  } catch (error) {
+    console.error("Admin support messages error:", error);
+    return res.status(500).json({ error: "Không tải được hội thoại hỗ trợ" });
+  }
+});
+
+router.post(
+  "/support/tickets/:id/messages",
+  requireAdmin,
+  requireSupportMutation,
+  async (req, res) => {
+    const ticketId = Number(req.params.id);
+    const message = String(req.body.message || "").trim();
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({ error: "Ticket không hợp lệ" });
+    }
+    if (message.length < 2 || message.length > 10_000) {
+      return res.status(400).json({ error: "Vui lòng nhập nội dung phản hồi" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        "SELECT id FROM support_tickets WHERE id = $1 FOR UPDATE",
+        [ticketId],
+      );
+      if (existing.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Không tìm thấy ticket" });
+      }
+      const messageResult = await client.query(
+        `INSERT INTO support_messages (ticket_id, sender, message)
+         VALUES ($1, 'admin', $2)
+         RETURNING id, ticket_id, sender, message, created_at`,
+        [ticketId, message],
+      );
+      const ticketResult = await client.query(
+        `UPDATE support_tickets
+         SET updated_at = NOW(), status = 'pending'
+         WHERE id = $1
+         RETURNING *`,
+        [ticketId],
+      );
+      await client.query("COMMIT");
+      await writeAudit({
+        actorRow: req.admin,
+        action: "support.reply",
+        targetType: "support",
+        targetId: ticketId,
+        details: { ticket_id: ticketId },
+      });
+      return res.status(201).json({
+        ticket: normalizeSupportTicket({
+          ...ticketResult.rows[0],
+          latest_message: message,
+        }),
+        message: normalizeSupportMessage(messageResult.rows[0]),
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Admin support reply error:", error);
+      return res.status(500).json({ error: "Không gửi được phản hồi" });
+    } finally {
+      client.release();
+    }
+  },
+);
+
+router.patch(
+  "/support/tickets/:id/status",
+  requireAdmin,
+  (req, res, next) => {
+    if (!canUpdateSupportStatusRole(req.admin.admin_role)) {
+      return res
+        .status(403)
+        .json({ error: "Bạn không có quyền cập nhật trạng thái hỗ trợ" });
+    }
+    next();
+  },
+  async (req, res) => {
+    const ticketId = Number(req.params.id);
+    const status = String(req.body.status || "").trim();
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({ error: "Ticket không hợp lệ" });
+    }
+    if (!SUPPORT_STATUSES.has(status)) {
+      return res.status(400).json({ error: "Trạng thái hỗ trợ không hợp lệ" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE support_tickets
+         SET status = $1,
+             updated_at = NOW(),
+             resolved_at = CASE WHEN $1 IN ('resolved', 'closed') THEN NOW() ELSE NULL END
+         WHERE id = $2
+         RETURNING *`,
+        [status, ticketId],
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: "Không tìm thấy ticket" });
+      }
+      await writeAudit({
+        actorRow: req.admin,
+        action: "support.status_update",
+        targetType: "support",
+        targetId: ticketId,
+        details: { status },
+      });
+      return res.json(normalizeSupportTicket(rows[0]));
+    } catch (error) {
+      console.error("Admin support status error:", error);
+      return res.status(500).json({ error: "Không cập nhật được trạng thái" });
+    }
+  },
+);
 
 router.get("/audit-logs", requireAdmin, async (req, res) => {
   const page = toInt(req.query.page, 1);

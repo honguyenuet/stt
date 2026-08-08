@@ -14,6 +14,13 @@ export default defineConfig({
   server: {
     port: 3000,
     host: "0.0.0.0",
+    allowedHosts: ["myth-mowing-reliant.ngrok-free.dev"],
+    proxy: {
+      "/api": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
+    },
   },
   resolve: {
     tsconfigPaths: true,

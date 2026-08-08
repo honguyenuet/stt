@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Eye } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -206,9 +207,11 @@ function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => setSelected(user)}
-                        className="font-black text-[#21104a] underline"
+                        aria-label={`Xem chi tiết ${user.name}`}
+                        title={`Xem chi tiết ${user.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Chi tiết
+                        <Eye className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>

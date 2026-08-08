@@ -170,6 +170,21 @@ DEEPGRAM_UTTERANCES=true
 
 Deepgram API dùng header `Authorization: Token <apiKey>` và nhận file trực tiếp tại `POST https://api.deepgram.com/v1/listen`. Khi bật "nhận diện nhiều người nói" trên app, backend sẽ gửi thêm `diarize=true` hoặc `DEEPGRAM_DIARIZE_MODEL` nếu bạn cấu hình model riêng.
 
+Nếu muốn dùng Vbee STT:
+
+```env
+TRANSCRIPTION_PROVIDER=vbee
+VBEE_API_KEY=your_vbee_stt_api_key_here
+VBEE_API_BASE_URL=https://api-voice-uat.vbeelabs.ai
+VBEE_TRANSCRIBE_PATH=/v1/audio/transcriptions
+VBEE_MODEL=chunkformer
+VBEE_RESPONSE_FORMAT=json
+VBEE_RESULT_PATH_TEMPLATE=/v1/transcribe/{id}
+VBEE_LANGUAGE=vi
+```
+
+Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định theo tài liệu Vbee Voice API: field `file`, `model=chunkformer`, `language=vi`, `response_format=json`, header `Authorization: Bearer <apiKey>`. Endpoint submit UAT là `https://api-voice-uat.vbeelabs.ai/v1/audio/transcriptions`. Bạn có thể cấu hình bằng base/path như trên, hoặc nhập full URL này vào Admin CMS > Nhà cung cấp API. Nếu response path khác mặc định, cấu hình thêm `VBEE_ID_PATH`, `VBEE_STATUS_PATH`, `VBEE_TEXT_PATH`, `VBEE_WORDS_PATH`.
+
 ### Tách vocal cho bài hát
 
 Ở trang Tải file, chọn `Bài hát / nhạc nền` trước khi chuyển đổi. Backend dùng
@@ -343,6 +358,13 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | DEEPGRAM_API_KEY | API key Deepgram | your_deepgram_api_key |
 | DEEPGRAM_MODEL | Model Deepgram | nova-3 |
 | DEEPGRAM_LANGUAGE | Mã ngôn ngữ Deepgram | vi |
+| VBEE_API_KEY | API key Vbee STT | your_vbee_stt_api_key |
+| VBEE_API_BASE_URL | Endpoint gốc Vbee STT | https://api-voice-uat.vbeelabs.ai |
+| VBEE_TRANSCRIBE_PATH | Path submit file STT Vbee | /v1/audio/transcriptions |
+| VBEE_MODEL | Model STT gửi lên Vbee | chunkformer |
+| VBEE_RESPONSE_FORMAT | Định dạng response Vbee | json |
+| VBEE_RESULT_PATH_TEMPLATE | Path poll kết quả, dùng `{id}` cho job id | /v1/transcribe/{id} |
+| VBEE_TEXT_PATH | Dot path tới transcript nếu response Vbee không dùng `text`/`transcript` mặc định | data.text |
 | YOUTUBE_IMPORT_ENABLED | Bật nhập một video YouTube từ URL | true |
 | YOUTUBE_COOKIES_FILE | Đường dẫn tuyệt đối đến cookies.txt của tài khoản dịch vụ khi YouTube yêu cầu xác minh | C:\\secrets\\youtube-cookies.txt |
 | YOUTUBE_FALLBACK_PLAYER_CLIENTS | Client công khai thử lại khi YouTube chặn yêu cầu mặc định; để trống để tắt | android_vr |

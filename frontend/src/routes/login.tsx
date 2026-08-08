@@ -5,8 +5,9 @@ import { useAuth, type User } from "@/context/AuthContext";
 import { getSafeAuthRedirect } from "@/lib/auth-redirect";
 import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 const SPARKLES = [
   { top: "8%", left: "7%", delay: 0, size: "h-1.5 w-1.5" },
@@ -236,7 +237,7 @@ function LoginPage() {
             </div>
 
             <div className="mt-5">
-              <SocialAuthButtons mode="login" />
+              <SocialAuthButtons mode="login" from={from} />
             </div>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">

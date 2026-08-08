@@ -2,10 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { ArrowLeft, KeyRound, Mail, Send } from "lucide-react";
 import vbeeLogo from "@/assets/vbee-logo.png";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 export const Route = createFileRoute("/forgot-password")({
   component: ForgotPasswordPage,

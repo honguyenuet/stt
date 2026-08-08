@@ -1,5 +1,7 @@
+const crypto = require("crypto");
 const pool = require("../db");
 const { getAdminSettings } = require("./adminSettingsService");
+const { JWT_SECRET } = require("../config/security");
 
 const SOCIAL_PROVIDERS = new Set(["google", "facebook", "apple"]);
 const USER_COLUMNS = `
@@ -48,6 +50,91 @@ function cleanName(value, fallback) {
 function cleanAvatar(value) {
   const avatar = String(value || "").trim();
   return /^https:\/\//i.test(avatar) ? avatar.slice(0, 2000) : null;
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function signSocialRegistrationPayload(payload) {
+  return crypto
+    .createHmac("sha256", JWT_SECRET)
+    .update(payload)
+    .digest("base64url");
+}
+
+function createSocialRegistrationToken(profile) {
+  const provider = cleanProvider(profile.provider);
+  const providerUserId = String(profile.providerUserId || "")
+    .trim()
+    .slice(0, 255);
+  const email = cleanEmail(profile.email);
+  if (!providerUserId || !email) return "";
+
+  const payload = base64UrlJson({
+    provider,
+    providerUserId,
+    email,
+    emailVerified: profile.emailVerified !== false,
+    avatar: cleanAvatar(profile.avatar),
+    exp: Date.now() + 10 * 60 * 1000,
+  });
+  return `${payload}.${signSocialRegistrationPayload(payload)}`;
+}
+
+function verifySocialRegistrationToken(token) {
+  const [payload, signature] = String(token || "").split(".");
+  if (!payload || !signature) return null;
+  const expected = signSocialRegistrationPayload(payload);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    actualBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(actualBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+
+  try {
+    const profile = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    );
+    if (!profile || profile.exp < Date.now()) return null;
+    return {
+      provider: cleanProvider(profile.provider),
+      providerUserId: String(profile.providerUserId || "").trim().slice(0, 255),
+      email: cleanEmail(profile.email),
+      emailVerified: profile.emailVerified !== false,
+      avatar: cleanAvatar(profile.avatar),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function cleanSafePath(value) {
+  const path = String(value || "").trim();
+  if (!path.startsWith("/") || path.startsWith("//")) return "";
+  return path.slice(0, 500);
+}
+
+function createSocialRegistrationUrl(frontendUrl, profile) {
+  const origin = String(frontendUrl || "").trim().replace(/\/$/, "");
+  const url = new URL("/register", `${origin}/`);
+  const provider = cleanProvider(profile.provider);
+  const email = cleanEmail(profile.email);
+  const firstName = cleanName(profile.firstName, "");
+  const lastName = cleanName(profile.lastName, "");
+  const from = cleanSafePath(profile.from);
+  const token = createSocialRegistrationToken(profile);
+
+  url.searchParams.set("provider", provider);
+  if (email) url.searchParams.set("email", email);
+  if (firstName) url.searchParams.set("firstName", firstName);
+  if (lastName) url.searchParams.set("lastName", lastName);
+  if (from) url.searchParams.set("from", from);
+  if (token) url.searchParams.set("oauthToken", token);
+  return url.toString();
 }
 
 async function findIdentityUser(db, provider, providerUserId) {
@@ -206,5 +293,7 @@ async function findOrCreateSocialUser({
 
 module.exports = {
   createSocialIdentityError,
+  createSocialRegistrationUrl,
   findOrCreateSocialUser,
+  verifySocialRegistrationToken,
 };

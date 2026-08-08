@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   ChevronRight,
   CircleHelp,
   Clock3,
@@ -19,11 +20,17 @@ import { useAuth } from "@/context/AuthContext";
 import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import {
   createSupportTicket,
+  fetchSupportMessages,
   fetchSupportTickets,
+  replySupportTicket,
+  type SupportMessage,
   type SupportTicket,
 } from "@/lib/support";
 
-type SupportView = "home" | "messages" | "chat" | "help";
+type SupportView = "home" | "messages" | "thread" | "chat" | "help";
+type SupportReadState = Record<string, number>;
+
+const SUPPORT_READ_STATE_KEY = "vbee_support_read_state";
 
 const HELP_QUESTIONS = [
   {
@@ -75,8 +82,34 @@ function getPageUrl() {
 
 function statusLabel(status: string) {
   if (status === "resolved") return "Đã xử lý";
+  if (status === "closed") return "Đã đóng";
   if (status === "pending") return "Đang chờ";
   return "Đang mở";
+}
+
+function formatSupportTime(value?: string | null) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function readSupportReadState(): SupportReadState {
+  if (typeof window === "undefined") return {};
+  const raw = window.localStorage.getItem(SUPPORT_READ_STATE_KEY);
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as SupportReadState;
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSupportReadState(value: SupportReadState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SUPPORT_READ_STATE_KEY, JSON.stringify(value));
 }
 
 export function VbeeSupportWidget() {
@@ -89,13 +122,30 @@ export function VbeeSupportWidget() {
   const [search, setSearch] = useState("");
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [readState, setReadState] = useState<SupportReadState>(() =>
+    readSupportReadState(),
+  );
+  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(
+    null,
+  );
+  const [threadMessages, setThreadMessages] = useState<SupportMessage[]>([]);
+  const [threadReply, setThreadReply] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
   const displayName = user?.firstName || "bạn";
   const contactEmail = user?.email || email;
+  const unreadSupportCount = useMemo(
+    () =>
+      tickets.reduce((total, ticket) => {
+        const readCount = readState[String(ticket.id)] || 0;
+        return total + Math.max(0, ticket.adminMessageCount - readCount);
+      }, 0),
+    [readState, tickets],
+  );
 
   const filteredQuestions = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -132,33 +182,56 @@ export function VbeeSupportWidget() {
     };
   }, [open, token]);
 
-  useEffect(() => {
-    if (!open || view !== "messages" || !token) return;
+  const loadTickets = useCallback(
+    async (showLoading = false) => {
+      if (!token) {
+        setTickets([]);
+        return;
+      }
 
-    const authToken = token;
-    let cancelled = false;
-    async function loadTickets() {
-      setIsLoadingTickets(true);
+      if (showLoading) setIsLoadingTickets(true);
       try {
-        const data = await fetchSupportTickets(authToken);
-        if (!cancelled) {
-          setTickets(data.tickets);
-          setError("");
-        }
+        const data = await fetchSupportTickets(token);
+        setTickets(data.tickets);
+        setError("");
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Không tải được yêu cầu hỗ trợ");
+        if (showLoading || open) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Không tải được yêu cầu hỗ trợ",
+          );
         }
       } finally {
-        if (!cancelled) setIsLoadingTickets(false);
+        if (showLoading) setIsLoadingTickets(false);
       }
+    },
+    [open, token],
+  );
+
+  useEffect(() => {
+    if (!token) {
+      setTickets([]);
+      return;
     }
 
-    void loadTickets();
+    let cancelled = false;
+    async function syncTickets() {
+      if (!cancelled) await loadTickets(false);
+    }
+
+    void syncTickets();
+    const timer = window.setInterval(() => void syncTickets(), 30000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [open, view, token, notice]);
+  }, [loadTickets, token]);
+
+  useEffect(() => {
+    if (!open || view !== "messages" || !token) return;
+    void loadTickets(true);
+  }, [loadTickets, open, token, view, notice]);
 
   useEffect(() => {
     function openSupport() {
@@ -214,6 +287,60 @@ export function VbeeSupportWidget() {
     }
   }
 
+  async function openTicketThread(ticket: SupportTicket) {
+    if (!token) {
+      setError("Vui lòng đăng nhập để xem hội thoại hỗ trợ");
+      return;
+    }
+
+    setSelectedTicket(ticket);
+    setView("thread");
+    setThreadReply("");
+    setIsLoadingThread(true);
+    setError("");
+    try {
+      const data = await fetchSupportMessages(token, ticket.id);
+      setThreadMessages(data.messages);
+      const adminMessageCount = data.messages.filter(
+        (item) => item.sender === "admin",
+      ).length;
+      setReadState((current) => {
+        const next = {
+          ...current,
+          [ticket.id]: Math.max(ticket.adminMessageCount, adminMessageCount),
+        };
+        saveSupportReadState(next);
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tải được hội thoại");
+    } finally {
+      setIsLoadingThread(false);
+    }
+  }
+
+  async function handleThreadReply() {
+    const cleanReply = threadReply.trim();
+    if (!token || !selectedTicket || cleanReply.length < 2) {
+      setError("Vui lòng nhập nội dung phản hồi");
+      return;
+    }
+
+    setIsSending(true);
+    setError("");
+    try {
+      const data = await replySupportTicket(token, selectedTicket.id, cleanReply);
+      setThreadMessages((current) => [...current, data.message]);
+      setThreadReply("");
+      setNotice("Đã gửi phản hồi cho admin.");
+      await loadTickets(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không gửi được phản hồi");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <div className="fixed bottom-5 right-5 z-[90] flex flex-col items-end gap-3">
       {open && (
@@ -235,6 +362,22 @@ export function VbeeSupportWidget() {
               error={error}
               setOpen={setOpen}
               setView={setView}
+              openTicket={openTicketThread}
+              readState={readState}
+            />
+          )}
+          {view === "thread" && selectedTicket && (
+            <SupportThread
+              ticket={selectedTicket}
+              messages={threadMessages}
+              reply={threadReply}
+              isLoading={isLoadingThread}
+              isSending={isSending}
+              error={error}
+              setOpen={setOpen}
+              setView={setView}
+              setReply={setThreadReply}
+              handleReply={handleThreadReply}
             />
           )}
           {view === "chat" && (
@@ -261,7 +404,11 @@ export function VbeeSupportWidget() {
               setView={setView}
             />
           )}
-          <SupportBottomNav view={view} setView={setView} />
+          <SupportBottomNav
+            view={view}
+            setView={setView}
+            unreadCount={unreadSupportCount}
+          />
         </div>
       )}
 
@@ -274,6 +421,11 @@ export function VbeeSupportWidget() {
         aria-label={open ? "Đóng hỗ trợ Vbee" : "Mở hỗ trợ Vbee"}
       >
         {open ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
+        {!open && unreadSupportCount > 0 && (
+          <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-black leading-none text-white ring-2 ring-white">
+            {unreadSupportCount > 99 ? "99+" : unreadSupportCount}
+          </span>
+        )}
       </button>
     </div>
   );
@@ -389,6 +541,8 @@ function SupportMessages({
   error,
   setOpen,
   setView,
+  openTicket,
+  readState,
 }: {
   token: string | null;
   tickets: SupportTicket[];
@@ -397,6 +551,8 @@ function SupportMessages({
   error: string;
   setOpen: (open: boolean) => void;
   setView: (view: SupportView) => void;
+  openTicket: (ticket: SupportTicket) => void;
+  readState: SupportReadState;
 }) {
   return (
     <>
@@ -447,26 +603,164 @@ function SupportMessages({
           </div>
         ) : (
           <div className="space-y-3">
-            {tickets.map((ticket) => (
-              <div
-                key={ticket.id}
-                className="rounded-lg border border-[#eee8ff] bg-[#fbfaff] p-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h4 className="font-black">{ticket.subject}</h4>
-                    <p className="mt-1 line-clamp-2 text-sm font-semibold leading-6 text-[#756894]">
-                      {ticket.latestMessage}
-                    </p>
+            {tickets.map((ticket) => {
+              const unreadCount = Math.max(
+                0,
+                ticket.adminMessageCount - (readState[String(ticket.id)] || 0),
+              );
+              return (
+                <button
+                  key={ticket.id}
+                  onClick={() => openTicket(ticket)}
+                  className="w-full rounded-lg border border-[#eee8ff] bg-[#fbfaff] p-4 text-left transition hover:border-[#ffcb05]/70 hover:bg-[#fffbea]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="font-black">{ticket.subject}</h4>
+                      <p className="mt-1 line-clamp-2 text-sm font-semibold leading-6 text-[#756894]">
+                        {ticket.latestMessage}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {unreadCount > 0 && (
+                        <span className="grid min-h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-black leading-none text-white">
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                      )}
+                      <span className="rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
+                        {statusLabel(ticket.status)}
+                      </span>
+                    </div>
                   </div>
-                  <span className="rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
-                    {statusLabel(ticket.status)}
-                  </span>
+                  <div className="mt-3 flex items-center justify-between text-xs font-bold text-[#8b829d]">
+                    <span>{formatSupportTime(ticket.updatedAt)}</span>
+                    <span className="inline-flex items-center gap-1 text-[#21104a]">
+                      Phản hồi <ChevronRight className="h-4 w-4" />
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function SupportThread({
+  ticket,
+  messages,
+  reply,
+  isLoading,
+  isSending,
+  error,
+  setOpen,
+  setView,
+  setReply,
+  handleReply,
+}: {
+  ticket: SupportTicket;
+  messages: SupportMessage[];
+  reply: string;
+  isLoading: boolean;
+  isSending: boolean;
+  error: string;
+  setOpen: (open: boolean) => void;
+  setView: (view: SupportView) => void;
+  setReply: (reply: string) => void;
+  handleReply: () => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between border-b border-[#eee8ff] px-4 py-3">
+        <button
+          onClick={() => setView("messages")}
+          className="rounded-full p-1 text-[#756894] transition hover:bg-[#f7f4ff] hover:text-[#21104a]"
+          aria-label="Quay lại tin nhắn"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <div className="min-w-0 text-center">
+          <h2 className="truncate text-lg font-black">{ticket.subject}</h2>
+          <p className="text-xs font-bold text-[#756894]">
+            {statusLabel(ticket.status)} - {formatSupportTime(ticket.updatedAt)}
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen(false)}
+          className="rounded-full p-1 text-[#756894] transition hover:bg-[#f7f4ff] hover:text-[#21104a]"
+          aria-label="Đóng hỗ trợ"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="space-y-3 px-4 py-4">
+        {error && (
+          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        )}
+
+        {isLoading ? (
+          <p className="py-10 text-center text-sm font-bold text-[#756894]">
+            Đang tải hội thoại...
+          </p>
+        ) : (
+          <div className="max-h-[330px] space-y-3 overflow-y-auto rounded-xl bg-[#f7f4ff] p-3 scrollbar-primary">
+            {messages.map((item) => (
+              <div
+                key={item.id}
+                className={`flex ${
+                  item.sender === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                <div
+                  className={`max-w-[82%] rounded-xl px-3 py-2 text-sm font-semibold leading-6 ${
+                    item.sender === "user"
+                      ? "bg-[#21104a] text-white"
+                      : "border border-[#eee8ff] bg-white text-[#21104a]"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{item.message}</p>
+                  <p
+                    className={`mt-2 text-xs ${
+                      item.sender === "user"
+                        ? "text-white/65"
+                        : "text-[#756894]"
+                    }`}
+                  >
+                    {item.sender === "user" ? "Bạn" : "Admin"} -{" "}
+                    {formatSupportTime(item.createdAt)}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
         )}
+
+        <label className="block">
+          <span className="text-xs font-black uppercase text-[#756894]">
+            Phản hồi admin
+          </span>
+          <textarea
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+            rows={3}
+            placeholder="Nhập phản hồi của bạn..."
+            className="mt-2 w-full resize-none rounded-lg border border-[#eee8ff] bg-[#fbfaff] px-4 py-2.5 text-sm font-semibold leading-6 outline-none focus:border-[#ffcb05]"
+          />
+        </label>
+
+        <button
+          onClick={handleReply}
+          disabled={isSending || reply.trim().length < 2}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#ffcb05] px-5 py-3 font-black text-[#21104a] transition hover:bg-[#ffdc45] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isSending ? "Đang gửi..." : "Gửi phản hồi"}
+          <Send className="h-4 w-4" />
+        </button>
       </div>
     </>
   );
@@ -649,9 +943,11 @@ function SupportHeader({
 function SupportBottomNav({
   view,
   setView,
+  unreadCount,
 }: {
   view: SupportView;
   setView: (view: SupportView) => void;
+  unreadCount: number;
 }) {
   const items: Array<{
     view: SupportView;
@@ -668,15 +964,21 @@ function SupportBottomNav({
       {items.map((item) => {
         const Icon = item.icon;
         const active =
-          view === item.view || (view === "chat" && item.view === "messages");
+          view === item.view ||
+          ((view === "chat" || view === "thread") && item.view === "messages");
         return (
           <button
             key={item.view}
             onClick={() => setView(item.view)}
-            className={`flex flex-col items-center gap-1 text-sm font-black transition ${
+            className={`relative flex flex-col items-center gap-1 text-sm font-black transition ${
               active ? "text-[#21104a]" : "text-[#8b829d]"
             }`}
           >
+            {item.view === "messages" && unreadCount > 0 && (
+              <span className="absolute right-7 top-0 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-black leading-none text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
             <Icon className={`h-5 w-5 ${active ? "text-[#ffcb05]" : ""}`} />
             {item.label}
           </button>

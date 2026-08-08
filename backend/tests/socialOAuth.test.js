@@ -11,6 +11,8 @@ const {
 } = require("../services/facebookOAuthService");
 const {
   createSocialIdentityError,
+  createSocialRegistrationUrl,
+  verifySocialRegistrationToken,
 } = require("../services/socialIdentityService");
 const { hashOAuthValue } = require("../services/oauthStateService");
 
@@ -97,4 +99,32 @@ test("social identity errors preserve the public OAuth error code", () => {
   );
   assert.equal(error.oauthCode, "facebook_email_exists");
   assert.equal(error.statusCode, 409);
+});
+
+test("unknown Google login can redirect to register with verified profile details", () => {
+  const url = new URL(
+    createSocialRegistrationUrl("https://voice.example.com", {
+      provider: "google",
+      providerUserId: "google-user-123",
+      email: "  LINH@example.com ",
+      firstName: " Linh ",
+      lastName: " Tran ",
+      from: "/upload",
+    }),
+  );
+
+  assert.equal(url.origin, "https://voice.example.com");
+  assert.equal(url.pathname, "/register");
+  assert.equal(url.searchParams.get("provider"), "google");
+  assert.equal(url.searchParams.get("email"), "linh@example.com");
+  assert.equal(url.searchParams.get("firstName"), "Linh");
+  assert.equal(url.searchParams.get("lastName"), "Tran");
+  assert.equal(url.searchParams.get("from"), "/upload");
+
+  const profile = verifySocialRegistrationToken(
+    url.searchParams.get("oauthToken"),
+  );
+  assert.equal(profile.provider, "google");
+  assert.equal(profile.providerUserId, "google-user-123");
+  assert.equal(profile.email, "linh@example.com");
 });
