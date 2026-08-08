@@ -18,6 +18,15 @@ export async function loginAdmin(email: string, password: string) {
   return session;
 }
 
+export async function exchangeCurrentSessionForAdmin(authToken: string) {
+  const session = await adminPublicRequest<AdminSession>("/api/admin/auth/sso", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  saveAdminSession(session);
+  return session;
+}
+
 export function logoutAdmin() {
   clearAdminSession();
 }
@@ -36,4 +45,8 @@ export function canManageSettings(role: AdminRole) {
 
 export function canReplySupport(role: AdminRole) {
   return role === "admin" || role === "support";
+}
+
+export function canUpdateSupportStatus(role: AdminRole) {
+  return role === "admin";
 }

@@ -16,7 +16,12 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
-import { logoutAdmin, readAdminSession } from "@/lib/admin/admin-auth";
+import { useAuth } from "@/context/AuthContext";
+import {
+  exchangeCurrentSessionForAdmin,
+  logoutAdmin,
+  readAdminSession,
+} from "@/lib/admin/admin-auth";
 import {
   jobStatusLabel,
   roleLabel,
@@ -69,29 +74,57 @@ export function AdminRouteShell() {
 
 function AdminGuard({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const { isLoading, token } = useAuth();
   const [session, setSession] = useState<AdminSession | null>(() =>
     readAdminSession(),
   );
 
   useEffect(() => {
-    const current = readAdminSession();
-    if (current?.user.role === "user") {
-      logoutAdmin();
-      setSession(null);
-      void navigate({
-        to: "/admin/login",
-        search: { from: window.location.pathname },
-      });
-      return;
+    let cancelled = false;
+
+    async function ensureAdminSession() {
+      const current = readAdminSession();
+      if (current?.user.role === "user") {
+        logoutAdmin();
+        setSession(null);
+        void navigate({
+          to: "/admin/login",
+          search: { from: window.location.pathname },
+        });
+        return;
+      }
+      if (current) {
+        setSession(current);
+        return;
+      }
+      if (isLoading) return;
+      if (!token) {
+        void navigate({
+          to: "/admin/login",
+          search: { from: window.location.pathname },
+        });
+        return;
+      }
+
+      try {
+        const nextSession = await exchangeCurrentSessionForAdmin(token);
+        if (!cancelled) setSession(nextSession);
+      } catch {
+        if (cancelled) return;
+        logoutAdmin();
+        setSession(null);
+        void navigate({
+          to: "/admin/login",
+          search: { from: window.location.pathname },
+        });
+      }
     }
-    setSession(current);
-    if (!current) {
-      void navigate({
-        to: "/admin/login",
-        search: { from: window.location.pathname },
-      });
-    }
-  }, [navigate]);
+
+    void ensureAdminSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, navigate, token]);
 
   if (!session) {
     return (

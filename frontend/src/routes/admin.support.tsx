@@ -8,7 +8,7 @@ import {
   PageState,
   Pager,
 } from "@/components/admin/admin-ui";
-import { canMutate, canReplySupport } from "@/lib/admin/admin-auth";
+import { canReplySupport, canUpdateSupportStatus } from "@/lib/admin/admin-auth";
 import { formatDateTime } from "@/lib/admin/formatters";
 import {
   getSupportMessages,
@@ -58,7 +58,9 @@ const supportStatusTone: Record<SupportTicketStatus, string> = {
 
 function AdminSupportPage() {
   const session = useAdminSession();
-  const mayMutate = session ? canMutate(session.user.role) : false;
+  const mayUpdateStatus = session
+    ? canUpdateSupportStatus(session.user.role)
+    : false;
   const mayReply = session ? canReplySupport(session.user.role) : false;
   const [rows, setRows] =
     useState<PaginatedResponse<AdminSupportTicket> | null>(null);
@@ -313,7 +315,7 @@ function AdminSupportPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={selected.status}
-                  disabled={!mayMutate || saving}
+                  disabled={!mayUpdateStatus || saving}
                   onChange={(e) =>
                     void handleStatusChange(
                       e.target.value as SupportTicketStatus,

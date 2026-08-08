@@ -19,48 +19,26 @@ const {
   normalizePlan: normalizeUserPlan,
 } = require("../services/quotaService");
 const {
-  ADMIN_ROLES,
+  canMutateAdminRole,
+  canReplySupportRole,
+  canUpdateSupportStatusRole,
+  createAdminSession,
   getEffectiveAdminRole,
   isAdminAccountActive,
+  normalizeAdminUser,
 } = require("../services/adminAccess");
+const { requireAuth } = require("../middleware/auth");
 const { loginLimiter } = require("../middleware/security");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
-const ADMIN_TOKEN_TTL = "8h";
 
 const ASSIGNABLE_ADMIN_ROLES = new Set(["admin", "support", "user"]);
-const MUTATION_ROLES = new Set(["super_admin", "admin"]);
-const SUPPORT_MUTATION_ROLES = new Set(["admin", "support"]);
 const SUPPORT_STATUSES = new Set(["open", "pending", "resolved", "closed"]);
-
-function generateToken(user) {
-  const adminRole = getEffectiveAdminRole(user);
-  return jwt.sign(
-    {
-      id: user.id,
-      email: user.email,
-      adminRole,
-      scope: "admin",
-    },
-    JWT_SECRET,
-    { expiresIn: ADMIN_TOKEN_TTL },
-  );
-}
 
 function readBearerToken(req) {
   const auth = req.headers.authorization || "";
   return auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
-}
-
-function normalizeAdminUser(row) {
-  const role = getEffectiveAdminRole(row) || "viewer";
-  return {
-    id: String(row.id),
-    name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
-    email: row.email,
-    role,
-  };
 }
 
 async function requireAdmin(req, res, next) {
@@ -109,7 +87,7 @@ async function requireAdmin(req, res, next) {
 }
 
 function requireAdminManagement(req, res, next) {
-  if (!MUTATION_ROLES.has(req.admin.admin_role)) {
+  if (!canMutateAdminRole(req.admin.admin_role)) {
     return res
       .status(403)
       .json({ error: "Bạn không có quyền truy cập mục quản trị này" });
@@ -118,7 +96,7 @@ function requireAdminManagement(req, res, next) {
 }
 
 function requireMutation(req, res, next) {
-  if (!MUTATION_ROLES.has(req.admin.admin_role)) {
+  if (!canMutateAdminRole(req.admin.admin_role)) {
     return res
       .status(403)
       .json({ error: "Bạn không có quyền thực hiện thao tác này" });
@@ -127,7 +105,7 @@ function requireMutation(req, res, next) {
 }
 
 function requireSupportMutation(req, res, next) {
-  if (!SUPPORT_MUTATION_ROLES.has(req.admin.admin_role)) {
+  if (!canReplySupportRole(req.admin.admin_role)) {
     return res
       .status(403)
       .json({ error: "Bạn không có quyền phản hồi hỗ trợ" });
@@ -354,16 +332,34 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [
       user.id,
     ]);
-    const sessionUser = { ...user, admin_role: adminRole };
-    const session = {
-      token: generateToken(sessionUser),
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-      user: normalizeAdminUser(sessionUser),
-    };
-    return res.json(session);
+    return res.json(createAdminSession({ ...user, admin_role: adminRole }));
   } catch (error) {
     console.error("Admin login error:", error);
     return res.status(500).json({ error: "Không đăng nhập được admin" });
+  }
+});
+
+router.post("/auth/sso", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, first_name, last_name, email, admin_role, status,
+              role, account_status
+       FROM users WHERE id = $1`,
+      [req.user.id],
+    );
+    const user = rows[0];
+    const adminRole = getEffectiveAdminRole(user);
+    if (!user || !isAdminAccountActive(user) || !adminRole) {
+      return res.status(403).json({ error: "Bạn không có quyền truy cập CMS" });
+    }
+
+    await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [
+      user.id,
+    ]);
+    return res.json(createAdminSession({ ...user, admin_role: adminRole }));
+  } catch (error) {
+    console.error("Admin SSO error:", error);
+    return res.status(500).json({ error: "Không đăng nhập được CMS" });
   }
 });
 
@@ -1259,7 +1255,14 @@ router.post(
 router.patch(
   "/support/tickets/:id/status",
   requireAdmin,
-  requireMutation,
+  (req, res, next) => {
+    if (!canUpdateSupportStatusRole(req.admin.admin_role)) {
+      return res
+        .status(403)
+        .json({ error: "Bạn không có quyền cập nhật trạng thái hỗ trợ" });
+    }
+    next();
+  },
   async (req, res) => {
     const ticketId = Number(req.params.id);
     const status = String(req.body.status || "").trim();

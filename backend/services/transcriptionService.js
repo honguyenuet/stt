@@ -643,6 +643,15 @@ function getProviderKeySource() {
     : "cms";
 }
 
+function getEnvApiKey(provider) {
+  if (provider === "vbee") {
+    return process.env.VBEE_API_KEY || process.env.AIMP_API_KEY;
+  }
+  if (provider === "sonix") return process.env.SONIX_API_KEY;
+  if (provider === "deepgram") return process.env.DEEPGRAM_API_KEY;
+  return process.env.ASSEMBLYAI_API_KEY;
+}
+
 function resolveProviderApiKey(provider, encryptedCmsKey) {
   const cmsKey = decryptProviderSecret(encryptedCmsKey);
   const envKey = getEnvApiKey(provider);

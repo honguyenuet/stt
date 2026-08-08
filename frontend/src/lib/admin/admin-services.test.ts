@@ -5,7 +5,13 @@ import {
   formatFileSize,
   validateQuotaAdjustment,
 } from "./formatters";
-import { loginAdmin, readAdminSession } from "./admin-auth";
+import {
+  canReplySupport,
+  canUpdateSupportStatus,
+  exchangeCurrentSessionForAdmin,
+  loginAdmin,
+  readAdminSession,
+} from "./admin-auth";
 import {
   adjustUserQuota,
   deleteUserAccount,
@@ -95,6 +101,42 @@ describe("admin utilities", () => {
 
     await loginAdmin("superadmin@vbee.local", "admin123");
     expect(readAdminSession()?.user.role).toBe("admin");
+  });
+
+  it("exchanges the current app token for an admin session", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          token: "cms-token",
+          expiresAt: Date.now() + 60_000,
+          user: {
+            id: "2",
+            name: "Support Agent",
+            email: "support@vbee.local",
+            role: "support",
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await exchangeCurrentSessionForAdmin("app-token");
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect((init as RequestInit).method).toBe("POST");
+    expect(
+      new Headers((init as RequestInit).headers).get("Authorization"),
+    ).toBe("Bearer app-token");
+    expect(readAdminSession()?.user.role).toBe("support");
+  });
+
+  it("allows support replies without allowing support status changes", () => {
+    expect(canReplySupport("support")).toBe(true);
+    expect(canReplySupport("admin")).toBe(true);
+    expect(canReplySupport("viewer")).toBe(false);
+
+    expect(canUpdateSupportStatus("support")).toBe(false);
+    expect(canUpdateSupportStatus("admin")).toBe(true);
   });
 });
 
