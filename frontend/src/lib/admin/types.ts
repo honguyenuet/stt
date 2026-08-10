@@ -1,5 +1,10 @@
-export type AdminRole = "admin" | "support" | "viewer" | "user";
-export type AssignableAdminRole = Exclude<AdminRole, "viewer">;
+export type AdminRole =
+  | "super_admin"
+  | "admin"
+  | "support"
+  | "viewer"
+  | "user";
+export type AssignableAdminRole = Exclude<AdminRole, "user">;
 export type UserStatus = "active" | "suspended" | "deleted";
 export type ManagedUserPlan = "free" | "standard" | "special" | "business";
 export type BillingCycle = "monthly" | "yearly";

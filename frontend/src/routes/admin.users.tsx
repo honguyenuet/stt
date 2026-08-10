@@ -25,8 +25,8 @@ import {
   updateUserStatus,
 } from "@/lib/admin/users-service";
 import type {
-  AdminRole,
   AdminUser,
+  AssignableAdminRole,
   PaginatedResponse,
   UserStatus,
 } from "@/lib/admin/types";
@@ -35,10 +35,11 @@ export const Route = createFileRoute("/admin/users")({
   component: AdminUsersPage,
 });
 
-const roles: Array<AdminRole | "all"> = [
+const roles: Array<AssignableAdminRole | "all"> = [
   "all",
   "super_admin",
   "admin",
+  "support",
   "viewer",
 ];
 const statuses: Array<UserStatus | "all"> = [
@@ -52,7 +53,7 @@ function AdminUsersPage() {
   const session = useAdminSession();
   const [rows, setRows] = useState<PaginatedResponse<AdminUser> | null>(null);
   const [search, setSearch] = useState("");
-  const [role, setRole] = useState<AdminRole | "all">("all");
+  const [role, setRole] = useState<AssignableAdminRole | "all">("all");
   const [status, setStatus] = useState<UserStatus | "all">("all");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AdminUser | null>(null);
@@ -124,7 +125,7 @@ function AdminUsersPage() {
           <select
             value={role}
             onChange={(e) => {
-              setRole(e.target.value as AdminRole | "all");
+              setRole(e.target.value as AssignableAdminRole | "all");
               setPage(1);
             }}
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
@@ -309,13 +310,17 @@ function AdminUsersPage() {
                   void mutate(
                     "role",
                     () =>
-                      updateUserRole(selected.id, e.target.value as AdminRole),
+                      updateUserRole(
+                        selected.id,
+                        e.target.value as AssignableAdminRole,
+                      ),
                     "Đã cập nhật role",
                   )
                 }
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
               >
                 <option value="viewer">Chỉ xem</option>
+                <option value="support">Hỗ trợ viên</option>
                 <option value="admin">Quản trị viên</option>
                 <option value="super_admin">Quản trị cao nhất</option>
               </select>

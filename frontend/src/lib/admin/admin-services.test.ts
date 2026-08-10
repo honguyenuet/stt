@@ -3,6 +3,7 @@ import { clearAdminSession, saveAdminSession } from "./api-client";
 import {
   formatDuration,
   formatFileSize,
+  roleLabel,
   validateQuotaAdjustment,
 } from "./formatters";
 import {
@@ -67,6 +68,13 @@ describe("admin utilities", () => {
   it("formats duration and file size consistently", () => {
     expect(formatDuration(3661)).toBe("01:01:01");
     expect(formatFileSize(1_572_864)).toBe("1.5 MB");
+  });
+
+  it("provides a visible label for every CMS role", () => {
+    expect(roleLabel.super_admin).toBe("Quản trị cao nhất");
+    expect(roleLabel.admin).toBe("Quản trị viên");
+    expect(roleLabel.support).toBe("Hỗ trợ viên");
+    expect(roleLabel.viewer).toBe("Chỉ xem");
   });
 
   it("validates quota adjustment and prevents negative quota", () => {

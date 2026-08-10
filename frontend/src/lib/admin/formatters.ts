@@ -55,6 +55,7 @@ export const userStatusLabel: Record<UserStatus, string> = {
 };
 
 export const roleLabel: Record<AdminRole, string> = {
+  super_admin: "Quản trị cao nhất",
   admin: "Quản trị viên",
   support: "Hỗ trợ viên",
   viewer: "Chỉ xem",
