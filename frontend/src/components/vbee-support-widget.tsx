@@ -627,7 +627,7 @@ function SupportMessages({
                           {unreadCount > 99 ? "99+" : unreadCount}
                         </span>
                       )}
-                      <span className="rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
+                      <span className="inline-flex whitespace-nowrap rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
                         {statusLabel(ticket.status)}
                       </span>
                     </div>

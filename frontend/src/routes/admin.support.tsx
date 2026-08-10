@@ -435,7 +435,7 @@ function AdminSupportPage() {
 function SupportStatusBadge({ status }: { status: SupportTicketStatus }) {
   return (
     <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${supportStatusTone[status]}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-black leading-none ${supportStatusTone[status]}`}
     >
       {supportStatusLabel[status]}
     </span>

@@ -397,7 +397,7 @@ export function StatusBadge({
         : storageStatusLabel[status as StorageStatus];
   return (
     <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${tone}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-black leading-none ${tone}`}
     >
       {label}
     </span>

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { StatusBadge } from "@/components/admin/admin-ui";
 import { clearAdminSession, saveAdminSession } from "./api-client";
 import {
   formatDuration,
@@ -75,6 +78,15 @@ describe("admin utilities", () => {
     expect(roleLabel.admin).toBe("Quản trị viên");
     expect(roleLabel.support).toBe("Hỗ trợ viên");
     expect(roleLabel.viewer).toBe("Chỉ xem");
+  });
+
+  it("keeps status badges on one horizontal line", () => {
+    const markup = renderToStaticMarkup(
+      createElement(StatusBadge, { status: "available" }),
+    );
+
+    expect(markup).toContain("whitespace-nowrap");
+    expect(markup).toContain("Có sẵn");
   });
 
   it("validates quota adjustment and prevents negative quota", () => {

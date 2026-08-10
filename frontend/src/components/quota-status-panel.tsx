@@ -151,7 +151,7 @@ export function QuotaStatusPanel({
   if (variant === "account") {
     return (
       <div className={`rounded-lg border border-[#e8decc] bg-white text-[#21104a] ${compact ? "p-3" : "p-4"}`}>
-        <span className={`inline-flex items-center gap-2 rounded-full border border-[#ffcb05]/45 bg-[#fff8d7] font-black ${compact ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm"}`}>
+        <span className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#ffcb05]/45 bg-[#fff8d7] font-black ${compact ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm"}`}>
           <Crown className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
           {formatPlanLabel(quota.plan)}
         </span>
