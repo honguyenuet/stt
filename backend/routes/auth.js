@@ -215,6 +215,15 @@ function executeProviderCallback({ provider, req, res, next, action }) {
   ).catch(next);
 }
 
+// Let the frontend hide OAuth options that cannot work on this deployment.
+router.get('/providers', (_req, res) => {
+  res.json({
+    google: Boolean(passportConfig.hasGoogleOAuth),
+    facebook: hasFacebookOAuth(),
+    apple: hasAppleOAuth(),
+  });
+});
+
 // GET /api/auth/google — khởi tạo OAuth với Google
 router.get('/google', oauthLimiter, (req, res, next) => {
   if (!passportConfig.hasGoogleOAuth) {
@@ -834,7 +843,7 @@ router.get('/me', requireAuth, (req, res) => {
   return res.json(normalizeUser(req.user));
 });
 
-// PATCH /api/auth/onboarding - hoàn tất thiết lập không gian làm việc lần đầu.
+// PATCH /api/auth/onboarding - hoàn tất thiết lập đăng nhập lần đầu.
 router.patch('/onboarding', requireAuth, async (req, res) => {
   try {
     const user = await completeOnboarding(pool, req.user.id, req.body || {});

@@ -54,7 +54,7 @@ const STEPS = [
     number: "01",
     icon: Link2,
     title: "Tạo và gửi liên kết giới thiệu",
-    text: "Sao chép liên kết riêng của bạn và gửi tới bạn bè, đồng đội hoặc khách hàng cần xử lý audio/video.",
+    text: "Sao chép liên kết riêng của bạn và gửi tới bạn bè, đồng đội hoặc khách hàng cần xử lý âm thanh hoặc nội dung nghe nhìn.",
   },
   {
     number: "02",
@@ -79,12 +79,12 @@ const FAQS = [
   {
     question: "Người được mời nhận được gì?",
     answer:
-      "Người mới nhận 30 phút dùng thử để upload, ghi âm hoặc dùng realtime.",
+      "Người mới nhận 30 phút dùng thử để tải tệp, ghi âm hoặc dùng Realtime.",
   },
   {
     question: "Khi nào thời lượng thưởng được cộng?",
     answer:
-      "100 phút được cộng cho người mời sau khi người được mời hoàn thành transcript đầu tiên. Thời lượng thưởng có hiệu lực 90 ngày.",
+      "100 phút được cộng cho người mời sau khi người được mời hoàn thành văn bản đầu tiên. Thời lượng thưởng có hiệu lực 90 ngày.",
   },
   {
     question: "Tôi xem lịch sử giới thiệu ở đâu?",
@@ -202,7 +202,7 @@ function ReferralPage() {
               Cùng nhau nhận thêm thời lượng sử dụng Vbee.
             </h1>
             <p className="mt-4 max-w-xl text-sm leading-7 text-white/74">
-              Gửi lời mời tới những người đang cần chuyển audio, video và cuộc họp thành văn bản. Khi họ bắt đầu cùng Vbee, bạn nhận thêm thời lượng cho công việc tiếp theo.
+              Gửi lời mời tới những người đang cần chuyển âm thanh, nội dung nghe nhìn và cuộc họp thành văn bản. Khi họ bắt đầu cùng Vbee, bạn nhận thêm thời lượng cho công việc tiếp theo.
             </p>
 
             {user ? (
@@ -317,15 +317,15 @@ function ReferralPage() {
             <Clock3 className="h-6 w-6 text-[#ffcb05]" />
             <p className="mt-5 text-xs font-black uppercase text-[#ffcb05]">Thưởng theo hành trình</p>
             <h2 className="mt-3 text-2xl font-black leading-tight">Cộng thêm thời lượng khi lời mời bắt đầu sử dụng.</h2>
-            <p className="mt-3 text-sm leading-7 text-white/70">Vbee ưu tiên phần thưởng có thể sử dụng ngay cho upload, ghi âm và chuyển đổi transcript.</p>
+            <p className="mt-3 text-sm leading-7 text-white/70">Vbee ưu tiên phần thưởng có thể sử dụng ngay để tải tệp, ghi âm và chuyển đổi văn bản.</p>
           </div>
           <div className="rounded-2xl border border-[#e8e1f5] bg-white p-6 md:p-7">
             <p className="text-xs font-black uppercase text-[#8a7100]">Quyền lợi chương trình</p>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <Benefit title="Người gửi" text="Nhận 100 phút sau transcript đầu tiên của người được mời." />
+              <Benefit title="Người gửi" text="Nhận 100 phút sau văn bản đầu tiên của người được mời." />
               <Benefit title="Người nhận" text="Bắt đầu với 30 phút dùng thử và các tính năng cốt lõi." />
               <Benefit title="Theo dõi rõ ràng" text="Xem mã giới thiệu và tiến độ lời mời ngay trong tài khoản." />
-              <Benefit title="Dùng cho công việc" text="Dùng phần thưởng cho audio, video, ghi âm và realtime." />
+              <Benefit title="Dùng cho công việc" text="Dùng phần thưởng cho âm thanh, nội dung nghe nhìn, ghi âm và Realtime." />
             </div>
           </div>
         </div>

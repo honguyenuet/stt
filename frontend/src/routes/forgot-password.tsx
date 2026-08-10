@@ -36,7 +36,7 @@ function ForgotPasswordPage() {
         resetUrl?: string;
       };
       if (!response.ok) throw new Error(data.error || "Không gửi được yêu cầu");
-      setMessage(data.message || "Hãy kiểm tra email để đặt lại mật khẩu.");
+      setMessage(data.message || "Hãy kiểm tra thư điện tử để đặt lại mật khẩu.");
       setResetUrl(data.resetUrl || "");
     } catch (requestError) {
       setError(
@@ -66,7 +66,7 @@ function ForgotPasswordPage() {
           <div>
             <h1 className="text-2xl font-black">Quên mật khẩu</h1>
             <p className="mt-1 text-sm leading-6 text-[#756894]">
-              Nhập email đã đăng ký. Vbee sẽ gửi liên kết tạo mật khẩu mới.
+              Nhập thư điện tử đã đăng ký. Vbee sẽ gửi liên kết tạo mật khẩu mới.
             </p>
           </div>
         </div>
@@ -84,7 +84,7 @@ function ForgotPasswordPage() {
 
         <form onSubmit={(event) => void handleSubmit(event)} className="mt-5 space-y-4">
           <label className="block text-xs font-bold text-[#756894]">
-            Email đăng ký
+            Thư điện tử đăng ký
             <span className="relative mt-2 block">
               <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
               <input

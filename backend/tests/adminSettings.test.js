@@ -46,4 +46,18 @@ describe("admin settings", () => {
   test("keeps defaults when optional values are absent", () => {
     assert.deepEqual(normalizeAdminSettings({}), defaultAdminSettings());
   });
+
+  test("includes every format shown in the upload workspace by default", () => {
+    const formats = defaultAdminSettings().supported_formats;
+    assert.deepEqual(formats, [
+      "mp3",
+      "wav",
+      "m4a",
+      "ogg",
+      "flac",
+      "aac",
+      "mp4",
+      "webm",
+    ]);
+  });
 });

@@ -22,8 +22,12 @@ const {
   recordProviderSuccess,
 } = require("./providerCircuitBreaker");
 const { decryptProviderSecret } = require("./providerSecrets");
+const {
+  createAudioSelectionProfile,
+  createProviderRanking,
+} = require("./providerSelectionService");
 
-const ALLOWED_EXT = /\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i;
+const ALLOWED_EXT = /\.(aac|aiff|avi|flac|m4a|mkv|mov|mp3|mp4|mpeg|mpga|oga|ogg|opus|wav|webm|wma)$/i;
 const SUPPORTED_TRANSCRIPTION_PROVIDERS = [
   "vbee",
   "assemblyai",
@@ -476,6 +480,81 @@ function createProviderResultError(provider, audioMode) {
   return error;
 }
 
+function createMissingSpeakerLabelsError(provider) {
+  const error = createHttpError(
+    422,
+    `${provider} đã tạo được văn bản nhưng không trả về nhãn người nói.`,
+  );
+  error.code = "MISSING_SPEAKER_LABELS";
+  error.provider = provider;
+  error.providerStage = "speaker_validation";
+  error.providerFallbackEligible = true;
+  error.providerResultRejected = true;
+  error.retryable = false;
+  return error;
+}
+
+function normalizeSpeakerCount(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    String(value).trim().toLowerCase() === "auto"
+  ) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
+    throw createHttpError(400, "Số người nói phải là số nguyên từ 1 đến 10.");
+  }
+  return parsed;
+}
+
+function countSpeakerLabels(result) {
+  if (!Array.isArray(result?.words)) return 0;
+  return new Set(
+    result.words
+      .map((word) => word?.speaker)
+      .filter(
+        (speaker) =>
+          speaker !== undefined &&
+          speaker !== null &&
+          String(speaker).trim() !== "",
+      )
+      .map((speaker) => String(speaker)),
+  ).size;
+}
+
+function assertExpectedSpeakerCount(result, speakerCount, provider) {
+  const expected = normalizeSpeakerCount(speakerCount);
+  if (!expected) return;
+  const detected = countSpeakerLabels(result);
+  if (detected <= expected) return;
+
+  const error = createHttpError(
+    422,
+    `${provider} phát hiện ${detected} nhãn người nói, vượt quá ${expected} người đã chọn.`,
+  );
+  error.code = "SPEAKER_COUNT_MISMATCH";
+  error.provider = provider;
+  error.providerStage = "speaker_validation";
+  error.providerFallbackEligible = true;
+  error.providerResultRejected = true;
+  error.retryable = false;
+  throw error;
+}
+
+function hasSpeakerLabels(result) {
+  return Array.isArray(result?.words)
+    ? result.words.some(
+        (word) =>
+          word?.speaker !== undefined &&
+          word?.speaker !== null &&
+          String(word.speaker).trim() !== "",
+      )
+    : false;
+}
+
 function foldTranscriptForQuality(value) {
   return String(value || "")
     .normalize("NFD")
@@ -507,16 +586,48 @@ function getSuspiciousPromoPhrases(result) {
     .map(([code]) => code);
 }
 
+function normalizeTranscriptConfidence(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1
+    ? normalized
+    : null;
+}
+
+function getTranscriptConfidenceValues(result) {
+  const words = Array.isArray(result?.words) ? result.words : [];
+  return words
+    .map((word) => normalizeTranscriptConfidence(word?.confidence))
+    .filter((value) => value !== null);
+}
+
+function getAverageTranscriptConfidence(result) {
+  const confidenceValues = getTranscriptConfidenceValues(result);
+  return confidenceValues.length > 0
+    ? confidenceValues.reduce((sum, value) => sum + value, 0) /
+        confidenceValues.length
+    : null;
+}
+
+function getMinimumTranscriptConfidence() {
+  const configured = Number.parseFloat(
+    process.env.MIN_TRANSCRIPT_CONFIDENCE || "0.9",
+  );
+  return Number.isFinite(configured)
+    ? Math.min(1, Math.max(0, configured))
+    : 0.9;
+}
+
+function formatTranscriptConfidencePercent(value) {
+  const percent = Math.floor(Number(value) * 1000 + 1e-9) / 10;
+  const text = Number.isInteger(percent) ? String(percent) : percent.toFixed(1);
+  return text.replace(".", ",");
+}
+
 function getSongTranscriptQuality(result) {
   const words = Array.isArray(result?.words) ? result.words : [];
-  const confidenceValues = words
-    .map((word) => Number(word?.confidence))
-    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 1);
-  const averageConfidence =
-    confidenceValues.length > 0
-      ? confidenceValues.reduce((sum, value) => sum + value, 0) /
-        confidenceValues.length
-      : null;
+  const confidenceValues = getTranscriptConfidenceValues(result);
+  const averageConfidence = getAverageTranscriptConfidence(result);
   const durationSeconds = Number(result?.duration);
   const wordsPerMinute =
     Number.isFinite(durationSeconds) && durationSeconds > 0
@@ -543,13 +654,7 @@ function getSongTranscriptQuality(result) {
     timedWords.length > 0
       ? Math.max(...timedWords.map((word) => word.end)) / 1000
       : null;
-  const minimumConfidence = Math.min(
-    0.95,
-    Math.max(
-      0,
-      Number.parseFloat(process.env.SONG_MIN_TRANSCRIPT_CONFIDENCE || "0.7"),
-    ),
-  );
+  const minimumConfidence = getMinimumTranscriptConfidence();
   const minimumWordsPerMinute = Math.max(
     1,
     Number.parseFloat(process.env.SONG_MIN_WORDS_PER_MINUTE || "18"),
@@ -654,8 +759,15 @@ function getSongTranscriptQuality(result) {
     reasons.push("suspicious_promotional_hallucination");
   }
 
+  const blockingReasons = reasons.filter(
+    (reason) => reason === "low_confidence",
+  );
+  const diagnosticReasons = reasons.filter(
+    (reason) => reason !== "low_confidence",
+  );
+
   return {
-    acceptable: reasons.length === 0,
+    acceptable: blockingReasons.length === 0,
     averageConfidence,
     wordsPerMinute,
     lowConfidenceCount,
@@ -673,27 +785,33 @@ function getSongTranscriptQuality(result) {
     minimumTimelineCoverage,
     maximumTimestampOverrunSeconds,
     maximumWordDurationSeconds,
+    blockingReasons,
+    diagnosticReasons,
     reasons,
   };
 }
 
 function assertProviderResultQuality(result, audioMode) {
-  if (normalizeAudioMode(audioMode) !== "song") return;
-  const quality = getSongTranscriptQuality(result);
-  if (quality.acceptable) return;
-
-  const confidenceText =
-    quality.averageConfidence === null
-      ? ""
-      : ` (độ tin cậy ${Math.round(quality.averageConfidence * 100)}%)`;
-  const error = createProviderResultError(
-    result?.provider || "API",
-    audioMode,
-  );
-  error.code = "LOW_TRANSCRIPT_CONFIDENCE";
-  error.message = `Kết quả nhận dạng lời hát chưa đủ tin cậy${confidenceText}. Hệ thống đã loại kết quả này và thử API dự phòng để tránh trả về văn bản sai.`;
-  error.transcriptQuality = quality;
-  throw error;
+  const averageConfidence = getAverageTranscriptConfidence(result);
+  const minimumConfidence = getMinimumTranscriptConfidence();
+  if (
+    averageConfidence !== null &&
+    averageConfidence < minimumConfidence
+  ) {
+    const error = createProviderResultError(
+      result?.provider || "API",
+      audioMode,
+    );
+    error.code = "LOW_TRANSCRIPT_CONFIDENCE";
+    error.message = `Kết quả nhận dạng chỉ đạt ${formatTranscriptConfidencePercent(averageConfidence)}%, thấp hơn ngưỡng ${formatTranscriptConfidencePercent(minimumConfidence)}%. Hệ thống đã loại kết quả này và thử API dự phòng để tránh trả về văn bản sai.`;
+    error.transcriptQuality = {
+      acceptable: false,
+      averageConfidence,
+      minimumConfidence,
+      reasons: ["low_confidence"],
+    };
+    throw error;
+  }
 }
 
 async function prepareVbeeAudioForStt(file, filename) {
@@ -849,6 +967,9 @@ async function getCmsTranscriptionProviderConfigs() {
       routingMode: row.routing_mode || "auto",
       routingRules: row.routing_rules || {},
       healthStatus: row.health_status || "unknown",
+      successRate: Number(row.success_rate || 0),
+      avgLatencyMs: Number(row.avg_latency_ms || 0),
+      costPerMinuteUsd: Number(row.cost_per_minute_usd || 0),
       source: "cms",
     }));
   } catch (error) {
@@ -976,6 +1097,22 @@ function prioritizeProvidersForLanguage(providers, language, audioMode) {
     "assemblyai",
     ...providers.filter((provider) => provider !== "assemblyai"),
   ];
+}
+
+function prioritizeProvidersForSpeakerLabels(
+  providers,
+  speakerLabels,
+  _audioMode,
+) {
+  if (!speakerLabels) return providers;
+  const diarizationOrder = ["assemblyai", "deepgram", "sonix", "vbee"];
+  return [...providers].sort((left, right) => {
+    const leftIndex = diarizationOrder.indexOf(left);
+    const rightIndex = diarizationOrder.indexOf(right);
+    const leftRank = leftIndex === -1 ? diarizationOrder.length : leftIndex;
+    const rightRank = rightIndex === -1 ? diarizationOrder.length : rightIndex;
+    return leftRank - rightRank;
+  });
 }
 
 function applyCmsRoutingRules(
@@ -1614,6 +1751,11 @@ function normalizeVbeeWords(response) {
     );
     const speaker =
       utterance.speaker ?? utterance.speakerLabel ?? utterance.speaker_label;
+    const confidence = normalizeTranscriptConfidence(
+      utterance.confidence ??
+        utterance.confidenceScore ??
+        utterance.confidence_score,
+    );
     const text = String(utterance.text || "").trim();
     const start = Number.isFinite(startSeconds) ? startSeconds : 0;
     const end =
@@ -1630,6 +1772,7 @@ function normalizeVbeeWords(response) {
           start: Math.round(start * 1000),
           end: Math.round(end * 1000),
           speaker: normalizedSpeaker,
+          ...(confidence === null ? {} : { confidence }),
         },
       ];
     }
@@ -1640,6 +1783,7 @@ function normalizeVbeeWords(response) {
       start: Math.round((start + tokenDuration * index) * 1000),
       end: Math.round((start + tokenDuration * (index + 1)) * 1000),
       speaker: normalizedSpeaker,
+      ...(confidence === null ? {} : { confidence }),
     }));
   });
 }
@@ -2142,12 +2286,16 @@ function normalizeSonixWords(jsonTranscript) {
   return segments.flatMap((segment) => {
     const speaker = segment.speaker || null;
     const words = Array.isArray(segment.words) ? segment.words : [];
-    return words.map((word) => ({
-      text: word.text || "",
-      start: Math.round(Number(word.start_time || 0) * 1000),
-      end: Math.round(Number(word.end_time || word.start_time || 0) * 1000),
-      speaker,
-    }));
+    return words.map((word) => {
+      const confidence = normalizeTranscriptConfidence(word.confidence);
+      return {
+        text: word.text || "",
+        start: Math.round(Number(word.start_time || 0) * 1000),
+        end: Math.round(Number(word.end_time || word.start_time || 0) * 1000),
+        speaker,
+        ...(confidence === null ? {} : { confidence }),
+      };
+    });
   });
 }
 
@@ -2236,6 +2384,7 @@ function getAssemblySpeechModels() {
 function buildAssemblyTranscriptParams({
   file,
   speakerLabels,
+  speakerCount,
   language,
   audioMode,
   dictionaryKeywords = [],
@@ -2245,8 +2394,14 @@ function buildAssemblyTranscriptParams({
   const transcriptParams = {
     audio: file.buffer,
     speech_models: getAssemblySpeechModels(),
-    speaker_labels: Boolean(speakerLabels) && !isSongMode,
+    speaker_labels: Boolean(speakerLabels),
   };
+  const expectedSpeakerCount = speakerLabels
+    ? normalizeSpeakerCount(speakerCount)
+    : null;
+  if (expectedSpeakerCount) {
+    transcriptParams.speakers_expected = expectedSpeakerCount;
+  }
 
   if (selectedLanguage === "multi") {
     // Universal-2 supports automatic Vietnamese-English code switching.
@@ -2282,9 +2437,24 @@ function buildAssemblyTranscriptParams({
   return transcriptParams;
 }
 
+function normalizeAssemblyWords(transcript) {
+  const utterances = Array.isArray(transcript?.utterances)
+    ? transcript.utterances
+    : [];
+  const utteranceWords = utterances.flatMap((utterance) =>
+    (Array.isArray(utterance?.words) ? utterance.words : []).map((word) => ({
+      ...word,
+      speaker: word?.speaker ?? utterance?.speaker ?? null,
+    })),
+  );
+  if (utteranceWords.length > 0) return utteranceWords;
+  return Array.isArray(transcript?.words) ? transcript.words : [];
+}
+
 async function transcribeWithAssemblyAI({
   file,
   speakerLabels,
+  speakerCount,
   language,
   audioMode,
   dictionaryKeywords,
@@ -2295,6 +2465,7 @@ async function transcribeWithAssemblyAI({
   const transcriptParams = buildAssemblyTranscriptParams({
     file,
     speakerLabels,
+    speakerCount,
     language,
     audioMode,
     dictionaryKeywords,
@@ -2386,7 +2557,7 @@ async function transcribeWithAssemblyAI({
     providerId: transcript.id || null,
     duration: transcript.audio_duration || null,
     text,
-    words: transcript.words || [],
+    words: normalizeAssemblyWords(transcript),
     detectedLanguage,
     translation: translatedText
       ? {
@@ -2464,7 +2635,9 @@ function createProvidersExhaustedError({
       (entry) => entry.error?.providerResultRejected,
     );
     message =
-      rejected?.error?.code === "LOW_TRANSCRIPT_CONFIDENCE"
+      rejected?.error?.code === "LOW_TRANSCRIPT_CONFIDENCE" ||
+      rejected?.error?.code === "MISSING_SPEAKER_LABELS" ||
+      rejected?.error?.code === "SPEAKER_COUNT_MISMATCH"
         ? rejected.error.message
         : normalizeAudioMode(audioMode) === "song"
           ? "Các API chuyển đổi đã được thử nhưng chưa phát hiện đủ lời hát để xuất văn bản. Hãy thử bản có vocal rõ hơn hoặc karaoke/acapella."
@@ -2492,6 +2665,7 @@ function createProvidersExhaustedError({
 async function transcribeAudio({
   file,
   speakerLabels,
+  speakerCount,
   filename,
   language,
   audioMode = "speech",
@@ -2507,18 +2681,55 @@ async function transcribeAudio({
       : { file, applied: false, method: null, warning: null };
   const providerFile = preprocessing.file;
   const providerFilename = providerFile.originalname || filename;
+  const providerCustomData = { ...providerMetadata };
+  delete providerCustomData.audioProfile;
   const providerAttempts = [];
   const providerErrors = [];
   const runtimePlan = await getTranscriptionRuntimePlan();
-  const providers = applyCmsRoutingRules(
-    prioritizeProvidersForLanguage(
-      runtimePlan.providers,
+  const baselineProviders = prioritizeProvidersForSpeakerLabels(
+    applyCmsRoutingRules(
+      prioritizeProvidersForLanguage(
+        runtimePlan.providers,
+        language,
+        normalizedAudioMode,
+      ),
+      runtimePlan.configs,
       language,
       normalizedAudioMode,
     ),
-    runtimePlan.configs,
-    language,
+    speakerLabels,
     normalizedAudioMode,
+  );
+  const selectionProfile = createAudioSelectionProfile({
+    language,
+    audioMode: normalizedAudioMode,
+    speakerLabels,
+    speakerCount,
+    translateTo,
+    filename: providerFilename,
+    fileSizeBytes: Number(file?.size || file?.buffer?.length || 0),
+    durationSeconds: providerMetadata.audioProfile?.durationSeconds,
+  });
+  const automaticallySelectableProviders = baselineProviders.filter(
+    (provider) =>
+      hasConfiguredProviderSecret(runtimePlan.configs.get(provider)?.apiKey) ||
+      isTranscriptionProviderConfigured(provider),
+  );
+  const automaticCandidates = automaticallySelectableProviders.length
+    ? automaticallySelectableProviders
+    : baselineProviders;
+  const providerPreference = getTranscriptionProviderPreference();
+  const providerRanking = createProviderRanking({
+    providerPreference,
+    configuredProviders: runtimePlan.providers,
+    autoProviders: automaticCandidates,
+    configs: runtimePlan.configs,
+    profile: selectionProfile,
+    failoverEnabled: isProviderFailoverEnabled(),
+  });
+  const providers = providerRanking.map(({ provider }) => provider);
+  const selectionByProvider = new Map(
+    providerRanking.map((selection) => [selection.provider, selection]),
   );
 
   const runProvider = async (provider) => {
@@ -2537,7 +2748,7 @@ async function transcribeAudio({
         filename: providerFilename,
         language,
         dictionaryKeywords,
-        customData: providerMetadata,
+        customData: providerCustomData,
       });
     }
     if (provider === "deepgram") {
@@ -2553,6 +2764,7 @@ async function transcribeAudio({
     return transcribeWithAssemblyAI({
       file: providerFile,
       speakerLabels,
+      speakerCount,
       language,
       audioMode: normalizedAudioMode,
       dictionaryKeywords,
@@ -2562,6 +2774,7 @@ async function transcribeAudio({
 
   for (let index = 0; index < providers.length; index += 1) {
     const provider = providers[index];
+    const selection = selectionByProvider.get(provider);
     const attemptedAt = Date.now();
     try {
       const providerConfig = runtimePlan.configs.get(provider) || {
@@ -2577,11 +2790,24 @@ async function transcribeAudio({
               throw createProviderResultError(provider, normalizedAudioMode);
             }
             assertProviderResultQuality(providerResult, normalizedAudioMode);
+            if (speakerLabels && !hasSpeakerLabels(providerResult)) {
+              throw createMissingSpeakerLabelsError(provider);
+            }
+            if (speakerLabels) {
+              assertExpectedSpeakerCount(
+                providerResult,
+                speakerCount,
+                provider,
+              );
+            }
             return providerResult;
           }),
       );
       providerAttempts.push({
         provider,
+        selectionRank: selection.rank,
+        selectionScore: selection.score,
+        selectionReasons: selection.reasons,
         status: "success",
         retryCount: Number(result?.providerRetryCount || 0),
         durationMs: Date.now() - attemptedAt,
@@ -2597,16 +2823,19 @@ async function transcribeAudio({
     } catch (error) {
       providerAttempts.push({
         provider,
+        selectionRank: selection.rank,
+        selectionScore: selection.score,
+        selectionReasons: selection.reasons,
         status:
           error.providerConfiguration || error.providerCircuitOpen
             ? "skipped"
             : "failed",
         errorCode: getProviderErrorCode(error),
         httpStatus: getProviderErrorStatus(error),
-          retryCount: Number(error.providerRetryCount || 0),
-          durationMs: Date.now() - attemptedAt,
-          stage: error.providerStage || null,
-        });
+        retryCount: Number(error.providerRetryCount || 0),
+        durationMs: Date.now() - attemptedAt,
+        stage: error.providerStage || null,
+      });
       providerErrors.push({
         provider,
         status:
@@ -2633,6 +2862,7 @@ async function transcribeFile({
   userId,
   file,
   speakerLabels = false,
+  speakerCount = null,
   source = "upload",
   language = "auto",
   audioMode = "speech",
@@ -2646,6 +2876,9 @@ async function transcribeFile({
   if (!ALLOWED_EXT.test(file.originalname || "")) {
     throw createHttpError(400, "Định dạng file không được hỗ trợ");
   }
+  const expectedSpeakerCount = speakerLabels
+    ? normalizeSpeakerCount(speakerCount)
+    : null;
 
   const filename = normalizeFilename(file.originalname);
   const startedAt = Date.now();
@@ -2654,6 +2887,7 @@ async function transcribeFile({
   const result = await transcribeAudio({
     file,
     speakerLabels,
+    speakerCount: expectedSpeakerCount,
     filename,
     language: sourceLanguage,
     audioMode,
@@ -2708,6 +2942,7 @@ async function transcribeFile({
                     transcribeWithAssemblyAI({
                       file,
                       speakerLabels,
+                      speakerCount: expectedSpeakerCount,
                       language: sourceLanguage,
                       audioMode: normalizeAudioMode(audioMode),
                       dictionaryKeywords,
@@ -2851,13 +3086,18 @@ module.exports = {
   UPLOADS_DIR,
   annotateProviderError,
   applyCmsRoutingRules,
+  assertExpectedSpeakerCount,
   assertProviderResultQuality,
   createHttpError,
   createProviderResultError,
+  createMissingSpeakerLabelsError,
   createProvidersExhaustedError,
   getSongTranscriptQuality,
   getSuspiciousPromoPhrases,
   buildAssemblyTranscriptParams,
+  countSpeakerLabels,
+  normalizeAssemblyWords,
+  normalizeSpeakerCount,
   getTranscriptionProvider,
   getTranscriptionProviderChain,
   getCmsTranscriptionProviderConfigs,
@@ -2868,11 +3108,14 @@ module.exports = {
   createApproximateTimedWords,
   getWavDurationSeconds,
   normalizeVbeeWords,
+  normalizeSonixWords,
   splitVbeeWavIntoChunks,
   usesOpenAiCompatibleVbeeApi,
   isProviderFallbackEligible,
   isTranscriptionProviderConfigured,
   prioritizeProvidersForLanguage,
+  prioritizeProvidersForSpeakerLabels,
+  hasSpeakerLabels,
   assertTranscriptionProviderReady,
   probeMediaFile,
   resolveStoredAudioPath,

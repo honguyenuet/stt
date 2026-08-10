@@ -18,7 +18,15 @@ describe("CMS upload policy", () => {
   test("falls back to safe media defaults when the CMS list is empty", () => {
     const formats = normalizeAllowedFormats(["exe"]);
 
-    assert.equal(formats.has("mp3"), true);
-    assert.equal(formats.has("exe"), false);
+    assert.deepEqual([...formats], [
+      "mp3",
+      "wav",
+      "m4a",
+      "ogg",
+      "flac",
+      "aac",
+      "mp4",
+      "webm",
+    ]);
   });
 });

@@ -22,15 +22,59 @@ function makeWords(count, confidence, durationSeconds = 120) {
   }));
 }
 
-test("high confidence song transcripts pass quality validation", () => {
+function withMinimumConfidence(value, callback) {
+  const previous = process.env.MIN_TRANSCRIPT_CONFIDENCE;
+  process.env.MIN_TRANSCRIPT_CONFIDENCE = value;
+  try {
+    callback();
+  } finally {
+    if (previous === undefined) delete process.env.MIN_TRANSCRIPT_CONFIDENCE;
+    else process.env.MIN_TRANSCRIPT_CONFIDENCE = previous;
+  }
+}
+
+test("song transcripts at 90 percent confidence pass quality validation", () => {
   const result = {
     provider: "assemblyai",
     duration: 120,
-    words: makeWords(120, 0.92),
+    words: makeWords(120, 0.9),
   };
 
-  assert.equal(getSongTranscriptQuality(result).acceptable, true);
-  assert.doesNotThrow(() => assertProviderResultQuality(result, "song"));
+  withMinimumConfidence("0.9", () => {
+    assert.equal(getSongTranscriptQuality(result).acceptable, true);
+    assert.doesNotThrow(() => assertProviderResultQuality(result, "song"));
+  });
+});
+
+test("song transcripts at 93 percent are not blocked by secondary diagnostics", () => {
+  const result = {
+    provider: "deepgram",
+    duration: 240,
+    words: makeWords(20, 0.93, 240),
+  };
+
+  withMinimumConfidence("0.9", () => {
+    const quality = getSongTranscriptQuality(result);
+    assert.ok(quality.reasons.includes("insufficient_lyrics"));
+    assert.doesNotThrow(() => assertProviderResultQuality(result, "song"));
+  });
+});
+
+test("song transcripts below 90 percent confidence are rejected", () => {
+  const result = {
+    provider: "assemblyai",
+    duration: 120,
+    words: makeWords(120, 0.899),
+  };
+
+  withMinimumConfidence("0.9", () => {
+    assert.throws(
+      () => assertProviderResultQuality(result, "song"),
+      (error) =>
+        error.code === "LOW_TRANSCRIPT_CONFIDENCE" &&
+        /89,9%.*90%/.test(error.message),
+    );
+  });
 });
 
 test("low confidence song transcripts are rejected", () => {
@@ -49,7 +93,7 @@ test("low confidence song transcripts are rejected", () => {
   );
 });
 
-test("short partial lyrics are rejected even when confidence is high", () => {
+test("short partial lyrics remain diagnostic when confidence is high", () => {
   const result = {
     provider: "deepgram",
     duration: 240,
@@ -57,11 +101,13 @@ test("short partial lyrics are rejected even when confidence is high", () => {
   };
 
   const quality = getSongTranscriptQuality(result);
-  assert.equal(quality.acceptable, false);
+  assert.equal(quality.acceptable, true);
   assert.ok(quality.reasons.includes("insufficient_lyrics"));
+  assert.ok(quality.diagnosticReasons.includes("insufficient_lyrics"));
+  assert.deepEqual(quality.blockingReasons, []);
 });
 
-test("average confidence cannot hide many unreliable words or invalid timing", () => {
+test("low confidence and invalid timing reasons are reported together", () => {
   const words = Array.from({ length: 314 }, (_, index) => ({
     text: `word-${index}`,
     start: index * 630,
@@ -75,7 +121,9 @@ test("average confidence cannot hide many unreliable words or invalid timing", (
   };
 
   const quality = getSongTranscriptQuality(result);
-  assert.ok(quality.averageConfidence > quality.minimumConfidence);
+  assert.equal(quality.acceptable, false);
+  assert.deepEqual(quality.blockingReasons, ["low_confidence"]);
+  assert.ok(quality.reasons.includes("low_confidence"));
   assert.ok(
     quality.reasons.includes("too_many_low_confidence_words"),
   );
@@ -89,7 +137,7 @@ test("average confidence cannot hide many unreliable words or invalid timing", (
   );
 });
 
-test("high-confidence partial song timelines are rejected for failover", () => {
+test("high-confidence partial song timelines remain diagnostic", () => {
   const result = {
     provider: "deepgram",
     duration: 183,
@@ -97,22 +145,46 @@ test("high-confidence partial song timelines are rejected for failover", () => {
   };
 
   const quality = getSongTranscriptQuality(result);
+  assert.equal(quality.acceptable, true);
   assert.ok(quality.wordsPerMinute > quality.minimumWordsPerMinute);
   assert.ok(quality.timelineCoverage < quality.minimumTimelineCoverage);
   assert.ok(quality.reasons.includes("insufficient_timeline_coverage"));
+  assert.ok(
+    quality.diagnosticReasons.includes("insufficient_timeline_coverage"),
+  );
+  assert.doesNotThrow(() => assertProviderResultQuality(result, "song"));
 });
 
-test("spoken audio is not subject to song confidence thresholds", () => {
+test("spoken audio below 90 percent confidence is rejected", () => {
   const result = {
     provider: "assemblyai",
     duration: 120,
-    words: makeWords(5, 0.1),
+    words: makeWords(120, 0.89),
   };
 
-  assert.doesNotThrow(() => assertProviderResultQuality(result, "speech"));
+  withMinimumConfidence("0.9", () => {
+    assert.throws(
+      () => assertProviderResultQuality(result, "speech"),
+      (error) =>
+        error.code === "LOW_TRANSCRIPT_CONFIDENCE" &&
+        error.statusCode === 422,
+    );
+  });
 });
 
-test("known promotional hallucinations are rejected for song failover", () => {
+test("spoken audio without a provider confidence score remains eligible", () => {
+  const result = {
+    provider: "vbee",
+    duration: 120,
+    words: makeWords(120, undefined),
+  };
+
+  withMinimumConfidence("0.9", () => {
+    assert.doesNotThrow(() => assertProviderResultQuality(result, "speech"));
+  });
+});
+
+test("known promotional hallucinations remain diagnostic at high confidence", () => {
   const result = {
     provider: "vbee",
     duration: 183,
@@ -122,17 +194,14 @@ test("known promotional hallucinations are rejected for song failover", () => {
 
   const quality = getSongTranscriptQuality(result);
   assert.deepEqual(getSuspiciousPromoPhrases(result), ["dang_ky_kenh"]);
-  assert.equal(quality.acceptable, false);
+  assert.equal(quality.acceptable, true);
   assert.ok(
     quality.reasons.includes("suspicious_promotional_hallucination"),
   );
-  assert.throws(
-    () => assertProviderResultQuality(result, "song"),
-    (error) =>
-      error.provider === "vbee" &&
-      error.providerFallbackEligible === true &&
-      error.providerResultRejected === true,
+  assert.ok(
+    quality.diagnosticReasons.includes("suspicious_promotional_hallucination"),
   );
+  assert.doesNotThrow(() => assertProviderResultQuality(result, "song"));
 });
 
 test("provider exhaustion keeps the low-confidence explanation", () => {
@@ -167,5 +236,5 @@ test("provider exhaustion keeps the low-confidence explanation", () => {
   });
 
   assert.equal(exhausted.statusCode, 422);
-  assert.match(exhausted.message, /độ tin cậy 58%/i);
+  assert.match(exhausted.message, /chỉ đạt 58%.*ngưỡng 90%/i);
 });

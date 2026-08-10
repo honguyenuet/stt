@@ -27,7 +27,7 @@ export const Route = createFileRoute("/support")({
       { title: "Trung tâm hỗ trợ Vbee" },
       {
         name: "description",
-        content: "Gửi yêu cầu hỗ trợ về tải tệp, ghi âm, quota, thanh toán và API.",
+        content: "Gửi yêu cầu hỗ trợ về tải tệp, ghi âm, thời lượng, thanh toán và API.",
       },
     ],
   }),
@@ -38,7 +38,7 @@ const QUICK_HELP = [
   {
     icon: UploadCloud,
     title: "Không tải tệp lên được",
-    text: "Kiểm tra định dạng, dung lượng file và thời lượng còn lại của gói.",
+    text: "Kiểm tra định dạng, dung lượng tệp và thời lượng còn lại của gói.",
   },
   {
     icon: AlertTriangle,
@@ -47,12 +47,12 @@ const QUICK_HELP = [
   },
   {
     icon: Wallet,
-    title: "Gói cước và quota",
+    title: "Gói cước và thời lượng",
     text: "Kiểm tra thời lượng sau khi mua gói hoặc yêu cầu hỗ trợ thanh toán.",
   },
   {
     icon: FileText,
-    title: "Transcript và xuất file",
+    title: "Văn bản và xuất tệp",
     text: "Hỗ trợ các vấn đề về văn bản, dịch hoặc định dạng xuất dữ liệu.",
   },
 ];
@@ -61,7 +61,7 @@ function SupportPage() {
   const { user, token } = useAuth();
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState("");
-  const [platform, setPlatform] = useState("Không gian làm việc web");
+  const [platform, setPlatform] = useState("Trang đăng nhập web");
   const [category, setCategory] = useState("upload");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
@@ -72,7 +72,7 @@ function SupportPage() {
     event.preventDefault();
     if (!email.trim() || !subject.trim() || !message.trim()) {
       setStatus("error");
-      setNotice("Vui lòng nhập email, tiêu đề và nội dung cần hỗ trợ.");
+      setNotice("Vui lòng nhập thư điện tử, tiêu đề và nội dung cần hỗ trợ.");
       return;
     }
 
@@ -92,7 +92,7 @@ function SupportPage() {
       setSubject("");
       setMessage("");
       setStatus("success");
-      setNotice("Đã tạo yêu cầu hỗ trợ. Vbee sẽ phản hồi qua email của bạn.");
+      setNotice("Đã tạo yêu cầu hỗ trợ. Vbee sẽ phản hồi qua thư điện tử của bạn.");
     } catch (error) {
       setStatus("error");
       setNotice(
@@ -140,19 +140,19 @@ function SupportPage() {
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <SupportField label="Email *" value={email} onChange={setEmail} placeholder="name@company.com" type="email" />
+              <SupportField label="Thư điện tử *" value={email} onChange={setEmail} placeholder="name@company.com" type="email" />
               <SupportField label="Số điện thoại" value={phone} onChange={setPhone} placeholder="Nhập số điện thoại" type="tel" />
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <SelectField label="Nền tảng" value={platform} onChange={setPlatform} options={["Không gian làm việc web", "Vbee API", "Ứng dụng nội bộ"]} />
-              <SelectField label="Danh mục" value={category} onChange={setCategory} options={["upload", "record", "realtime", "quota", "payment", "api", "general"]} labels={["Tải tệp lên", "Ghi âm", "Nói realtime", "Quota / gói cước", "Thanh toán", "API nhà cung cấp", "Khác"]} />
+              <SelectField label="Nền tảng" value={platform} onChange={setPlatform} options={["Trang đăng nhập web", "Vbee API", "Ứng dụng nội bộ"]} />
+              <SelectField label="Danh mục" value={category} onChange={setCategory} options={["upload", "record", "realtime", "quota", "payment", "api", "general"]} labels={["Tải tệp lên", "Ghi âm", "Realtime", "Thời lượng / gói cước", "Thanh toán", "API nhà cung cấp", "Khác"]} />
             </div>
             <div className="mt-4">
               <SupportField label="Tiêu đề *" value={subject} onChange={setSubject} placeholder="Tóm tắt vấn đề bạn gặp phải" />
             </div>
             <label className="mt-4 grid gap-2 text-[13px] font-black">
               Nội dung *
-              <textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ví dụ: tên file, thao tác bạn vừa thực hiện, thông báo lỗi hoặc thời điểm xảy ra vấn đề." rows={7} className="resize-y rounded-xl border border-[#ddd5ef] bg-white px-3 py-3 text-[13px] font-medium leading-6 text-[#21104a] outline-none transition placeholder:text-[#9a90ad] focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20" />
+              <textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Ví dụ: tên tệp, thao tác bạn vừa thực hiện, thông báo lỗi hoặc thời điểm xảy ra vấn đề." rows={7} className="resize-y rounded-xl border border-[#ddd5ef] bg-white px-3 py-3 text-[13px] font-medium leading-6 text-[#21104a] outline-none transition placeholder:text-[#9a90ad] focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20" />
             </label>
 
             {notice && (
@@ -173,7 +173,7 @@ function SupportPage() {
               <p className="text-xs font-black uppercase tracking-[0.16em] text-[#8a7100]">Cần phản hồi nhanh?</p>
               <h2 className="mt-3 text-xl font-black md:text-2xl">Chọn kênh phù hợp.</h2>
               <a href="mailto:contact@vbee.ai" className="mt-5 flex items-center justify-between rounded-xl border border-[#e8e1f5] px-4 py-3 text-sm font-black transition hover:bg-[#fff9d7]">
-                <span className="flex items-center gap-3"><Mail className="h-5 w-5 text-[#8a7100]" /> Email Vbee</span>
+                <span className="flex items-center gap-3"><Mail className="h-5 w-5 text-[#8a7100]" /> Thư điện tử Vbee</span>
                 <ChevronRight className="h-4 w-4" />
               </a>
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("vbee:open-support"))} className="mt-3 flex w-full items-center justify-between rounded-xl border border-[#e8e1f5] px-4 py-3 text-left text-sm font-black transition hover:bg-[#fff9d7]">

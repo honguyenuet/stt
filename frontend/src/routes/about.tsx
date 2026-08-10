@@ -19,11 +19,11 @@ import {
 export const Route = createFileRoute("/about")({
   head: () => ({
     meta: [
-      { title: "Về Vbee Speech Workspace" },
+      { title: "Về không gian giọng nói Vbee" },
       {
         name: "description",
         content:
-          "Tầm nhìn, sứ mệnh và nguyên tắc xây dựng Vbee Speech Workspace.",
+          "Tầm nhìn, sứ mệnh và nguyên tắc xây dựng không gian giọng nói Vbee.",
       },
     ],
   }),
@@ -34,12 +34,12 @@ const VALUES = [
   {
     icon: HeartHandshake,
     title: "Lấy người dùng làm trung tâm",
-    text: "Mỗi thao tác từ tải file đến xuất transcript đều cần rõ ràng, nhanh và có phản hồi cho người dùng.",
+    text: "Mỗi thao tác từ tải tệp đến xuất văn bản đều cần rõ ràng, nhanh và có phản hồi cho người dùng.",
   },
   {
     icon: ShieldCheck,
     title: "Tôn trọng dữ liệu",
-    text: "File, bản ghi và lịch sử xử lý được gắn với tài khoản để người dùng chủ động quản lý.",
+    text: "Tệp, bản ghi và lịch sử xử lý được gắn với tài khoản để người dùng chủ động quản lý.",
   },
   {
     icon: Lightbulb,
@@ -54,9 +54,9 @@ const VALUES = [
 ];
 
 const PRINCIPLES = [
-  ["01", "Rõ trạng thái", "Mọi file và bản ghi đều cho biết đang chờ, xử lý, hoàn tất hay cần người dùng thao tác."],
-  ["02", "Dễ kiểm soát", "Người dùng nhìn thấy thời lượng còn lại, giới hạn gói cước và lịch sử transcript của mình."],
-  ["03", "Sẵn sàng tích hợp", "Workspace là điểm bắt đầu; API giúp doanh nghiệp đưa giọng nói vào quy trình riêng."],
+  ["01", "Rõ trạng thái", "Mọi tệp và bản ghi đều cho biết đang chờ, xử lý, hoàn tất hay cần người dùng thao tác."],
+  ["02", "Dễ kiểm soát", "Người dùng nhìn thấy thời lượng còn lại, giới hạn gói cước và lịch sử văn bản của mình."],
+  ["03", "Sẵn sàng tích hợp", "Đăng nhập là điểm bắt đầu; API giúp doanh nghiệp đưa giọng nói vào quy trình riêng."],
 ];
 
 function AboutPage() {
@@ -76,8 +76,8 @@ function AboutPage() {
               Đưa giọng nói vào quy trình làm việc hằng ngày.
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72">
-              Vbee Speech Workspace được xây dựng để đội ngũ có thể biến audio,
-              video và cuộc họp thành transcript có cấu trúc, dễ tìm kiếm và sẵn
+              Không gian giọng nói Vbee được xây dựng để đội ngũ có thể biến âm thanh,
+              hình ảnh động và cuộc họp thành văn bản có cấu trúc, dễ tìm kiếm và sẵn
               sàng chia sẻ.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -112,7 +112,7 @@ function AboutPage() {
               </span>
               <p className="mt-5 text-xl font-black">Dữ liệu</p>
               <p className="mt-2 text-sm leading-6 text-[#6a5a8f]">
-                Được tổ chức thành transcript để tiếp tục tra cứu, dịch và xuất.
+                Được tổ chức thành văn bản để tiếp tục tra cứu, dịch và xuất.
               </p>
             </div>
           </div>
@@ -145,7 +145,7 @@ function AboutPage() {
               Sứ mệnh
             </p>
             <h2 className="mt-3 text-2xl font-black leading-tight md:text-3xl">
-              Tạo một trải nghiệm speech-to-text đơn giản và đáng tin cậy.
+              Tạo trải nghiệm chuyển giọng nói thành văn bản đơn giản và đáng tin cậy.
             </h2>
             <p className="mt-4 text-sm leading-7 text-[#6a5a8f]">
               Từ người dùng cá nhân đến đội ngũ doanh nghiệp, sản phẩm tập trung

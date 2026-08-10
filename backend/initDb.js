@@ -3,6 +3,10 @@ const pool = require('./db');
 const { IS_PRODUCTION } = require('./config/security');
 const { normalizeFilename } = require('./services/filenameEncoding');
 const { encryptProviderSecret } = require('./services/providerSecrets');
+const {
+  DEFAULT_SUPPORTED_MEDIA_FORMATS,
+  LEGACY_DEFAULT_SUPPORTED_MEDIA_FORMATS,
+} = require('./services/adminSettingsService');
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || ''), 10);
@@ -1067,7 +1071,7 @@ async function initDatabase() {
           10,
         ),
         max_file_duration_minutes: 180,
-        supported_formats: ["mp3", "wav", "m4a", "mp4", "mov"],
+        supported_formats: DEFAULT_SUPPORTED_MEDIA_FORMATS,
         supported_languages: ["vi", "en", "ja", "ko", "zh"],
         max_retry_attempts: 3,
         default_quota_minutes: Math.ceil(FREE_PLAN_SECONDS / 60),
@@ -1088,6 +1092,18 @@ async function initDatabase() {
           failure_alert_email: false,
         },
       }),
+    ],
+  );
+  // Upgrade only the old generated default. A value customized in CMS is kept.
+  await pool.query(
+    `UPDATE admin_settings
+     SET value = jsonb_set(value, '{supported_formats}', $1::jsonb, true),
+         updated_at = NOW()
+     WHERE key = 'global'
+       AND value->'supported_formats' = $2::jsonb`,
+    [
+      JSON.stringify(DEFAULT_SUPPORTED_MEDIA_FORMATS),
+      JSON.stringify(LEGACY_DEFAULT_SUPPORTED_MEDIA_FORMATS),
     ],
   );
 

@@ -103,17 +103,17 @@ function RegisterPage() {
 
   const oauthErrors: Record<string, string> = {
     google_failed: "Đăng ký Google thất bại hoặc đã bị hủy.",
-    google_email_exists: "Email này đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    google_email_required: "Google chưa cung cấp email đã xác minh.",
+    google_email_exists: "Thư điện tử này đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    google_email_required: "Google chưa cung cấp thư điện tử đã xác minh.",
     google_not_configured: "Google OAuth chưa được cấu hình trên máy chủ.",
     facebook_failed: "Đăng ký Facebook thất bại hoặc đã bị hủy.",
-    facebook_email_exists: "Email Facebook đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    facebook_email_required: "Facebook chưa cung cấp email đã xác minh.",
-    facebook_not_configured: "Facebook Login chưa được cấu hình trên máy chủ.",
+    facebook_email_exists: "Thư điện tử Facebook đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    facebook_email_required: "Facebook chưa cung cấp thư điện tử đã xác minh.",
+    facebook_not_configured: "Đăng nhập Facebook chưa được cấu hình trên máy chủ.",
     apple_failed: "Đăng ký Apple thất bại hoặc đã bị hủy.",
-    apple_email_exists: "Email Apple đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    apple_email_required: "Apple chưa cung cấp email đã xác minh.",
-    apple_not_configured: "Sign in with Apple chưa được cấu hình trên máy chủ.",
+    apple_email_exists: "Thư điện tử Apple đã có tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    apple_email_required: "Apple chưa cung cấp thư điện tử đã xác minh.",
+    apple_not_configured: "Đăng nhập bằng Apple chưa được cấu hình trên máy chủ.",
     account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
   };
 
@@ -177,7 +177,7 @@ function RegisterPage() {
             ))}
           </ul>
 
-          {/* Transcript preview card */}
+          {/* Thẻ xem trước văn bản */}
           <div className="mt-6 hidden w-full max-w-sm rounded-lg border border-border bg-white p-4 lg:block">
             <div className="flex items-center gap-2 mb-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#fff2a3] text-[#21104a]">
@@ -210,13 +210,13 @@ function RegisterPage() {
             {/* Header form */}
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-foreground">Tạo tài khoản</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Đăng ký bằng email và mật khẩu an toàn</p>
+              <p className="mt-1 text-sm text-muted-foreground">Đăng ký bằng thư điện tử và mật khẩu an toàn</p>
             </div>
 
             {ref && (
               <div className="mb-5 rounded-xl border border-[#f0d66a] bg-[#fff9d7] px-4 py-3 text-sm text-[#4a356e]">
                 Bạn đang đăng ký bằng mã giới thiệu <strong>{ref}</strong>. Người
-                mời sẽ nhận 100 phút sau transcript đầu tiên của bạn.
+                mời sẽ nhận 100 phút sau văn bản đầu tiên của bạn.
               </div>
             )}
 
@@ -261,7 +261,7 @@ function RegisterPage() {
               {/* Email */}
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-                  Địa chỉ email <span className="text-destructive">*</span>
+                  Địa chỉ thư điện tử <span className="text-destructive">*</span>
                 </label>
                 <input
                   name="email" type="email" value={form.email} onChange={handleChange} required maxLength={254}

@@ -146,6 +146,21 @@ export async function fetchBillingOrder(
   return data.order;
 }
 
+export async function confirmDemoPayment(
+  token: string,
+  orderId: string,
+): Promise<{ order: BillingOrder; quota: QuotaStatus }> {
+  const res = await fetch(`${API_URL}/api/billing/demo/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ orderId }),
+  });
+  return readJson<{ order: BillingOrder; quota: QuotaStatus }>(res);
+}
+
 export async function cancelBillingOrder(
   token: string,
   orderId: string,

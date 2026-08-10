@@ -75,7 +75,7 @@ function AdminUsagePage() {
           <AdminPanel>
             <AdminPanelHeader
               title="Mức sử dụng theo ngày"
-              description="Chỉ job hoàn tất mới tính quota; dữ liệu mock đang làm tròn theo phút."
+              description="Chỉ tác vụ hoàn tất mới tính thời lượng; số liệu được tổng hợp từ lịch sử sử dụng thực tế."
             />
             <div className="flex h-72 items-end gap-2 p-4">
               {data.daily.map((point) => (
@@ -119,7 +119,7 @@ function AdminUsagePage() {
               </div>
             </AdminPanel>
             <AdminPanel>
-              <AdminPanelHeader title="Người dùng gần hết quota" />
+              <AdminPanelHeader title="Người dùng gần hết thời lượng" />
               <div className="divide-y divide-[#efe7d8]">
                 {data.low_quota_users.map((user) => (
                   <div

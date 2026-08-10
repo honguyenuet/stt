@@ -57,7 +57,7 @@ function CustomDictionaryPage() {
     })
       .then(async (res) => {
         const data = (await res.json()) as SettingsPayload;
-        if (!res.ok) throw new Error(data.error || "Không tải được settings");
+        if (!res.ok) throw new Error(data.error || "Không tải được cài đặt");
         if (ignore) return;
         setDictionary(data.customDictionary || "");
         setSavedDictionary(data.customDictionary || "");
@@ -135,7 +135,7 @@ function CustomDictionaryPage() {
 
           <div className="max-w-3xl">
             <p className="text-sm leading-7 text-muted-foreground">
-              Thêm các từ hoặc cụm từ thường xuất hiện trong file của bạn.
+              Thêm các từ hoặc cụm từ thường xuất hiện trong tệp của bạn.
               Vbee sẽ ưu tiên nhận diện các tên riêng, thuật ngữ chuyên ngành,
               cụm từ hiếm và cách viết đặc biệt khi chuyển giọng nói thành văn bản.
             </p>
@@ -184,7 +184,7 @@ function CustomDictionaryPage() {
                     <span className="font-black text-foreground">
                       Thêm từ mới vào từ điển nhanh hơn:
                     </span>{" "}
-                    khi biên tập transcript, hãy lưu các từ quan trọng vào đây
+                    khi biên tập văn bản, hãy lưu các từ quan trọng vào đây
                     để Vbee ưu tiên nhận diện trong các lần xử lý sau.
                   </p>
                 </div>

@@ -50,8 +50,8 @@ const {
   normalizeTrackName,
 } = require("../services/multitrackService");
 const {
-  downloadYoutubeAudio,
-  getYoutubeMetadata,
+  downloadMediaAudio,
+  getMediaMetadata,
 } = require("../services/youtubeImportService");
 const { requireAuth } = require("../middleware/auth");
 const {
@@ -121,24 +121,24 @@ function toFiniteNumberOrNull(value) {
 function assertMediaRightsAccepted(req) {
   if (!hasAcceptedMediaRights(req.body?.rightsAccepted)) {
     const error = new Error(
-      "Bạn cần xác nhận mình sở hữu video hoặc được phép sử dụng nội dung này.",
+      "Bạn cần xác nhận mình sở hữu nội dung hoặc được phép sử dụng nội dung này.",
     );
     error.statusCode = 400;
     throw error;
   }
 }
 
-async function validateYoutubeMetadataForUser(userId, metadata) {
+async function validateUrlMetadataForUser(userId, metadata) {
   const quota = await validateBeforeTranscription({
     userId,
     file: { size: metadata.approximateBytes || 0 },
-    source: "youtube",
+    source: "url",
     expectedDurationSeconds: metadata.durationSeconds,
   });
   await validateAfterTranscription({
     userId,
     durationSeconds: metadata.durationSeconds,
-    source: "youtube",
+    source: "url",
   });
   return quota;
 }
@@ -172,12 +172,12 @@ router.post(
   async (req, res) => {
     try {
       assertMediaRightsAccepted(req);
-      const metadata = await getYoutubeMetadata(req.body?.url);
-      const quota = await validateYoutubeMetadataForUser(req.user.id, metadata);
+      const metadata = await getMediaMetadata(req.body?.url);
+      const quota = await validateUrlMetadataForUser(req.user.id, metadata);
       return res.json({ metadata, quota });
     } catch (error) {
       return res.status(error.statusCode || 500).json({
-        error: error.message || "Không đọc được thông tin video YouTube.",
+        error: error.message || "Không đọc được thông tin audio/video từ link.",
         quota: error.details?.quota,
       });
     }
@@ -190,12 +190,12 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
     assertMediaRightsAccepted(req);
     await assertTranscriptionProviderReady();
 
-    const metadata = await getYoutubeMetadata(req.body?.url);
-    const quotaBeforeDownload = await validateYoutubeMetadataForUser(
+    const metadata = await getMediaMetadata(req.body?.url);
+    const quotaBeforeDownload = await validateUrlMetadataForUser(
       req.user.id,
       metadata,
     );
-    const imported = await downloadYoutubeAudio(metadata.url, {
+    const imported = await downloadMediaAudio(metadata.url, {
       maxSizeMb: quotaBeforeDownload.limits.maxUploadMb,
       metadata,
     });
@@ -206,13 +206,13 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
     await validateBeforeTranscription({
       userId: req.user.id,
       file: importedFile,
-      source: "youtube",
+      source: "url",
       expectedDurationSeconds,
     });
     await validateAfterTranscription({
       userId: req.user.id,
       durationSeconds: expectedDurationSeconds,
-      source: "youtube",
+      source: "url",
     });
 
     const language = req.body.language || req.body.transcriptionLanguage || "auto";
@@ -228,7 +228,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
     const job = await enqueueTranscriptionJob({
       userId: req.user.id,
       file: importedFile,
-      source: "youtube",
+      source: "url",
       language,
       audioMode,
       translateTo,
@@ -236,6 +236,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       transcriptionSettings: userSettings.transcriptionSettings,
       speakerLabels:
         req.body.speakerLabels === "true" || req.body.speakerLabels === true,
+      speakerCount: req.body.speakerCount,
       expectedDurationSeconds,
       folderId: req.body.folderId,
     });
@@ -243,13 +244,15 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
     const quota = await getQuotaStatus(req.user.id);
 
     await writeSecurityAudit({
-      event: "transcription.youtube_queued",
+      event: "transcription.url_queued",
       outcome: "accepted",
       req,
       userId: req.user.id,
       metadata: {
         jobId: job.jobId,
-        videoId: metadata.videoId,
+        mediaId: metadata.videoId,
+        platform: metadata.platform,
+        sourceHost: metadata.sourceHost,
         durationSeconds: expectedDurationSeconds,
       },
     });
@@ -265,20 +268,20 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       filename: job.transcription.filename,
       fileSize: importedFile.size,
       createdAt: job.transcription.created_at,
-      message: "Video YouTube đã được đưa vào hàng đợi chuyển đổi.",
+      message: `${metadata.platform || "Nội dung"} đã được đưa vào hàng đợi chuyển đổi.`,
       quota,
     });
   } catch (error) {
-    console.error("YouTube import error:", error.message);
+    console.error("Media URL import error:", error.message);
     await writeSecurityAudit({
-      event: "transcription.youtube_rejected",
+      event: "transcription.url_rejected",
       outcome: "failure",
       req,
       userId: req.user?.id,
       metadata: { reason: error.message },
     });
     return res.status(error.statusCode || 500).json({
-      error: error.message || "Không nhập được video YouTube.",
+      error: error.message || "Không nhập được audio/video từ link.",
       quota: error.details?.quota,
     });
   } finally {
@@ -410,6 +413,7 @@ router.post(
             speakerLabels:
               req.body.speakerLabels === "true" ||
               req.body.speakerLabels === true,
+            speakerCount: req.body.speakerCount,
             expectedDurationSeconds,
             folderId: req.body.folderId,
             batchId,
@@ -732,6 +736,7 @@ router.post(
         transcriptionSettings: userSettings.transcriptionSettings,
         speakerLabels:
           req.body.speakerLabels === "true" || req.body.speakerLabels === true,
+        speakerCount: req.body.speakerCount,
         expectedDurationSeconds,
         folderId: req.body.folderId,
       });

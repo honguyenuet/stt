@@ -16,11 +16,11 @@ import {
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { useAuth } from "@/context/AuthContext";
 import {
-  cancelBillingOrder,
+  confirmDemoPayment,
   fetchBillingOrder,
   type BillingOrder,
 } from "@/lib/billing";
-import { formatQuotaTime } from "@/lib/quota";
+import { formatPlanLabel, formatQuotaTime } from "@/lib/quota";
 
 export const Route = createFileRoute("/checkout/$orderId")({
   component: CheckoutPage,
@@ -50,7 +50,7 @@ function CheckoutPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loadingOrder, setLoadingOrder] = useState(true);
-  const [cancelling, setCancelling] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showPaymentQr, setShowPaymentQr] = useState(false);
   const [paymentQrImage, setPaymentQrImage] = useState("");
@@ -200,32 +200,31 @@ function CheckoutPage() {
     };
   }, [order?.paymentQrCode]);
 
-  function handleShowPaymentQr() {
-    if (!order) return;
-    setShowPaymentQr(true);
-  }
+  async function handleConfirmPayment() {
+    if (!token || !order) return;
 
-  async function handleCancelOrder() {
-    if (!token || !order || order.status !== "pending") return;
-
-    setCancelling(true);
+    setConfirming(true);
     setError("");
     setMessage("");
     try {
-      const nextOrder = await cancelBillingOrder(token, order.id);
-      setOrder(nextOrder);
-      setShowPaymentQr(false);
-      setMessage("Đơn thanh toán đã được hủy. Bạn có thể tạo đơn mới ở bảng giá.");
+      const result = await confirmDemoPayment(token, order.id);
+      setOrder(result.order);
+      updateUser({ plan: result.quota.plan });
+      setMessage(
+        result.order.productType === "top_up"
+          ? `Thanh toán thành công. ${result.order.label} đã được cộng; tài khoản còn ${formatQuotaTime(
+              result.quota.remainingSeconds,
+            )} sử dụng.`
+          : `Thanh toán thành công. Tài khoản đã lên gói ${formatPlanLabel(result.quota.plan)}, còn ${formatQuotaTime(
+              result.quota.remainingSeconds,
+            )} sử dụng.`,
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không hủy được đơn hàng");
-      try {
-        const latest = await fetchBillingOrder(token, order.id);
-        setOrder(latest);
-      } catch {
-        // Keep the visible order if the refresh also fails.
-      }
+      setError(
+        err instanceof Error ? err.message : "Không xác nhận được thanh toán",
+      );
     } finally {
-      setCancelling(false);
+      setConfirming(false);
     }
   }
 
@@ -271,13 +270,13 @@ function CheckoutPage() {
           <div className="bg-[#21104a] px-5 py-6 text-white md:px-7">
             <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase text-[#ffcb05]">
               <ShieldCheck className="h-4 w-4" />
-              Checkout bảo mật
+              Thanh toán bảo mật
             </div>
             <h1 className="mt-4 text-2xl font-black md:text-3xl">
               Thanh toán gói cước Vbee
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/70">
-              Mỗi đơn có số tiền và nội dung chuyển khoản riêng. Quota chỉ được
+              Mỗi đơn có số tiền và nội dung chuyển khoản riêng. Thời lượng chỉ được
               kích hoạt sau khi PayOS xác thực giao dịch qua webhook.
             </p>
           </div>
@@ -315,7 +314,7 @@ function CheckoutPage() {
                         order.productType === "top_up"
                           ? order.validDays
                             ? `Có hiệu lực ${order.validDays} ngày, không đổi chu kỳ chính`
-                            : "Theo sử dụng, không đổi chu kỳ chính"
+                            : "Thời lượng đã mua không hết hạn"
                           : order.billingCycle === "yearly"
                             ? "Thanh toán năm"
                             : "Thanh toán tháng"
@@ -326,8 +325,8 @@ function CheckoutPage() {
                       value={formatQuotaTime(order.quotaSeconds)}
                       sub={
                         order.productType === "top_up"
-                          ? "Cộng vào quota hiện có"
-                          : "Quota được cấp sau thanh toán"
+                          ? "Cộng vào thời lượng hiện có"
+                          : "Thời lượng được cấp sau thanh toán"
                       }
                     />
                     <InfoTile
@@ -335,7 +334,7 @@ function CheckoutPage() {
                       value={statusLabel}
                       sub={`Kênh thanh toán: ${
                         order.provider === "payos"
-                          ? "PayOS by Casso"
+                          ? "PayOS do Casso cung cấp"
                           : order.provider === "demo"
                             ? "Vbee Pay (demo)"
                             : order.provider
@@ -407,7 +406,7 @@ function CheckoutPage() {
               <div className="mt-6 space-y-3 text-sm font-semibold text-[#5f5278]">
                 <p className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  Kích hoạt quota sau khi thanh toán thành công
+                  Kích hoạt thời lượng sau khi thanh toán thành công
                 </p>
                 <p className="flex items-center gap-2">
                   <Clock3 className="h-4 w-4 text-[#9a7b00]" />
@@ -415,36 +414,38 @@ function CheckoutPage() {
                 </p>
                 <p className="flex items-center gap-2">
                   <CreditCard className="h-4 w-4 text-[#21104a]" />
-                  Thanh toán QR ngân hàng qua PayOS by Casso
+                  Thanh toán QR ngân hàng qua PayOS do Casso cung cấp
                 </p>
               </div>
 
               {order?.provider === "payos" && order.status === "pending" ? (
-                <div className="mt-7 space-y-3">
-                  {order.paymentUrl ? (
-                    <button
-                      type="button"
-                      onClick={handleShowPaymentQr}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5"
-                    >
-                      Hiện QR thanh toán
-                      <QrCode className="h-4 w-4" />
-                    </button>
-                  ) : (
-                    <div className="rounded-full bg-[#eee8ff] px-5 py-3 text-center text-sm font-black text-[#6a5a8f]">
-                      Link thanh toán chưa sẵn sàng
-                    </div>
-                  )}
+                order.paymentUrl ? (
                   <button
                     type="button"
-                    onClick={() => void handleCancelOrder()}
-                    disabled={cancelling}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#eadfcf] bg-white px-5 py-3 text-sm font-black text-[#5f5278] transition hover:bg-[#fff7d8] disabled:cursor-not-allowed disabled:opacity-55"
+                    onClick={() => setShowPaymentQr(true)}
+                    className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5"
                   >
-                    {cancelling ? "Đang hủy đơn..." : "Hủy đơn thanh toán"}
-                    <X className="h-4 w-4" />
+                    Hiện QR thanh toán
+                    <QrCode className="h-4 w-4" />
                   </button>
-                </div>
+                ) : (
+                  <div className="mt-7 rounded-full bg-[#eee8ff] px-5 py-3 text-center text-sm font-black text-[#6a5a8f]">
+                    Link thanh toán chưa sẵn sàng
+                  </div>
+                )
+              ) : order?.provider === "demo" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmPayment()}
+                  disabled={!order || order.status === "paid" || confirming}
+                  className="mt-7 w-full rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white shadow-[0_18px_50px_rgba(33,16,74,.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {order?.status === "paid"
+                    ? "Đã thanh toán"
+                    : confirming
+                      ? "Đang xác nhận..."
+                      : "Xác nhận thanh toán demo"}
+                </button>
               ) : null}
 
               {order?.status === "paid" && (
@@ -452,7 +453,7 @@ function CheckoutPage() {
                   to="/upload"
                   className="mt-3 block rounded-full border border-[#21104a]/20 bg-white px-5 py-3 text-center text-sm font-black text-[#21104a]"
                 >
-                  Tải file lên
+                  Tải tệp lên
                 </Link>
               )}
             </aside>
@@ -484,7 +485,7 @@ function CheckoutPage() {
 
             <div className="pr-11">
               <p className="text-xs font-black uppercase tracking-[.12em] text-[#9a7b00]">
-                PayOS by Casso
+                PayOS do Casso cung cấp
               </p>
               <h2
                 id="payment-qr-title"

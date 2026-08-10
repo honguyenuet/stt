@@ -161,7 +161,7 @@ function SupportChat() {
                 )
               ) : (
                 <p className="text-xs font-semibold text-[oklch(0.72_0.02_85)]">
-                  Đăng nhập để xem quota còn lại.
+                  Đăng nhập để xem thời lượng còn lại.
                 </p>
               )}
             </div>

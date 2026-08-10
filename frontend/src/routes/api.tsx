@@ -60,7 +60,7 @@ export const Route = createFileRoute("/api")({
       {
         name: "description",
         content:
-          "Trang quản lý Vbee API key, tài liệu endpoint và khu vực test API chuyển âm thanh thành văn bản.",
+          "Trang quản lý khóa API Vbee, tài liệu đường dẫn và khu vực kiểm thử API chuyển âm thanh thành văn bản.",
       },
     ],
   }),
@@ -117,13 +117,13 @@ function ApiPage() {
       const data = (await res.json()) as ApiKeyItem[] | { error?: string };
       if (!res.ok || !Array.isArray(data)) {
         setMessage(
-          (data as { error?: string }).error ?? "Không tải được API key",
+          (data as { error?: string }).error ?? "Không tải được khóa API",
         );
         return;
       }
       setKeys(data);
     } catch {
-      setMessage("Không kết nối được backend API");
+      setMessage("Không kết nối được API của máy chủ");
     } finally {
       setLoadingKeys(false);
     }
@@ -151,18 +151,18 @@ function ApiPage() {
       const data = (await res.json()) as ApiKeyResponse | { error?: string };
       if (!res.ok || !("key" in data)) {
         setMessage(
-          (data as { error?: string }).error ?? "Không tạo được API key",
+          (data as { error?: string }).error ?? "Không tạo được khóa API",
         );
         return;
       }
       setCreatedKey(data.key);
       setTestKey(data.key);
       setMessage(
-        "Đã tạo API key. Hãy copy ngay vì key đầy đủ chỉ hiển thị một lần.",
+        "Đã tạo khóa API. Hãy sao chép ngay vì khóa đầy đủ chỉ hiển thị một lần.",
       );
       await loadKeys();
     } catch {
-      setMessage("Không kết nối được backend API");
+      setMessage("Không kết nối được API của máy chủ");
     } finally {
       setCreating(false);
     }
@@ -171,7 +171,7 @@ function ApiPage() {
   async function revokeKey(id: number) {
     if (!token) return;
     const ok = window.confirm(
-      "Thu hồi API key này? Các ứng dụng đang dùng key này sẽ không gọi API được nữa.",
+      "Thu hồi khóa API này? Các ứng dụng đang dùng khóa này sẽ không gọi API được nữa.",
     );
     if (!ok) return;
     setMessage("");
@@ -182,13 +182,13 @@ function ApiPage() {
       });
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        setMessage(data.error ?? "Không thu hồi được API key");
+        setMessage(data.error ?? "Không thu hồi được khóa API");
         return;
       }
       setKeys((prev) => prev.filter((item) => item.id !== id));
-      setMessage("Đã thu hồi API key");
+      setMessage("Đã thu hồi khóa API");
     } catch {
-      setMessage("Không kết nối được backend API");
+      setMessage("Không kết nối được API của máy chủ");
     }
   }
 
@@ -200,11 +200,11 @@ function ApiPage() {
 
   async function testApi() {
     if (!testKey.trim()) {
-      setApiResult({ error: "Vui lòng nhập API key để test" });
+      setApiResult({ error: "Vui lòng nhập khóa API để kiểm thử" });
       return;
     }
     if (!testFile) {
-      setApiResult({ error: "Vui lòng chọn file audio/video" });
+      setApiResult({ error: "Vui lòng chọn tệp âm thanh hoặc nội dung nghe nhìn" });
       return;
     }
 
@@ -227,7 +227,7 @@ function ApiPage() {
     } catch {
       setApiResult({
         error:
-          "Không gọi được API. Kiểm tra backend và key nhà cung cấp trong backend/.env.",
+          "Không gọi được API. Hãy kiểm tra máy chủ và khóa nhà cung cấp trong tệp .env phía máy chủ.",
       });
     } finally {
       setTesting(false);
@@ -271,16 +271,16 @@ function ApiPage() {
               Tích hợp chuyển âm thanh thành văn bản vào sản phẩm của bạn.
             </h1>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-              Tạo và thu hồi API key, kiểm thử endpoint và tham khảo ví dụ tích
+              Tạo và thu hồi khóa API, kiểm thử đường dẫn và tham khảo ví dụ tích
               hợp ngay tại đây. Đội kỹ thuật cấu hình nhà cung cấp nhận dạng
-              giọng nói phù hợp trong môi trường máy chủ để bắt đầu xử lý file.
+              giọng nói phù hợp trong môi trường máy chủ để bắt đầu xử lý tệp.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <a
                 href="#keys"
                 className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground shadow-glow"
               >
-                Tạo API key <ArrowRight className="h-4 w-4" />
+                Tạo khóa API <ArrowRight className="h-4 w-4" />
               </a>
               <a
                 href="#docs"
@@ -299,7 +299,7 @@ function ApiPage() {
                     <KeyRound className="h-5 w-5" />
                   </span>
                   <div>
-                    <div className="font-black">API endpoint</div>
+                    <div className="font-black">Đường dẫn API</div>
                     <div className="text-sm text-muted-foreground">
                       POST /api/v1/transcribe
                     </div>
@@ -314,7 +314,7 @@ function ApiPage() {
               </pre>
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 {[
-                  [ShieldCheck, "Key bảo mật", "Lưu hash SHA-256"],
+                  [ShieldCheck, "Khóa bảo mật", "Lưu mã băm SHA-256"],
                   [FileAudio, "Tải âm thanh lên", "MP3, WAV, M4A, MP4"],
                   [
                     Zap,
@@ -349,14 +349,14 @@ function ApiPage() {
               <KeyRound className="h-6 w-6" />
             </span>
             <div>
-              <h2 className="text-xl font-black">Tạo API key</h2>
+              <h2 className="text-xl font-black">Tạo khóa API</h2>
               <p className="text-sm text-muted-foreground">
-                Key đầy đủ chỉ hiện một lần sau khi tạo.
+                Khóa đầy đủ chỉ hiện một lần sau khi tạo.
               </p>
             </div>
           </div>
 
-          <label className="text-sm font-black">Tên API key</label>
+          <label className="text-sm font-black">Tên khóa API</label>
           <input
             value={keyName}
             onChange={(e) => setKeyName(e.target.value)}
@@ -373,7 +373,7 @@ function ApiPage() {
             ) : (
               <Sparkles className="h-5 w-5" />
             )}
-            Tạo API key mới
+            Tạo khóa API mới
           </button>
 
           {message && (
@@ -386,7 +386,7 @@ function ApiPage() {
             <div className="mt-5 rounded-lg border border-primary/25 bg-primary/5 p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="font-black text-foreground">
-                  API key vừa tạo
+                  Khóa API vừa tạo
                 </span>
                 <button
                   onClick={() => void copyText(createdKey)}
@@ -397,7 +397,7 @@ function ApiPage() {
                   ) : (
                     <Copy className="h-3.5 w-3.5" />
                   )}
-                  {copied ? "Đã copy" : "Copy"}
+                  {copied ? "Đã sao chép" : "Sao chép"}
                 </button>
               </div>
               <code className="block break-all rounded-xl border border-border bg-card p-3 text-sm font-bold text-foreground">
@@ -410,9 +410,9 @@ function ApiPage() {
         <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-xl font-black">Danh sách API key</h2>
+              <h2 className="text-xl font-black">Danh sách khóa API</h2>
               <p className="text-sm text-muted-foreground">
-                Quản lý key đang hoạt động trong tài khoản của bạn.
+                Quản lý khóa đang hoạt động trong tài khoản của bạn.
               </p>
             </div>
             <button
@@ -429,7 +429,7 @@ function ApiPage() {
           <div className="space-y-3">
             {keys.length === 0 && (
               <div className="rounded-lg border border-border bg-[#fbf8ef] p-4 text-sm font-bold text-muted-foreground">
-                Chưa có API key. Tạo một key mới để gọi endpoint
+                Chưa có khóa API. Hãy tạo khóa mới để gọi đường dẫn
                 /api/v1/transcribe.
               </div>
             )}
@@ -475,17 +475,17 @@ function ApiPage() {
               <UploadCloud className="h-4 w-4" /> Kiểm thử API thật
             </div>
             <h2 className="text-xl font-black">
-              Gọi thử endpoint bằng API key
+              Gọi thử đường dẫn bằng khóa API
             </h2>
             <p className="mt-3 leading-7 text-muted-foreground">
-              Chọn file audio/video, nhập API key, sau đó gửi request tới
-              backend. Kết quả trả về là JSON để tích hợp trực tiếp vào website
+              Chọn tệp âm thanh hoặc hình ảnh động, nhập khóa API, sau đó gửi yêu cầu tới
+              máy chủ. Kết quả trả về là JSON để tích hợp trực tiếp vào trang web
               hoặc ứng dụng riêng.
             </p>
           </div>
 
           <div className="min-w-0 rounded-lg border border-border bg-[#fbf8ef] p-4 text-foreground">
-            <label className="text-sm font-black">API key</label>
+            <label className="text-sm font-black">Khóa API</label>
             <input
               value={testKey}
               onChange={(e) => setTestKey(e.target.value)}
@@ -494,11 +494,11 @@ function ApiPage() {
             />
 
             <label className="mt-4 block text-sm font-black">
-              File audio/video
+              Tệp âm thanh hoặc hình ảnh động
             </label>
             <input
               type="file"
-              accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.webm,audio/*,video/*"
+              accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.webm"
               onChange={(e) => setTestFile(e.target.files?.[0] ?? null)}
               className="mt-2 w-full rounded-lg border border-dashed border-border bg-white px-4 py-2.5 text-sm font-semibold"
             />

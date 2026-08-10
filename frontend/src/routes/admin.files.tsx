@@ -69,7 +69,9 @@ function AdminFilesPage() {
       })
         .then(setRows)
         .catch((err) =>
-          setError(err instanceof Error ? err.message : "Không tải được files"),
+          setError(
+            err instanceof Error ? err.message : "Không tải được danh sách tệp",
+          ),
         )
         .finally(() => {
           if (showLoading) setLoading(false);
@@ -125,7 +127,7 @@ function AdminFilesPage() {
       .catch((err) => {
         if (!cancelled) {
           setMediaError(
-            err instanceof Error ? err.message : "Không tải được media",
+            err instanceof Error ? err.message : "Không tải được nội dung",
           );
         }
       })
@@ -146,7 +148,7 @@ function AdminFilesPage() {
       .then(setRelatedJobs)
       .catch((err) =>
         toast.error(
-          err instanceof Error ? err.message : "Không tải được job liên quan",
+          err instanceof Error ? err.message : "Không tải được tác vụ liên quan",
         ),
       );
   }
@@ -155,17 +157,17 @@ function AdminFilesPage() {
     if (
       !selected ||
       !window.confirm(
-        "Xóa vĩnh viễn tệp, transcript và job liên quan? Số quota đã sử dụng sẽ không được hoàn lại.",
+        "Xóa vĩnh viễn tệp, văn bản và tác vụ liên quan? Thời lượng đã sử dụng sẽ không được hoàn lại.",
       )
     )
       return;
     try {
       await markFileDeleted(selected.file_id);
       setSelected(null);
-      toast.success("Đã xóa file");
+      toast.success("Đã xóa tệp");
       load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không xóa được file");
+      toast.error(err instanceof Error ? err.message : "Không xóa được tệp");
     }
   }
 
@@ -176,7 +178,7 @@ function AdminFilesPage() {
       <AdminPanel>
         <AdminPanelHeader
           title="Quản lý tệp"
-          description="Quản lý metadata, xem trước media và các job liên quan."
+          description="Quản lý dữ liệu mô tả, xem trước nội dung và các tác vụ liên quan."
         />
         <div className="grid gap-3 p-4 md:grid-cols-5">
           <input
@@ -195,7 +197,7 @@ function AdminFilesPage() {
           >
             <option value="all">Tất cả loại tệp</option>
             <option value="audio">Âm thanh</option>
-            <option value="video">Video</option>
+            <option value="video">Hình ảnh động</option>
           </select>
           <select
             value={storageStatus}
@@ -217,7 +219,7 @@ function AdminFilesPage() {
             }
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
           >
-            <option value="all">Tất cả job</option>
+            <option value="all">Tất cả tác vụ</option>
             <option value="completed">Hoàn tất</option>
             <option value="failed">Thất bại</option>
             <option value="queued">Đang chờ</option>
@@ -327,7 +329,7 @@ function AdminFilesPage() {
                 <audio controls src={mediaUrl || undefined} className="w-full" />
               )}
               {mediaLoading && (
-                <p className="text-sm text-[#756894]">Đang tải media...</p>
+                <p className="text-sm text-[#756894]">Đang tải nội dung...</p>
               )}
               {mediaError && (
                 <p className="rounded-md bg-red-50 p-3 text-sm text-red-800">
@@ -339,7 +341,7 @@ function AdminFilesPage() {
               </pre>
               {!selected.has_audio_track && (
                 <p className="rounded-md bg-red-50 p-3 text-sm text-red-800">
-                  Tệp bị lỗi hoặc không có track âm thanh.
+                  Tệp bị lỗi hoặc không có rãnh âm thanh.
                 </p>
               )}
               <button
@@ -347,11 +349,13 @@ function AdminFilesPage() {
                 onClick={() => void deleteFile()}
                 className="rounded-md border border-red-200 px-3 py-2 text-sm font-black text-red-700 disabled:opacity-40"
               >
-                Xóa file
+                Xóa tệp
               </button>
             </div>
             <div>
-              <h3 className="mb-3 font-black">Job chuyển giọng nói liên quan</h3>
+              <h3 className="mb-3 font-black">
+                Tác vụ chuyển giọng nói liên quan
+              </h3>
               <div className="divide-y divide-[#efe7d8] rounded-md border border-[#e4ddcf]">
                 {relatedJobs.map((job) => (
                   <div

@@ -5,6 +5,7 @@ const pool = require("../db");
 const {
   ALLOWED_EXT,
   getTranscriptionProviderChain,
+  normalizeSpeakerCount,
   resolveStoredAudioPath,
   transcribeFile,
 } = require("./transcriptionService");
@@ -409,6 +410,7 @@ async function enqueueTranscriptionJob({
   audioMode = "speech",
   translateTo = "",
   speakerLabels = false,
+  speakerCount = null,
   expectedDurationSeconds = null,
   dictionaryKeywords = [],
   transcriptionSettings = {},
@@ -424,8 +426,10 @@ async function enqueueTranscriptionJob({
     error.statusCode = 400;
     throw error;
   }
-
   file.originalname = normalizeFilename(file.originalname);
+  const normalizedSpeakerCount = speakerLabels
+    ? normalizeSpeakerCount(speakerCount)
+    : null;
   const storedFilename = makeStoredFilename(file.originalname);
   const storedPath = resolveStoredAudioPath(storedFilename);
   const expectedDuration = numberOrNull(expectedDurationSeconds);
@@ -507,6 +511,7 @@ async function enqueueTranscriptionJob({
           mimeType: file.mimetype || "audio/webm",
           dictionaryKeywords,
           transcriptionSettings,
+          speakerCount: normalizedSpeakerCount,
           batchId: batchId || null,
           batchKind: batchKind || null,
           batchTrackIndex:
@@ -913,13 +918,17 @@ async function processJob(job) {
         getFileUrl: () => createProviderFileUrl(job.id),
       },
       speakerLabels: job.speaker_labels,
+      speakerCount: payload.speakerCount,
       source: job.source,
       language: job.language,
       audioMode: job.audio_mode,
       translateTo: job.translate_to || "",
       dictionaryKeywords: payload.dictionaryKeywords || [],
       transcriptionSettings: payload.transcriptionSettings || {},
-      providerMetadata: { job_id: job.id },
+      providerMetadata: {
+        job_id: job.id,
+        audioProfile: { durationSeconds: expectedDuration },
+      },
       validateResult: ({ duration }) =>
         validateAfterTranscription({
           userId: job.user_id,

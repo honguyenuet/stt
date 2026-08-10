@@ -45,9 +45,15 @@ import {
   formatMediaDuration as formatDuration,
   sumMediaDurations,
 } from "@/lib/format-duration";
-import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  buildDashboardHistoryPath,
+  selectDashboardFolder,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
-const API_URL = getApiBaseUrl();
+const API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "http://localhost:3001";
 
 const SPARKLES = [
   { top: "6%", left: "18%", delay: 0, size: "h-1.5 w-1.5" },
@@ -100,28 +106,114 @@ function DashboardPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyRetryKey, setHistoryRetryKey] = useState(0);
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [folderListError, setFolderListError] = useState("");
+  const [folderOpen, setFolderOpen] = useState(false);
+  const [folderName, setFolderName] = useState("Dự án mới");
+  const [folderSaving, setFolderSaving] = useState(false);
+  const [folderError, setFolderError] = useState("");
 
   useEffect(() => {
-    if (!user || !token) return;
+    if (!user || !token) {
+      setFolders([]);
+      setActiveFolderId(null);
+      setFoldersLoaded(false);
+      return;
+    }
+
     let active = true;
+    setFoldersLoaded(false);
+    void fetch(`${API_URL}/api/transcribe/folders`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as {
+          folders?: DashboardFolder[];
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(body.folders)) {
+          throw new Error(body.error || "Không tải được thư mục");
+        }
+        if (!active) return;
+
+        const storageKey = `vbee.dashboard.folder.${user.id}`;
+        const storedId = Number(window.sessionStorage.getItem(storageKey));
+        const selected = selectDashboardFolder(
+          body.folders,
+          Number.isInteger(storedId) && storedId > 0 ? storedId : null,
+        );
+        setFolders(body.folders);
+        setActiveFolderId(selected?.id ?? null);
+        setFolderListError("");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setFolders([]);
+        setActiveFolderId(null);
+        setFolderListError(
+          error instanceof Error ? error.message : "Không tải được thư mục",
+        );
+      })
+      .finally(() => {
+        if (active) setFoldersLoaded(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [historyRetryKey, user, token]);
+
+  useEffect(() => {
+    if (!user || !activeFolderId) return;
+    window.sessionStorage.setItem(
+      `vbee.dashboard.folder.${user.id}`,
+      String(activeFolderId),
+    );
+  }, [activeFolderId, user]);
+
+  useEffect(() => {
+    if (!user || !token || !foldersLoaded) return;
+    let active = true;
+    setHistory([]);
+    setHistoryError("");
     const loadHistory = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/transcribe/history`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const body = (await response.json().catch(() => [])) as
-          | HistoryItem[]
-          | { error?: string };
-        if (!response.ok || !Array.isArray(body)) {
-          throw new Error(
-            !Array.isArray(body) && body.error
-              ? body.error
-              : "Không tải được lịch sử chuyển đổi",
-          );
+        const response = await fetch(
+          `${API_URL}${buildDashboardHistoryPath(activeFolderId)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          items?: HistoryItem[];
+          pagination?: { total?: number };
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(body.items)) {
+          throw new Error(body.error || "Không tải được lịch sử chuyển đổi");
         }
         if (active) {
-          setHistory(body.slice(0, 3));
+          const items = body.items;
+          const total = Number(body.pagination?.total);
+          setHistory(items);
+          if (activeFolderId) {
+            setFolders((current) =>
+              current.map((folder) =>
+                folder.id === activeFolderId
+                  ? {
+                      ...folder,
+                      item_count: Number.isFinite(total)
+                        ? total
+                        : items.length,
+                    }
+                  : folder,
+              ),
+            );
+          }
           setHistoryError("");
         }
       } catch (error) {
@@ -142,7 +234,7 @@ function DashboardPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [historyRetryKey, user, token]);
+  }, [activeFolderId, foldersLoaded, historyRetryKey, user, token]);
 
   // ── Edit profile state ──────────────────────────────────────────────
   const [editOpen, setEditOpen] = useState(false);
@@ -165,9 +257,6 @@ function DashboardPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
-  const [folderOpen, setFolderOpen] = useState(false);
-  const [folderName, setFolderName] = useState("Dự án mới");
-  const [activeFolder, setActiveFolder] = useState("Dự án mới");
   const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
     null,
   );
@@ -255,7 +344,7 @@ function DashboardPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      setProfileError("Vui lòng chọn file ảnh hợp lệ");
+      setProfileError("Vui lòng chọn tệp ảnh hợp lệ");
       return;
     }
     setProfileError("");
@@ -393,12 +482,39 @@ function DashboardPage() {
     }
   }
 
-  function handleCreateFolder() {
+  async function handleCreateFolder() {
     const name = folderName.trim();
-    if (!name) return;
-    setActiveFolder(name);
-    setFolderOpen(false);
-    setFolderName("Dự án mới");
+    if (!name || !token || folderSaving) return;
+    setFolderSaving(true);
+    setFolderError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: { id: number; name: string };
+        error?: string;
+      };
+      if (!response.ok || !body.folder) {
+        throw new Error(body.error || "Không tạo được thư mục");
+      }
+      const createdFolder = { ...body.folder, item_count: 0 };
+      setFolders((current) => [...current, createdFolder]);
+      setActiveFolderId(createdFolder.id);
+      setFolderOpen(false);
+      setFolderName("Dự án mới");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không tạo được thư mục",
+      );
+    } finally {
+      setFolderSaving(false);
+    }
   }
 
   function openFeature(label: string) {
@@ -426,8 +542,8 @@ function DashboardPage() {
       setActionDialog({
         title: label,
         description:
-          "Phần tích hợp này sẽ dùng API key và webhook. Mở trang API để tạo key, test endpoint và chuẩn bị tích hợp giống Sonix.",
-        ctaLabel: "Mở trang API",
+          "Tích hợp này chưa được kết nối trong phiên bản hiện tại. Bạn có thể mở trang API để tạo key và webhook trước khi triển khai.",
+        ctaLabel: "Xem cấu hình API",
         to: "/api",
       });
       return;
@@ -436,8 +552,8 @@ function DashboardPage() {
       setActionDialog({
         title: label,
         description:
-          "Phân tích AI sẽ dùng bản chép lời đã tạo để tóm tắt, trích ý chính và tìm chủ đề. Trước mắt bạn có thể mở lịch sử để chọn bản chép lời cần phân tích.",
-        ctaLabel: "Mở lịch sử",
+          "Phân tích AI chưa được triển khai trong phiên bản hiện tại. Bạn vẫn có thể mở lịch sử để xem và chỉnh sửa các bản chép lời đã tạo.",
+        ctaLabel: "Xem bản chép lời",
         to: "/history",
       });
       return;
@@ -450,16 +566,16 @@ function DashboardPage() {
       setActionDialog({
         title: label,
         description:
-          "Bạn có thể dùng trang ghi âm để mở bảng trợ giúp, hoặc quay lại tải file hoặc ghi âm để bắt đầu.",
-        ctaLabel: "Mở ghi âm",
-        to: "/record",
+          "Mở trung tâm hỗ trợ để xem hướng dẫn, câu hỏi thường gặp hoặc gửi yêu cầu cho đội ngũ Vbee.",
+        ctaLabel: "Mở trung tâm hỗ trợ",
+        to: "/support",
       });
       return;
     }
     setActionDialog({
       title: label,
       description:
-        "Thiết lập này đã có điểm bấm và sẽ được nối sâu hơn khi có màn cấu hình riêng.",
+        "Tính năng này chưa có màn cấu hình trong phiên bản hiện tại.",
     });
   }
 
@@ -480,6 +596,7 @@ function DashboardPage() {
 
   const initials =
     `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
+  const activeFolder = selectDashboardFolder(folders, activeFolderId);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-background font-sans text-foreground antialiased">
@@ -544,7 +661,7 @@ function DashboardPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
               >
                 <Upload className="h-4 w-4" />
-                TẢI FILE
+                TẢI TỆP
               </Link>
               <button
                 onClick={() => setFolderOpen(true)}
@@ -579,16 +696,51 @@ function DashboardPage() {
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
                     DỰ ÁN
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <label className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
-                    {activeFolder}
-                  </div>
+                    <span className="sr-only">Chọn thư mục dự án</span>
+                    <select
+                      value={activeFolderId ?? ""}
+                      onChange={(event) =>
+                        setActiveFolderId(Number(event.target.value) || null)
+                      }
+                      disabled={folders.length === 0}
+                      className="max-w-64 bg-transparent font-semibold outline-none disabled:cursor-not-allowed"
+                    >
+                      {folders.length === 0 ? (
+                        <option value="">Dự án mới</option>
+                      ) : (
+                        folders.map((folder) => (
+                          <option key={folder.id} value={folder.id}>
+                            {folder.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
                 </div>
                 <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
-                  {history.length} tệp
+                  {activeFolder?.item_count ?? history.length} tệp
                 </div>
               </div>
             </div>
+
+            {folderListError && (
+              <div className="mx-5 mt-5 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
+                <span role="alert" className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  {folderListError}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setHistoryRetryKey((value) => value + 1)}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-destructive/30 bg-white px-4 py-2 text-xs font-bold"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Thử lại
+                </button>
+              </div>
+            )}
 
             {historyError && (
               <div className="m-5 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -611,11 +763,11 @@ function DashboardPage() {
               <div className="m-5 rounded-2xl border border-dashed border-border bg-background/35 p-8 text-center">
                 <UploadCloud className="mx-auto h-12 w-12 text-primary" />
                 <h2 className="mt-4 text-xl font-black">
-                  Chưa có file transcript
+                  Chưa có văn bản
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                  Bắt đầu giống Sonix: tải file, ghi âm trực tiếp, rồi mọi bản
-                  transcript sẽ xuất hiện trong workspace này.
+                  Bắt đầu bằng cách tải tệp hoặc ghi âm trực tiếp. Mọi văn bản
+                  trong thư mục này sẽ xuất hiện tại đây sau khi xử lý.
                 </p>
                 <div className="mt-5 flex flex-wrap justify-center gap-3">
                   <Link
@@ -623,7 +775,7 @@ function DashboardPage() {
                     className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow"
                   >
                     <Upload className="h-4 w-4" />
-                    Tải file đầu tiên
+                    Tải tệp đầu tiên
                   </Link>
                   <Link
                     to="/record"
@@ -718,7 +870,7 @@ function DashboardPage() {
             <DashboardSideSection
               title="HỖ TRỢ"
               items={[
-                [BookOpen, "Video hướng dẫn"],
+                [BookOpen, "Nội dung hướng dẫn"],
                 [MessageCircle, "Trung tâm hỗ trợ"],
               ]}
               onAction={openFeature}
@@ -846,7 +998,7 @@ function DashboardPage() {
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                Email
+                Thư điện tử
               </label>
               <input
                 value={user.email}
@@ -854,7 +1006,7 @@ function DashboardPage() {
                 className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
               />
               <p className="text-xs text-muted-foreground/60">
-                Email liên kết với tài khoản, không thể thay đổi
+                Thư điện tử liên kết với tài khoản, không thể thay đổi
               </p>
             </div>
 
@@ -1090,19 +1242,27 @@ function DashboardPage() {
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
         <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Tạo folder mới</DialogTitle>
+            <DialogTitle>Tạo thư mục mới</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm leading-6 text-muted-foreground">
-              Folder sẽ được hiển thị trong workspace hiện tại để bạn tổ chức
-              transcript giống Sonix.
+              Thư mục mới sẽ được chọn ngay để bạn sắp xếp các văn bản đã
+              chuyển đổi.
             </p>
             <input
               value={folderName}
-              onChange={(e) => setFolderName(e.target.value)}
+              onChange={(e) => {
+                setFolderName(e.target.value);
+                setFolderError("");
+              }}
               className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
-              placeholder="Tên folder"
+              placeholder="Tên thư mục"
             />
+            {folderError && (
+              <p className="rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+                {folderError}
+              </p>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
@@ -1111,10 +1271,11 @@ function DashboardPage() {
                 Hủy
               </button>
               <button
-                onClick={handleCreateFolder}
-                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                onClick={() => void handleCreateFolder()}
+                disabled={folderSaving || !folderName.trim()}
+                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Tạo folder
+                {folderSaving ? "Đang tạo..." : "Tạo thư mục"}
               </button>
             </div>
           </div>
@@ -1168,8 +1329,8 @@ function CustomerJourneyPanel() {
       icon: UploadCloud,
       step: "01",
       title: "Tạo bản chép lời",
-      desc: "Tải file âm thanh, video hoặc ghi âm trực tiếp để bắt đầu.",
-      cta: "Tải file",
+      desc: "Tải tệp âm thanh, nội dung nghe nhìn hoặc ghi âm trực tiếp để bắt đầu.",
+      cta: "Tải tệp",
       to: "/upload",
     },
     {
@@ -1206,7 +1367,7 @@ function CustomerJourneyPanel() {
             Luồng khách hàng
           </p>
           <h2 className="mt-1 text-xl font-black text-foreground">
-            Bắt đầu, xử lý, xuất file và quay lại lịch sử trong một đường đi
+            Bắt đầu, xử lý, xuất tệp và quay lại lịch sử trong một đường đi
           </h2>
         </div>
         <span className="w-fit rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-black text-primary">
@@ -1299,12 +1460,12 @@ function WorkspaceFileRow({ item }: { item: HistoryItem }) {
           </span>
           {isFailed && (
             <p className="mt-2 text-xs font-semibold leading-5 text-destructive">
-              {item.error_message || "Job xử lý thất bại"}
+              {item.error_message || "Tác vụ xử lý thất bại"}
             </p>
           )}
           {!isFailed && item.translation_error && (
             <p className="mt-2 text-xs font-semibold leading-5 text-destructive">
-              Transcript đã hoàn thành nhưng bản dịch bị lỗi:{" "}
+              Văn bản đã hoàn thành nhưng bản dịch bị lỗi:{" "}
               {item.translation_error}
             </p>
           )}

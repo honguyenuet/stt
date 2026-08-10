@@ -109,7 +109,7 @@ function AdminUsersPage() {
       <AdminPanel>
         <AdminPanelHeader
           title="Quản lý người dùng"
-          description="Tìm kiếm, lọc, phân trang và quản trị quota/vai trò người dùng."
+          description="Tìm kiếm, lọc, phân trang và quản trị thời lượng/vai trò người dùng."
         />
         <div className="grid gap-3 p-4 md:grid-cols-4">
           <input
@@ -118,7 +118,7 @@ function AdminUsersPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Tìm tên hoặc email"
+            placeholder="Tìm tên hoặc thư điện tử"
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
           />
           <select
@@ -168,10 +168,10 @@ function AdminUsersPage() {
                 <tr>
                   {[
                     "Tên",
-                    "Email",
+                    "Thư điện tử",
                     "Vai trò",
                     "Trạng thái",
-                    "Quota",
+                    "Thời lượng",
                     "Đã dùng",
                     "Ngày tạo",
                     "Đăng nhập gần nhất",
@@ -245,20 +245,20 @@ function AdminUsersPage() {
           <div className="grid gap-5 p-4 xl:grid-cols-3">
             <div className="space-y-2 text-sm">
               <p>
-                <b>Email:</b> {selected.email}
+                <b>Thư điện tử:</b> {selected.email}
               </p>
               <p>
                 <b>Trạng thái:</b> <StatusBadge status={selected.status} />
               </p>
               <p>
-                <b>Quota:</b> {formatMinutes(selected.quota_minutes)}
+                <b>Thời lượng:</b> {formatMinutes(selected.quota_minutes)}
               </p>
               <p>
                 <b>Đã dùng:</b> {formatMinutes(selected.used_minutes)}
               </p>
               <p className="text-[#756894]">
-                Tệp và job chuyển giọng nói của người dùng được tổng hợp từ
-                backend admin API.
+                Tệp và tác vụ chuyển giọng nói của người dùng được tổng hợp từ
+                API quản trị máy chủ.
               </p>
             </div>
             <div className="space-y-3">
@@ -324,7 +324,7 @@ function AdminUsersPage() {
               </p>
             </div>
             <div className="space-y-3">
-              <h3 className="font-black">Điều chỉnh quota</h3>
+              <h3 className="font-black">Điều chỉnh thời lượng</h3>
               <input
                 type="number"
                 value={quotaDelta}
@@ -344,7 +344,7 @@ function AdminUsersPage() {
               )}
               {!quotaReason.trim() && (
                 <p className="text-xs text-[#756894]">
-                  Nhập lý do điều chỉnh để bật nút lưu quota.
+                  Nhập lý do điều chỉnh để bật nút lưu thời lượng.
                 </p>
               )}
               <button
@@ -353,12 +353,12 @@ function AdminUsersPage() {
                   void mutate(
                     "quota",
                     () => adjustUserQuota(selected.id, quotaDelta, quotaReason),
-                    "Đã điều chỉnh quota",
+                    "Đã điều chỉnh thời lượng",
                   )
                 }
                 className="w-full rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
               >
-                {savingAction === "quota" ? "Đang lưu..." : "Lưu quota"}
+                {savingAction === "quota" ? "Đang lưu..." : "Lưu thời lượng"}
               </button>
             </div>
           </div>

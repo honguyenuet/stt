@@ -4,6 +4,7 @@ const pool = require("../db");
 const {
   annotateProviderError,
   createHttpError,
+  createMissingSpeakerLabelsError,
   createProviderResultError,
   createProvidersExhaustedError,
   isProviderFallbackEligible,
@@ -38,6 +39,32 @@ test("empty transcript can fall through to the next provider", () => {
   assert.equal(error.providerResultRejected, true);
   assert.equal(error.retryable, false);
   assert.equal(isProviderFallbackEligible(error), true);
+});
+
+test("missing speaker labels falls through to a diarization-capable provider", () => {
+  const error = createMissingSpeakerLabelsError("vbee");
+
+  assert.equal(error.code, "MISSING_SPEAKER_LABELS");
+  assert.equal(isProviderFallbackEligible(error), true);
+});
+
+test("speaker count mismatch keeps its actionable message after failover", () => {
+  const mismatch = createHttpError(
+    422,
+    "AssemblyAI phát hiện 3 nhãn người nói, vượt quá 2 người đã chọn.",
+  );
+  mismatch.code = "SPEAKER_COUNT_MISMATCH";
+  mismatch.providerResultRejected = true;
+
+  const exhausted = createProvidersExhaustedError({
+    providerAttempts: [{ provider: "assemblyai", status: "failed" }],
+    providerErrors: [
+      { provider: "assemblyai", status: "failed", error: mismatch },
+    ],
+    audioMode: "speech",
+  });
+
+  assert.match(exhausted.message, /vượt quá 2 người đã chọn/i);
 });
 
 test("final provider error is emitted only after all attempts are exhausted", () => {

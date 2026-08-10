@@ -15,6 +15,17 @@ export const Route = createFileRoute("/admin/settings")({
   component: AdminSettingsPage,
 });
 
+const SUPPORTED_FORMAT_OPTIONS = [
+  "mp3",
+  "wav",
+  "m4a",
+  "ogg",
+  "flac",
+  "aac",
+  "mp4",
+  "webm",
+];
+
 function AdminSettingsPage() {
   const session = useAdminSession();
   const [settings, setSettings] = useState<AdminSettings | null>(null);
@@ -49,6 +60,26 @@ function AdminSettingsPage() {
   }
 
   useEffect(load, []);
+
+  function toggleFormat(format: string) {
+    const selected = new Set(
+      formats
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean),
+    );
+    if (selected.has(format)) selected.delete(format);
+    else selected.add(format);
+    const customFormats = [...selected].filter(
+      (item) => !SUPPORTED_FORMAT_OPTIONS.includes(item),
+    );
+    setFormats(
+      [
+        ...SUPPORTED_FORMAT_OPTIONS.filter((item) => selected.has(item)),
+        ...customFormats,
+      ].join(", "),
+    );
+  }
 
   async function save() {
     if (!settings) return;
@@ -89,11 +120,11 @@ function AdminSettingsPage() {
         <AdminPanel>
           <AdminPanelHeader
             title="Cài đặt"
-            description="Cấu hình toàn cục được đọc và lưu qua backend admin settings API."
+            description="Cấu hình toàn cục được đọc và lưu qua API cài đặt quản trị của máy chủ."
           />
           <div className="grid gap-4 p-4 md:grid-cols-2">
             <Field
-              label="Giới hạn dung lượng file (MB)"
+              label="Giới hạn dung lượng tệp (MB)"
               value={settings.max_file_size_mb}
               onChange={(value) =>
                 setSettings({ ...settings, max_file_size_mb: value })
@@ -101,7 +132,7 @@ function AdminSettingsPage() {
               disabled={!canEdit}
             />
             <Field
-              label="Giới hạn thời lượng file (phút)"
+              label="Giới hạn thời lượng tệp (phút)"
               value={settings.max_file_duration_minutes}
               onChange={(value) =>
                 setSettings({ ...settings, max_file_duration_minutes: value })
@@ -109,7 +140,7 @@ function AdminSettingsPage() {
               disabled={!canEdit}
             />
             <Field
-              label="Số lần chạy lại job"
+              label="Số lần chạy lại tác vụ"
               value={settings.max_retry_attempts}
               onChange={(value) =>
                 setSettings({ ...settings, max_retry_attempts: value })
@@ -117,7 +148,7 @@ function AdminSettingsPage() {
               disabled={!canEdit}
             />
             <Field
-              label="Quota mặc định cho người dùng mới (phút)"
+              label="Thời lượng mặc định cho người dùng mới (phút)"
               value={settings.default_quota_minutes}
               onChange={(value) =>
                 setSettings({ ...settings, default_quota_minutes: value })
@@ -135,10 +166,10 @@ function AdminSettingsPage() {
                 className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
               >
                 <option value="keep_transcripts_and_media">
-                  Giữ transcript và media
+                  Giữ văn bản và nội dung âm thanh/hình ảnh động
                 </option>
                 <option value="delete_media_keep_transcript">
-                  Xóa media, giữ transcript
+                  Xóa nội dung âm thanh/hình ảnh động, giữ văn bản
                 </option>
                 <option value="delete_all_after_retention">
                   Xóa toàn bộ sau thời gian lưu dữ liệu
@@ -153,15 +184,39 @@ function AdminSettingsPage() {
               }
               disabled={!canEdit}
             />
-            <label className="block text-sm font-bold md:col-span-2">
-              Định dạng hỗ trợ
-              <input
-                disabled={!canEdit}
-                value={formats}
-                onChange={(e) => setFormats(e.target.value)}
-                className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
-              />
-            </label>
+            <fieldset className="md:col-span-2">
+              <legend className="text-sm font-bold">Định dạng hỗ trợ</legend>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {SUPPORTED_FORMAT_OPTIONS.map((format) => {
+                  const selected = formats
+                    .split(",")
+                    .map((item) => item.trim().toLowerCase())
+                    .includes(format);
+                  return (
+                    <label
+                      key={format}
+                      className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-black transition focus-within:outline-none focus-within:ring-2 focus-within:ring-[#ffcb05] ${
+                        selected
+                          ? "border-[#ffcb05] bg-[#fff6cc] text-[#21104a]"
+                          : "border-[#e4ddcf] bg-white text-[#756894]"
+                      } ${!canEdit ? "cursor-not-allowed opacity-60" : "hover:border-[#ffcb05]"}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={selected}
+                        disabled={!canEdit}
+                        onChange={() => toggleFormat(format)}
+                      />
+                      {format.toUpperCase()}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs font-normal text-[#756894]">
+                Các định dạng bật ở đây sẽ được áp dụng cho trang tải tệp và API.
+              </p>
+            </fieldset>
             <label className="block text-sm font-bold md:col-span-2">
               Tham số hệ thống JSON
               <textarea
@@ -172,8 +227,8 @@ function AdminSettingsPage() {
                 className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 font-mono text-xs disabled:opacity-60"
               />
               <span className="mt-1 block text-xs font-normal text-[#756894]">
-                queue_concurrency là số job xử lý đồng thời;
-                queue_retention_ms là thời gian giữ bản ghi job đã kết thúc.
+                queue_concurrency là số tác vụ xử lý đồng thời;
+                queue_retention_ms là thời gian giữ bản ghi tác vụ đã kết thúc.
               </span>
             </label>
             <label className="block text-sm font-bold md:col-span-2">

@@ -211,6 +211,7 @@ router.post(
           transcriptionSettings: userSettings.transcriptionSettings,
           speakerLabels:
             req.body.speakerLabels === "true" || req.body.speakerLabels === true,
+          speakerCount: req.body.speakerCount,
           expectedDurationSeconds,
           customerWebhook,
         });
@@ -251,6 +252,10 @@ router.post(
         transcriptionSettings: userSettings.transcriptionSettings,
         speakerLabels:
           req.body.speakerLabels === "true" || req.body.speakerLabels === true,
+        speakerCount: req.body.speakerCount,
+        providerMetadata: {
+          audioProfile: { durationSeconds: expectedDurationSeconds },
+        },
         validateResult: ({ duration }) =>
           validateAfterTranscription({
             userId: req.user.id,

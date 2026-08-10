@@ -337,6 +337,7 @@ function TranscriptEditorPage() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
   const playWhenReadyRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
   const loadRequestRef = useRef<AbortController | null>(null);
@@ -373,6 +374,31 @@ function TranscriptEditorPage() {
     () => summarizeConfidence(words),
     [words],
   );
+
+  const resizeEditorTextarea = useCallback(() => {
+    const textarea = editorTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    const viewportLimit = Math.max(
+      320,
+      Math.min(Math.round(window.innerHeight * 0.68), 760),
+    );
+    const nextHeight = Math.min(
+      Math.max(textarea.scrollHeight, 260),
+      viewportLimit,
+    );
+    textarea.style.height = `${nextHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    if (editorMode === "edit") resizeEditorTextarea();
+  }, [editorMode, editorText, resizeEditorTextarea]);
+
+  useEffect(() => {
+    window.addEventListener("resize", resizeEditorTextarea);
+    return () => window.removeEventListener("resize", resizeEditorTextarea);
+  }, [resizeEditorTextarea]);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -424,7 +450,7 @@ function TranscriptEditorPage() {
         throw new Error(
           "error" in body && body.error
             ? body.error
-            : "Không thể tải transcript",
+            : "Không thể tải văn bản",
         );
       }
       const detail = body as TranscriptDetail;
@@ -452,7 +478,7 @@ function TranscriptEditorPage() {
           ? "Máy chủ phản hồi quá lâu. Vui lòng thử lại."
           : error instanceof Error
             ? error.message
-            : "Không thể tải transcript.",
+            : "Không thể tải văn bản.",
       );
     } finally {
       window.clearTimeout(timer);
@@ -516,7 +542,7 @@ function TranscriptEditorPage() {
         error?: string;
       };
       if (!response.ok || !body.url) {
-        throw new Error(body.error || "Không tạo được đường dẫn audio");
+        throw new Error(body.error || "Không tạo được đường dẫn âm thanh");
       }
       setAudioUrl(
         body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
@@ -524,7 +550,7 @@ function TranscriptEditorPage() {
     } catch (error) {
       playWhenReadyRef.current = false;
       setAudioError(
-        error instanceof Error ? error.message : "Không tải được audio gốc",
+        error instanceof Error ? error.message : "Không tải được âm thanh gốc",
       );
     } finally {
       setAudioLoading(false);
@@ -810,7 +836,7 @@ function TranscriptEditorPage() {
         setPlaybackSeconds(0);
       }
       void audio.play().catch(() => {
-        setAudioError("Không thể phát audio. Vui lòng thử tải lại trang.");
+        setAudioError("Không thể phát âm thanh. Vui lòng thử tải lại trang.");
       });
     } else {
       audio.pause();
@@ -871,7 +897,7 @@ function TranscriptEditorPage() {
       const saved = await saveTranscript(editorText);
       if (!saved) {
         throw new Error(
-          "Chưa lưu được transcript mới nhất nên hệ thống chưa bắt đầu dịch.",
+          "Chưa lưu được văn bản mới nhất nên hệ thống chưa bắt đầu dịch.",
         );
       }
       const response = await fetch(
@@ -1012,7 +1038,7 @@ function TranscriptEditorPage() {
         <main className="mx-auto flex max-w-xl flex-col items-center px-4 py-20 text-center">
           <AlertCircle className="h-10 w-10 text-destructive" />
           <h1 className="mt-4 text-xl font-black text-[#21104a]">
-            Không mở được transcript
+            Không mở được văn bản
           </h1>
           <p className="mt-2 text-sm leading-6 text-[#756894]">{loadError}</p>
           <div className="mt-6 flex gap-2">
@@ -1059,7 +1085,7 @@ function TranscriptEditorPage() {
             </Link>
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#8a7da1]">
-                Trình biên tập transcript
+                Trình biên tập văn bản
               </p>
               <h1 className="truncate text-lg font-black md:text-xl">
                 {transcript.filename}
@@ -1135,7 +1161,7 @@ function TranscriptEditorPage() {
                   onError={() => {
                     setIsPlaying(false);
                     setAudioError(
-                      "Không phát được audio. Vui lòng tải lại trang và thử lại.",
+                      "Không phát được âm thanh. Vui lòng tải lại trang và thử lại.",
                     );
                   }}
                   className="hidden"
@@ -1199,7 +1225,7 @@ function TranscriptEditorPage() {
               </div>
 
               <label className="mt-3 block">
-                <span className="sr-only">Vị trí phát audio</span>
+                <span className="sr-only">Vị trí phát âm thanh</span>
                 <input
                   type="range"
                   min={0}
@@ -1216,7 +1242,7 @@ function TranscriptEditorPage() {
             </>
           ) : (
             <p className="rounded-md bg-white/8 px-3 py-2 text-xs text-white/70">
-              Bản ghi này không có audio để nghe lại.
+              Bản ghi này không có âm thanh để nghe lại.
             </p>
           )}
           {audioError && (
@@ -1279,10 +1305,10 @@ function TranscriptEditorPage() {
                 )}
                 <p className="text-xs text-[#8a7da1]">
                   {words.length > MAX_SYNC_WORDS
-                    ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
+                    ? "Văn bản quá dài, hãy dùng chế độ chỉnh sửa để thao tác mượt hơn."
                     : syncAvailable
                       ? "Bấm vào từ để nghe đúng vị trí và chỉnh sửa."
-                      : "Bản ghi chưa có timestamp theo từng từ."}
+                      : "Bản ghi chưa có mốc thời gian theo từng từ."}
                 </p>
               </div>
             </div>
@@ -1290,7 +1316,7 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
-                className="max-h-[calc(100vh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7"
+                className="max-h-[calc(100vh-245px)] min-h-[260px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7"
               >
                 <div className="mx-auto max-w-3xl space-y-6">
                   {segments.map((segment, segmentIndex) => (
@@ -1334,7 +1360,7 @@ function TranscriptEditorPage() {
                 {syncAvailable && (
                   <div className="mb-3 rounded-lg border border-[#f1d460] bg-[#fff9dd] px-4 py-3">
                     <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#7b5e00]">
-                      Theo dõi audio khi chỉnh sửa
+                      Theo dõi âm thanh khi chỉnh sửa
                     </p>
                     <p
                       data-typography="content"
@@ -1364,12 +1390,13 @@ function TranscriptEditorPage() {
                   </div>
                 )}
                 <textarea
+                  ref={editorTextareaRef}
                   data-typography="content"
                   value={editorText}
                   onChange={(event) => setEditorText(event.target.value)}
-                  aria-label="Nội dung transcript"
+                  aria-label="Nội dung văn bản"
                   spellCheck
-                  className="min-h-[560px] w-full resize-y rounded-lg border border-[#ded5e9] bg-[#fbfaf7] px-5 py-4 text-[15px] leading-8 text-[#342752] outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
+                  className="min-h-[260px] max-h-[68vh] w-full resize-y overflow-y-auto rounded-lg border border-[#ded5e9] bg-[#fbfaf7] px-5 py-4 text-[15px] leading-8 text-[#342752] outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
                 />
                 <div className="mt-2 flex items-center justify-between text-xs text-[#8a7da1]">
                   <span>{editorText.length.toLocaleString("vi-VN")} ký tự</span>
@@ -1460,7 +1487,7 @@ function TranscriptEditorPage() {
 
             <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
               <h2 className="flex items-center gap-2 text-sm font-black">
-                <Download className="h-4 w-4 text-[#8067aa]" /> Xuất transcript
+                <Download className="h-4 w-4 text-[#8067aa]" /> Xuất văn bản
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
@@ -1588,7 +1615,7 @@ function TranscriptEditorPage() {
                   })
                 ) : (
                   <p className="text-xs leading-5 text-[#8a7da1]">
-                    File này chưa bật nhận diện người nói.
+                    Tệp này chưa bật nhận diện người nói.
                   </p>
                 )}
               </div>
@@ -1637,7 +1664,7 @@ function TranscriptEditorPage() {
                       : "Tạo bản dịch"}
                 </button>
                 <p className="text-[11px] leading-5 text-[#8a7da1]">
-                  Hệ thống lưu transcript đã chỉnh sửa trước rồi mới dịch.
+                  Hệ thống lưu văn bản đã chỉnh sửa trước rồi mới dịch.
                 </p>
               </div>
               {transcript.translated_text ? (
@@ -1654,7 +1681,7 @@ function TranscriptEditorPage() {
                   <p className="text-xs leading-5 text-[#8a7da1]">
                     {transcript.translation_error
                       ? "Bản dịch chưa hoàn tất. Hệ thống đã thử các nhà cung cấp dự phòng nhưng chưa nhận được kết quả."
-                      : "Transcript này chưa có bản dịch."}
+                      : "Văn bản này chưa có bản dịch."}
                   </p>
                   {translationRetryError && (
                     <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs font-semibold leading-5 text-red-700">

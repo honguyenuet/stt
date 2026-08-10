@@ -73,7 +73,7 @@ function AdminReportsPage() {
         <div className="space-y-5">
           <div className="grid gap-3 md:grid-cols-4">
             <Metric label="Người dùng" value={report.users.total} />
-            <Metric label="Job" value={report.jobs.total} />
+            <Metric label="Tác vụ" value={report.jobs.total} />
             <Metric
               label="Âm thanh đã xử lý"
               value={`${report.audio.processed_minutes} phút`}
@@ -87,7 +87,7 @@ function AdminReportsPage() {
               value={`${report.jobs.success_rate}%`}
             />
             <Metric
-              label="Quota đã dùng"
+              label="Thời lượng đã dùng"
               value={`${report.quota.used_minutes}/${report.quota.allocated_minutes}`}
             />
             <Metric
@@ -133,7 +133,7 @@ function AdminReportsPage() {
           <AdminPanel>
             <AdminPanelHeader
               title="Theo dõi hệ thống"
-              description="Cơ sở dữ liệu, backend, trạng thái nhà cung cấp và timestamp."
+              description="Cơ sở dữ liệu, máy chủ, trạng thái nhà cung cấp và thời điểm ghi nhận."
             />
             <pre className="overflow-auto p-4 text-xs">
               {JSON.stringify(status, null, 2)}

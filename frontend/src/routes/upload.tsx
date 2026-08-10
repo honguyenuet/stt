@@ -18,8 +18,8 @@ import {
   Home,
   Info,
   Layers3,
-  Languages,
   ListChecks,
+  Link2,
   Mic,
   RotateCcw,
   RefreshCw,
@@ -28,7 +28,6 @@ import {
   Upload,
   UploadCloud,
   X,
-  Youtube,
   Zap,
 } from "lucide-react";
 import { Document, Packer, Paragraph, TextRun } from "docx";
@@ -49,22 +48,57 @@ import {
   normalizeEstimatedRemainingSeconds,
   tickEstimatedRemainingSeconds,
 } from "@/lib/job-progress";
-import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import {
+  formatPlanLabel,
+  formatQuotaTime,
+  type QuotaStatus,
+} from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
-import { getApiBaseUrl } from "@/lib/api-base-url";
+import { SPEAKER_COUNT_OPTIONS } from "@/lib/speaker-options";
 
-const API_URL = getApiBaseUrl();
+const API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "http://localhost:3001";
 const MAX_MB = 200;
 const HISTORY_PREVIEW_LIMIT = 8;
 
-const FORMAT_TAGS = ["MP3", "WAV", "M4A", "OGG", "FLAC", "AAC", "MP4", "WEBM"];
+const DEFAULT_UPLOAD_FORMATS = [
+  "mp3",
+  "wav",
+  "m4a",
+  "ogg",
+  "flac",
+  "aac",
+  "mp4",
+  "webm",
+];
+
+function normalizeSupportedFormats(formats?: string[]) {
+  const normalized = [
+    ...new Set(
+      (Array.isArray(formats) ? formats : [])
+        .map((format) => String(format || "").trim().toLowerCase())
+        .filter((format) => /^[a-z0-9]{2,5}$/.test(format)),
+    ),
+  ];
+  return normalized.length ? normalized : DEFAULT_UPLOAD_FORMATS;
+}
+
+function fileAcceptValue(formats: string[]) {
+  return formats.map((format) => `.${format}`).join(",");
+}
+
+function isSupportedMediaFile(file: File, formats: string[]) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  return formats.includes(extension);
+}
 const UPLOAD_LANGUAGE_OPTIONS = SPEECH_LANGUAGE_OPTIONS.map((item) =>
   item.value === "multi"
-    ? { ...item, label: "Tiếng Việt + English (đa ngôn ngữ)" }
+    ? { ...item, label: "Tiếng Việt + tiếng Anh (đa ngôn ngữ)" }
     : item,
 );
 
@@ -108,7 +142,7 @@ type UploadStatus =
   | "cancelled";
 type UploadMode = "single" | "multi" | "multitrack" | "link";
 type AudioMode = "speech" | "song";
-type YoutubeMetadata = {
+type RemoteMediaMetadata = {
   url: string;
   videoId: string;
   title: string;
@@ -117,6 +151,8 @@ type YoutubeMetadata = {
   approximateBytes: number | null;
   thumbnail: string | null;
   channel: string;
+  platform: string;
+  sourceHost: string;
 };
 type ActionDialogState = {
   title: string;
@@ -206,6 +242,7 @@ function UploadPage() {
   const [uploadError, setUploadError] = useState("");
   const [copied, setCopied] = useState(false);
   const [speakerLabels, setSpeakerLabels] = useState(false);
+  const [speakerCount, setSpeakerCount] = useState("auto");
   const [audioMode, setAudioMode] = useState<AudioMode>("speech");
   const [transcriptionLanguage, setTranscriptionLanguage] = useState("auto");
   const translateTo = "none";
@@ -220,8 +257,8 @@ function UploadPage() {
   const [historyRetryKey, setHistoryRetryKey] = useState(0);
   const [uploadMode, setUploadMode] = useState<UploadMode>("single");
   const [videoLink, setVideoLink] = useState("");
-  const [youtubeMetadata, setYoutubeMetadata] =
-    useState<YoutubeMetadata | null>(null);
+  const [remoteMetadata, setRemoteMetadata] =
+    useState<RemoteMediaMetadata | null>(null);
   const [linkRightsAccepted, setLinkRightsAccepted] = useState(false);
   const [linkMetadataLoading, setLinkMetadataLoading] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
@@ -234,6 +271,9 @@ function UploadPage() {
   );
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+  const supportedFormats = normalizeSupportedFormats(
+    quota?.limits.supportedFormats,
+  );
   const [expectedDuration, setExpectedDuration] = useState<number | null>(null);
   const [queuedJob, setQueuedJob] = useState<{
     id: number;
@@ -370,7 +410,7 @@ function UploadPage() {
           | JobStatusResponse
           | { error?: string };
         if (!response.ok || !("status" in data)) {
-          throw new Error(data.error || "Không cập nhật được trạng thái job");
+          throw new Error(data.error || "Không cập nhật được trạng thái tác vụ");
         }
         if (!active) return;
 
@@ -433,8 +473,8 @@ function UploadPage() {
         setUploadError(
           data.error_message ||
             (data.status === "cancelled"
-              ? "Job đã được hủy."
-              : "Không thể xử lý file này."),
+              ? "Tác vụ đã được hủy."
+              : "Không thể xử lý tệp này."),
         );
       } catch (error) {
         if (!active || controller?.signal.aborted) return;
@@ -500,7 +540,7 @@ function UploadPage() {
           error?: string;
         };
         if (!response.ok || !data.status) {
-          throw new Error(data.error || "Không cập nhật được multitrack");
+          throw new Error(data.error || "Không cập nhật được phiên nhiều rãnh");
         }
         if (!active) return;
         if (["queued", "processing", "merging"].includes(data.status)) {
@@ -535,15 +575,15 @@ function UploadPage() {
         setUploadError(
           data.error ||
             (data.status === "cancelled"
-              ? "Phiên multitrack đã được hủy."
-              : "Không thể hợp nhất các track."),
+              ? "Phiên nhiều rãnh đã được hủy."
+              : "Không thể hợp nhất các rãnh."),
         );
       } catch (error) {
         if (active) {
           setUploadError(
             error instanceof Error
               ? `${error.message}. Hệ thống sẽ tự thử lại.`
-              : "Không cập nhật được multitrack. Hệ thống sẽ tự thử lại.",
+              : "Không cập nhật được phiên nhiều rãnh. Hệ thống sẽ tự thử lại.",
           );
         }
       } finally {
@@ -601,15 +641,15 @@ function UploadPage() {
 
   const activeFolderName =
     folders.find((folder) => folder.id === activeFolderId)?.name ?? "Dự án mới";
-  const hasSelectedSource = Boolean(uploadFiles.length || youtubeMetadata);
+  const hasSelectedSource = Boolean(uploadFiles.length || remoteMetadata);
   const selectedFilename =
     uploadFiles.length > 1
-      ? `${uploadFiles.length} file: ${uploadFiles.map((file) => file.name).join(", ")}`
-      : uploadFiles[0]?.name ?? youtubeMetadata?.filename ?? "transcript";
+      ? `${uploadFiles.length} tệp: ${uploadFiles.map((file) => file.name).join(", ")}`
+      : uploadFiles[0]?.name ?? remoteMetadata?.filename ?? "van-ban";
   const selectedFileSize =
     uploadFiles.length > 0
       ? uploadFiles.reduce((total, file) => total + file.size, 0)
-      : youtubeMetadata?.approximateBytes ?? undefined;
+      : remoteMetadata?.approximateBytes ?? undefined;
 
   const normalizedExpectedDuration = normalizeMediaDuration(expectedDuration);
   const pendingUploadSeconds =
@@ -660,12 +700,10 @@ function UploadPage() {
           : selected.slice(0, 1);
     if (!files.length) return;
     if (
-      files.some(
-        (file) => !/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name),
-      )
+      files.some((file) => !isSupportedMediaFile(file, supportedFormats))
     ) {
       setUploadError(
-        "Định dạng không hỗ trợ. Dùng MP3, WAV, M4A, OGG, FLAC, AAC, MP4 hoặc WEBM.",
+        `Định dạng không hỗ trợ. Dùng ${supportedFormats.map((format) => format.toUpperCase()).join(", ")}.`,
       );
       return;
     }
@@ -675,7 +713,7 @@ function UploadPage() {
     );
     if (oversized) {
       setUploadError(
-        `${oversized.name} quá lớn cho gói hiện tại (tối đa ${maxMb}MB/file)`,
+        `${oversized.name} quá lớn cho gói hiện tại (tối đa ${maxMb} MB/tệp)`,
       );
       return;
     }
@@ -692,7 +730,7 @@ function UploadPage() {
       );
       if (overDurationIndex >= 0) {
         setUploadError(
-          `${files[overDurationIndex].name} vượt giới hạn ${formatQuotaTime(quota.limits.maxFileSeconds)} của gói ${quota.label}`,
+          `${files[overDurationIndex].name} vượt giới hạn ${formatQuotaTime(quota.limits.maxFileSeconds)} của gói ${formatPlanLabel(quota.plan)}`,
         );
         return;
       }
@@ -702,13 +740,13 @@ function UploadPage() {
       );
       if (totalSeconds > quota.remainingSeconds) {
         setUploadError(
-          `Quota còn lại không đủ. Còn ${formatQuotaTime(quota.remainingSeconds)}, các track khoảng ${formatQuotaTime(totalSeconds)}.`,
+          `Thời lượng còn lại không đủ. Còn ${formatQuotaTime(quota.remainingSeconds)}, các rãnh khoảng ${formatQuotaTime(totalSeconds)}.`,
         );
         return;
       }
     }
     setUploadFiles(files);
-    setYoutubeMetadata(null);
+    setRemoteMetadata(null);
     setExpectedDuration(
       durations.reduce((total, value) => total + (value || 0), 0) || null,
     );
@@ -729,15 +767,15 @@ function UploadPage() {
   }
 
   async function handleUpload() {
-    if (!uploadFiles.length && !youtubeMetadata) return;
+    if (!uploadFiles.length && !remoteMetadata) return;
     if (
       (uploadMode === "multi" || uploadMode === "multitrack") &&
       uploadFiles.length < 2
     ) {
       setUploadError(
         uploadMode === "multitrack"
-          ? "Multitrack cần ít nhất 2 file của cùng một phiên ghi."
-          : "Chế độ nhiều file cần chọn ít nhất 2 file.",
+          ? "Chế độ nhiều rãnh cần ít nhất 2 tệp của cùng một phiên ghi."
+          : "Chế độ nhiều tệp cần chọn ít nhất 2 tệp.",
       );
       return;
     }
@@ -749,6 +787,7 @@ function UploadPage() {
         const formData = new FormData();
         uploadFiles.forEach((file) => formData.append("audio", file));
         formData.append("speakerLabels", String(speakerLabels));
+        if (speakerLabels) formData.append("speakerCount", speakerCount);
         formData.append("source", "upload");
         formData.append("audioMode", audioMode);
         formData.append("language", transcriptionLanguage);
@@ -764,7 +803,7 @@ function UploadPage() {
           );
           formData.append(
             "sessionName",
-            `${uploadFiles[0].name.replace(/\.[^.]+$/, "")} - Multitrack.mp3`,
+            `${uploadFiles[0].name.replace(/\.[^.]+$/, "")} - Nhieu-ranh.mp3`,
           );
         }
         if (activeFolderId) {
@@ -795,9 +834,10 @@ function UploadPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            url: youtubeMetadata!.url,
+            url: remoteMetadata!.url,
             rightsAccepted: linkRightsAccepted,
             speakerLabels,
+            speakerCount: speakerLabels ? speakerCount : null,
             audioMode,
             language: transcriptionLanguage,
             translateTo,
@@ -847,7 +887,7 @@ function UploadPage() {
       }
       if (data.rejected?.length) {
         setUploadError(
-          `${data.rejected.length} file chưa được xếp hàng: ${data.rejected.map((item) => item.filename).join(", ")}`,
+          `${data.rejected.length} tệp chưa được xếp hàng: ${data.rejected.map((item) => item.filename).join(", ")}`,
         );
       }
       if (data.jobId) {
@@ -919,7 +959,7 @@ function UploadPage() {
         );
       }
     } catch {
-      setUploadError("Không thể kết nối đến server");
+      setUploadError("Không thể kết nối đến máy chủ");
       setUploadStatus("error");
     }
   }
@@ -937,7 +977,7 @@ function UploadPage() {
         },
       );
       const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Không hủy được job");
+      if (!response.ok) throw new Error(data.error || "Không hủy được tác vụ");
       setQueuedJob(null);
       setMultitrackBatchId(null);
       setUploadStatus("idle");
@@ -947,7 +987,7 @@ function UploadPage() {
       setUploadError(
         cancelError instanceof Error
           ? cancelError.message
-          : "Không hủy được job xử lý.",
+          : "Không hủy được tác vụ xử lý.",
       );
     }
   }
@@ -965,7 +1005,7 @@ function UploadPage() {
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const lines = translated
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -974,7 +1014,7 @@ function UploadPage() {
           translated,
         ]
       : text.split("\n");
-    const baseName = selectedFilename.replace(/\.[^.]+$/, "") || "transcript";
+    const baseName = selectedFilename.replace(/\.[^.]+$/, "") || "van-ban";
     const doc = new Document({
       sections: [
         {
@@ -1002,7 +1042,7 @@ function UploadPage() {
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const content = translated
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -1011,7 +1051,7 @@ function UploadPage() {
           translated,
         ].join("\n")
       : text;
-    const baseName = selectedFilename.replace(/\.[^.]+$/, "") || "transcript";
+    const baseName = selectedFilename.replace(/\.[^.]+$/, "") || "van-ban";
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1026,7 +1066,7 @@ function UploadPage() {
     setAudioUrl(null);
     setWords([]);
     setUploadFiles([]);
-    setYoutubeMetadata(null);
+    setRemoteMetadata(null);
     setVideoLink("");
     setLinkRightsAccepted(false);
     setLinkMetadataLoading(false);
@@ -1072,14 +1112,16 @@ function UploadPage() {
     }
   }
 
-  async function handleVideoLink() {
+  async function handleMediaLink() {
     if (!videoLink.trim()) {
-      setUploadError("Hãy dán link video YouTube trước khi tiếp tục.");
+      setUploadError(
+        "Hãy dán liên kết âm thanh hoặc nội dung nghe nhìn công khai trước khi tiếp tục.",
+      );
       return;
     }
     if (!linkRightsAccepted) {
       setUploadError(
-        "Hãy xác nhận bạn sở hữu video hoặc được phép sử dụng nội dung này.",
+        "Hãy xác nhận bạn sở hữu nội dung nghe nhìn hoặc được phép sử dụng nội dung này.",
       );
       return;
     }
@@ -1105,15 +1147,17 @@ function UploadPage() {
         }),
       });
       const data = (await response.json()) as {
-        metadata?: YoutubeMetadata;
+        metadata?: RemoteMediaMetadata;
         quota?: QuotaStatus;
         error?: string;
       };
       if (!response.ok || !data.metadata) {
         if (data.quota) setQuota(data.quota);
-        throw new Error(data.error || "Không đọc được video YouTube.");
+        throw new Error(
+          data.error || "Không đọc được nội dung từ liên kết này.",
+        );
       }
-      setYoutubeMetadata(data.metadata);
+      setRemoteMetadata(data.metadata);
       setVideoLink(data.metadata.url);
       setExpectedDuration(data.metadata.durationSeconds);
       setUploadStatus("idle");
@@ -1127,7 +1171,7 @@ function UploadPage() {
       setUploadError(
         error instanceof Error
           ? error.message
-          : "Không đọc được video YouTube.",
+          : "Không đọc được nội dung từ liên kết này.",
       );
     } finally {
       setLinkMetadataLoading(false);
@@ -1151,7 +1195,7 @@ function UploadPage() {
         ref={fileInputRef}
         type="file"
         multiple={uploadMode === "multi" || uploadMode === "multitrack"}
-        accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.webm,audio/*"
+        accept={fileAcceptValue(supportedFormats)}
         className="hidden"
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
@@ -1183,7 +1227,7 @@ function UploadPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
               >
                 <Upload className="h-4 w-4" />
-                TẢI FILE
+                TẢI TỆP
               </button>
               <button
                 onClick={() => setFolderOpen(true)}
@@ -1199,15 +1243,15 @@ function UploadPage() {
                     return;
                   }
                   setActionDialog({
-                    title: "Tải transcript",
+                    title: "Tải văn bản",
                     description:
-                      "Bạn cần upload và transcribe xong trước khi tải file .docx.",
-                    ctaLabel: "Chọn file",
+                      "Bạn cần tải tệp lên và chuyển thành văn bản xong trước khi tải tệp .docx.",
+                    ctaLabel: "Chọn tệp",
                     to: "choose-file",
                   });
                 }}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
-                title="Tải transcript"
+                title="Tải văn bản"
               >
                 <Download className="h-4 w-4" />
               </button>
@@ -1276,8 +1320,8 @@ function UploadPage() {
                         1. Chọn nguồn cần chuyển đổi
                       </p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Chọn một file, nhiều file độc lập hoặc link
-                        video công khai.
+                        Chọn một tệp, nhiều tệp độc lập hoặc liên kết âm thanh/nội dung nghe nhìn
+                        công khai.
                       </p>
                     </div>
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary">
@@ -1294,20 +1338,21 @@ function UploadPage() {
                 </section>
 
                 {uploadMode === "link" ? (
-                  <VideoLinkPanel
+                  <MediaLinkPanel
                     videoLink={videoLink}
                     setVideoLink={setVideoLink}
                     rightsAccepted={linkRightsAccepted}
                     setRightsAccepted={setLinkRightsAccepted}
                     loading={linkMetadataLoading}
                     error={uploadError}
-                    onSubmit={handleVideoLink}
+                    onSubmit={handleMediaLink}
                     onChooseFile={() => fileInputRef.current?.click()}
                   />
                 ) : (
                   <FileDropzone
                     isDragging={isDragging}
                     mode={uploadMode}
+                    formats={supportedFormats}
                     onChooseFile={() => fileInputRef.current?.click()}
                     onDragOver={(e) => {
                       e.preventDefault();
@@ -1359,8 +1404,8 @@ function UploadPage() {
                             2. Thiết lập chuyển đổi
                           </p>
                           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            Chọn ngôn ngữ và cách tạo transcript trước khi gửi
-                            file lên máy chủ.
+                            Chọn ngôn ngữ và cách tạo văn bản trước khi gửi tệp
+                            lên máy chủ.
                           </p>
                         </div>
                       </div>
@@ -1375,13 +1420,22 @@ function UploadPage() {
                             value: "song" as const,
                             title: "Bài hát / nhạc nền",
                             description:
-                              "Ưu tiên tách vocal bằng Demucs trước khi tạo transcript.",
+                              "Ưu tiên tách giọng hát bằng Demucs trước khi tạo văn bản.",
                           },
                         ].map((item) => (
                           <button
                             key={item.value}
                             type="button"
-                            onClick={() => setAudioMode(item.value)}
+                            onClick={() => {
+                              setAudioMode(item.value);
+                              if (
+                                item.value === "song" &&
+                                speakerLabels &&
+                                speakerCount === "auto"
+                              ) {
+                                setSpeakerCount("2");
+                              }
+                            }}
                             className={`rounded-lg border px-3 py-3 text-left transition ${
                               audioMode === item.value
                                 ? "border-primary bg-primary/10 text-primary"
@@ -1399,7 +1453,7 @@ function UploadPage() {
                       </div>
                       {audioMode === "song" && (
                         <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-primary">
-                          Backend tách stem vocal bằng Demucs; nếu Demucs không
+                          Máy chủ tách phần giọng hát bằng Demucs; nếu Demucs không
                           khả dụng, hệ thống tự dùng ffmpeg để làm rõ giọng hát.
                         </p>
                       )}
@@ -1409,7 +1463,9 @@ function UploadPage() {
                       <div>
                         <p className="text-sm font-bold">Gắn nhãn người nói</p>
                         <p className="text-xs text-muted-foreground">
-                          Phân biệt và đánh dấu từng người trong đoạn ghi âm
+                          {audioMode === "song"
+                            ? "Phân biệt ca sĩ/giọng hát sau khi tách giọng; độ chính xác phụ thuộc chất lượng bản nhạc"
+                            : "Phân biệt và đánh dấu từng người trong đoạn ghi âm"}
                         </p>
                       </div>
                       <span
@@ -1426,10 +1482,44 @@ function UploadPage() {
                           type="checkbox"
                           className="sr-only"
                           checked={speakerLabels}
-                          onChange={(e) => setSpeakerLabels(e.target.checked)}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setSpeakerLabels(checked);
+                            if (
+                              checked &&
+                              audioMode === "song" &&
+                              speakerCount === "auto"
+                            ) {
+                              setSpeakerCount("2");
+                            }
+                          }}
                         />
                       </span>
                     </label>
+                    {speakerLabels && (
+                      <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
+                        <span className="text-sm font-bold">
+                          Số người/giọng dự kiến
+                        </span>
+                        <select
+                          value={speakerCount}
+                          onChange={(event) =>
+                            setSpeakerCount(event.target.value)
+                          }
+                          className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
+                        >
+                          {SPEAKER_COUNT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="mt-2 block text-xs leading-5 text-muted-foreground">
+                          Nếu biết chính xác có bao nhiêu người hoặc ca sĩ, hãy
+                          chọn số đó để tránh một giọng bị tách thành nhiều nhãn.
+                        </span>
+                      </label>
+                    )}
                     <div className="grid gap-3">
                       <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
                         <span className="text-sm font-bold">
@@ -1450,13 +1540,13 @@ function UploadPage() {
                         </select>
                         <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                           {transcriptionLanguage === "multi"
-                            ? "Giữ nguyên tiếng Việt và English theo từng đoạn, không dịch hoặc ép toàn bộ bài sang một ngôn ngữ."
-                            : "Chọn đúng ngôn ngữ chính để tăng độ chính xác; chỉ dùng tự nhận diện khi chưa biết ngôn ngữ của file."}
+                            ? "Giữ nguyên tiếng Việt và tiếng Anh theo từng đoạn, không dịch hoặc ép toàn bộ bài sang một ngôn ngữ."
+                            : "Chọn đúng ngôn ngữ chính để tăng độ chính xác; chỉ dùng tự nhận diện khi chưa biết ngôn ngữ của tệp."}
                         </span>
                       </label>
                     </div>
                     <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      Hệ thống tạo transcript gốc trước. Sau khi nghe lại và
+                      Hệ thống tạo văn bản gốc trước. Sau khi nghe lại và
                       sửa nội dung, bạn có thể chọn ngôn ngữ dịch trong trình
                       biên tập để bản dịch chính xác hơn.
                     </p>
@@ -1482,12 +1572,12 @@ function UploadPage() {
                       <div>
                         <p className="text-sm font-black text-primary">
                           {queuedJob?.status === "processing"
-                            ? "Vbee đang chuyển đổi file"
-                            : "File đã được đưa vào hàng đợi xử lý"}
+                            ? "Vbee đang chuyển đổi tệp"
+                            : "Tệp đã được đưa vào hàng đợi xử lý"}
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          Bạn có thể rời trang hoặc tiếp tục tải file khác. Vbee
-                          sẽ xử lý nền và cập nhật transcript trong Lịch sử.
+                          Bạn có thể rời trang hoặc tiếp tục tải tệp khác. Vbee
+                          sẽ xử lý nền và cập nhật văn bản trong Lịch sử.
                         </p>
                         <p className="mt-2 text-xs font-bold text-primary">
                           {queuedJob?.status === "processing"
@@ -1590,7 +1680,7 @@ function UploadPage() {
 
                     {translationError && (
                       <div className="rounded-xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
-                        Transcript gốc đã tạo xong, nhưng chưa dịch được:{" "}
+                        Văn bản gốc đã tạo xong, nhưng chưa dịch được:{" "}
                         {translationError}
                       </div>
                     )}
@@ -1671,7 +1761,7 @@ function UploadPage() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm leading-6 text-muted-foreground">
-              Thư mục mới sẽ được chọn cho không gian tải file hiện tại.
+              Thư mục mới sẽ được chọn cho không gian tải tệp hiện tại.
             </p>
             <input
               value={folderName}
@@ -1750,6 +1840,7 @@ function UploadPage() {
 function FileDropzone({
   isDragging,
   mode,
+  formats,
   onChooseFile,
   onDragOver,
   onDragLeave,
@@ -1757,6 +1848,7 @@ function FileDropzone({
 }: {
   isDragging: boolean;
   mode: Exclude<UploadMode, "link">;
+  formats: string[];
   onChooseFile: () => void;
   onDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave: () => void;
@@ -1786,17 +1878,17 @@ function FileDropzone({
       </span>
       <p className="mt-3 text-base font-black text-foreground">
         {multitrack
-          ? "Chọn từ 2 đến 5 track"
+          ? "Chọn từ 2 đến 5 rãnh"
           : multipleFiles
-            ? "Chọn từ 2 đến 8 file"
-            : "Kéo thả file vào đây"}
+            ? "Chọn từ 2 đến 8 tệp"
+            : "Kéo thả tệp vào đây"}
       </p>
       <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-muted-foreground">
         {multitrack
-          ? "Mỗi track phải là một micro/người nói của cùng phiên và bắt đầu cùng thời điểm."
+          ? "Mỗi rãnh phải là một micrô/người nói của cùng phiên và bắt đầu cùng thời điểm."
           : multipleFiles
-            ? "Mỗi file sẽ tạo một transcript riêng và cùng được lưu trong thư mục đã chọn."
-          : "Hoặc nhấn để chọn một file audio/video từ máy tính."}
+            ? "Mỗi tệp sẽ tạo một văn bản riêng và cùng được lưu trong thư mục đã chọn."
+          : "Hoặc nhấn để chọn một tệp âm thanh hoặc nội dung nghe nhìn từ máy tính."}
       </p>
       <button
         type="button"
@@ -1807,15 +1899,15 @@ function FileDropzone({
         className="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground shadow-glow transition hover:opacity-90"
       >
         <Upload className="h-3.5 w-3.5" />
-        Chọn file
+        Chọn tệp
       </button>
       <div className="mt-4 flex flex-wrap justify-center gap-1.5">
-        {FORMAT_TAGS.map((fmt) => (
+        {formats.map((format) => (
           <span
-            key={fmt}
+            key={format}
             className="rounded-full border border-border bg-[#fbf8ef] px-2.5 py-1 text-[11px] font-bold text-muted-foreground"
           >
-            {fmt}
+            {format.toUpperCase()}
           </span>
         ))}
       </div>
@@ -1823,7 +1915,7 @@ function FileDropzone({
   );
 }
 
-function VideoLinkPanel({
+function MediaLinkPanel({
   videoLink,
   setVideoLink,
   rightsAccepted,
@@ -1846,13 +1938,24 @@ function VideoLinkPanel({
     <section className="rounded-xl border border-border bg-white p-5">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Youtube className="h-5 w-5" />
+          <Link2 className="h-5 w-5" />
         </span>
         <div>
-          <p className="text-sm font-black">Link video YouTube</p>
+          <p className="text-sm font-black">
+            Liên kết âm thanh hoặc nội dung nghe nhìn công khai
+          </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Hỗ trợ một video công khai mỗi lần. Video riêng tư, playlist,
-            livestream hoặc nội dung yêu cầu đăng nhập sẽ không thể xử lý.
+            Hỗ trợ từng nội dung từ YouTube, SoundCloud, TikTok, Facebook,
+            Instagram, Vimeo và podcast công khai. Không hỗ trợ playlist,
+            livestream, nội dung cần đăng nhập hoặc DRM.
+          </p>
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            Khả năng nhập phụ thuộc quyền công khai và phản hồi của từng nền
+            tảng tại thời điểm xử lý.
+          </p>
+          <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+            Liên kết Spotify không chứa luồng âm thanh công khai; hãy tải lên tệp bạn
+            sở hữu hoặc được phép sử dụng.
           </p>
         </div>
       </div>
@@ -1861,7 +1964,7 @@ function VideoLinkPanel({
           value={videoLink}
           onChange={(event) => setVideoLink(event.target.value)}
           className="min-w-0 flex-1 rounded-lg border border-border bg-[#fbf8ef] px-3 py-2.5 text-sm outline-none transition focus:border-primary"
-          placeholder="https://www.youtube.com/watch?v=..."
+          placeholder="Dán liên kết YouTube, SoundCloud, TikTok, Vimeo..."
           disabled={loading}
         />
         <button
@@ -1875,7 +1978,7 @@ function VideoLinkPanel({
           ) : (
             <FileVideo className="h-4 w-4" />
           )}
-          {loading ? "Đang kiểm tra" : "Dùng link"}
+          {loading ? "Đang kiểm tra" : "Dùng liên kết"}
         </button>
       </div>
       <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#fbf8ef] px-3 py-3">
@@ -1886,8 +1989,8 @@ function VideoLinkPanel({
           className="mt-0.5 h-4 w-4 accent-primary"
         />
         <span className="text-xs leading-5 text-muted-foreground">
-          Tôi sở hữu video này hoặc đã được chủ sở hữu cho phép sử dụng để tạo
-          transcript.
+          Tôi sở hữu nội dung này hoặc đã được chủ sở hữu cho phép sử dụng để
+          tạo văn bản.
         </span>
       </label>
       {error && (
@@ -1898,7 +2001,7 @@ function VideoLinkPanel({
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
         <p className="inline-flex items-center gap-2 text-xs leading-5 text-muted-foreground">
           <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
-          Link được kiểm tra thời lượng, quota và đưa vào hàng đợi như file tải
+          Liên kết được kiểm tra thời lượng, thời lượng sử dụng và đưa vào hàng đợi như tệp tải
           lên.
         </p>
         <button
@@ -1906,7 +2009,7 @@ function VideoLinkPanel({
           onClick={onChooseFile}
           className="text-xs font-black text-primary underline underline-offset-4"
         >
-          Chọn file từ máy
+          Chọn tệp từ máy
         </button>
       </div>
     </section>
@@ -1936,7 +2039,7 @@ function UploadRequirements({
         <div>
           <p className="text-xs font-black text-foreground">Định dạng</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Audio và video có trong danh sách hiển thị phía trên.
+            Âm thanh và nội dung nghe nhìn có trong danh sách hiển thị phía trên.
           </p>
         </div>
         <div>
@@ -1944,8 +2047,8 @@ function UploadRequirements({
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Tối đa {maxUploadMb} MB
             {maxFileSeconds
-              ? `, ${formatQuotaTime(maxFileSeconds)}/file`
-              : " mỗi file"}
+              ? `, ${formatQuotaTime(maxFileSeconds)}/tệp`
+              : " mỗi tệp"}
             .
           </p>
         </div>
@@ -1958,21 +2061,21 @@ function UploadRequirements({
         <div>
           <p className="text-xs font-black text-foreground">
             {linkMode
-              ? "Link"
+              ? "Liên kết"
               : multitrack
-                ? "Multitrack"
+                ? "Nhiều rãnh"
                 : multipleFiles
-                  ? "Nhiều file"
+                  ? "Nhiều tệp"
                   : "Bản dịch"}
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {linkMode
-              ? "Chỉ dùng link công khai, không cần đăng nhập."
+              ? "Chỉ dùng liên kết công khai, không cần đăng nhập."
               : multitrack
-                ? "Từ 2–5 track đồng bộ sẽ được ghép thành một transcript với tên người nói riêng."
+                ? "Từ 2–5 rãnh đồng bộ sẽ được ghép thành một văn bản với tên người nói riêng."
                 : multipleFiles
-                ? "Tối đa 8 file mỗi lần; mỗi file tạo một transcript riêng trong cùng thư mục."
-                : "Bản dịch được tạo trong trình biên tập sau khi bạn kiểm tra transcript gốc."}
+                ? "Tối đa 8 tệp mỗi lần; mỗi tệp tạo một văn bản riêng trong cùng thư mục."
+                : "Bản dịch được tạo trong trình biên tập sau khi bạn kiểm tra văn bản gốc."}
           </p>
         </div>
       </div>
@@ -1982,16 +2085,16 @@ function UploadRequirements({
 
 function ProcessingPanel({ translateTo }: { translateTo: string }) {
   const phases = [
-    ["Đang gửi file", "Tải file an toàn lên máy chủ Vbee."],
+    ["Đang gửi tệp", "Tải tệp an toàn lên máy chủ Vbee."],
     [
-      "Đang phân tích audio gốc",
+      "Đang phân tích âm thanh gốc",
       "Nhận diện lời nói, lời hát, thời lượng và người nói từ bản mix ban đầu.",
     ],
     [
-      "Đang tạo transcript",
+      "Đang tạo văn bản",
       translateTo === "none"
-        ? "Bản transcript sẽ sẵn sàng để nghe lại và biên tập."
-        : "Sau transcript gốc, hệ thống sẽ tạo thêm bản dịch đã chọn.",
+        ? "Văn bản sẽ sẵn sàng để nghe lại và biên tập."
+        : "Sau văn bản gốc, hệ thống sẽ tạo thêm bản dịch đã chọn.",
     ],
   ];
 
@@ -2001,7 +2104,7 @@ function ProcessingPanel({ translateTo }: { translateTo: string }) {
         <span className="block h-7 w-7 shrink-0 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
         <div>
           <p className="text-sm font-black text-primary">
-            Vbee đang chuyển đổi file
+            Vbee đang chuyển đổi tệp
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Không đóng trang này cho đến khi trạng thái hoàn tất.
@@ -2079,11 +2182,11 @@ function UploadTimeEstimatePanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-black text-primary">
           <Clock className="h-4 w-4" />
-          Tính thời gian upload
+          Tính thời gian tải lên
         </div>
         <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-primary">
           {uploadStatus === "uploading"
-            ? "Đang gửi file"
+            ? "Đang gửi tệp"
             : uploadStatus === "queued"
               ? "Đã xếp hàng"
               : "Ước tính trước"}
@@ -2093,7 +2196,7 @@ function UploadTimeEstimatePanel({
       <div className="mt-3 grid gap-2 sm:grid-cols-4">
         <div className="rounded-md bg-white px-3 py-2.5">
           <p className="text-xs font-bold text-muted-foreground">
-            Thời lượng file
+            Thời lượng tệp
           </p>
           <p className="mt-1 text-lg font-black text-foreground">
             {durationLabel}
@@ -2128,7 +2231,7 @@ function UploadTimeEstimatePanel({
       {pendingUploadSeconds > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-3 text-xs font-bold text-muted-foreground">
-            <span>Quota dự kiến dùng</span>
+            <span>Thời lượng dự kiến dùng</span>
             <span>{formatQuotaTime(pendingUploadSeconds)}</span>
           </div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-card">
@@ -2142,8 +2245,8 @@ function UploadTimeEstimatePanel({
 
       <p className="mt-3 text-xs font-semibold leading-5 text-muted-foreground">
         {audioMode === "song"
-          ? "File nhạc có thể lâu hơn vì server cần tách vocal trước khi chuyển thành văn bản."
-          : "Đây là ước tính theo thời lượng file; thời gian thực tế phụ thuộc kích thước tệp và tải máy chủ."}
+          ? "Tệp nhạc có thể lâu hơn vì máy chủ cần tách giọng hát trước khi chuyển thành văn bản."
+          : "Đây là ước tính theo thời lượng tệp; thời gian thực tế phụ thuộc kích thước tệp và tải máy chủ."}
       </p>
     </div>
   );
@@ -2187,7 +2290,7 @@ function VbeeFileCard({
   return (
     <div className="border-t border-border px-4 py-4">
       <div className="grid gap-y-3 text-sm sm:grid-cols-[120px_minmax(0,1fr)]">
-        <p className="font-black text-muted-foreground">Tên file</p>
+        <p className="font-black text-muted-foreground">Tên tệp</p>
         <div className="flex min-w-0 items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-2 font-semibold text-primary">
             <Icon className="h-4 w-4 shrink-0" />
@@ -2260,10 +2363,10 @@ function UploadWorkflowSteps({
   status: UploadStatus;
 }) {
   const steps = [
-    ["1", "Nguồn", "Chọn một file, nhiều file hoặc link video"],
+    ["1", "Nguồn", "Chọn một tệp, nhiều tệp hoặc liên kết âm thanh/nội dung nghe nhìn"],
     ["2", "Cài đặt", "Ngôn ngữ, người nói và thư mục"],
-    ["3", "Chuyển đổi", "AI xử lý và tạo transcript"],
-    ["4", "Biên tập", "Nghe lại, sửa, copy và xuất file"],
+    ["3", "Chuyển đổi", "AI xử lý và tạo văn bản"],
+    ["4", "Biên tập", "Nghe lại, sửa, sao chép và xuất tệp"],
   ];
   const activeIndex =
     status === "done"
@@ -2328,27 +2431,27 @@ function UploadModeSelector({
   }> = [
     {
       value: "single",
-      title: "Một file",
-      desc: "Một file audio/video chính",
+      title: "Một tệp",
+      desc: "Một tệp âm thanh hoặc nội dung nghe nhìn chính",
       icon: FileAudio,
     },
     {
       value: "multi",
-      title: "Nhiều file",
-      desc: "Tạo transcript riêng cho từng file",
+      title: "Nhiều tệp",
+      desc: "Tạo văn bản riêng cho từng tệp",
       icon: Mic,
     },
     {
       value: "multitrack",
-      title: "Multitrack",
-      desc: "Ghép nhiều micro thành một transcript",
+      title: "Nhiều rãnh",
+      desc: "Ghép nhiều micrô thành một văn bản",
       icon: Layers3,
     },
     {
       value: "link",
-      title: "Link video",
-      desc: "Dán link hoặc chọn file thay thế",
-      icon: Languages,
+      title: "Liên kết âm thanh/nội dung nghe nhìn",
+      desc: "YouTube, SoundCloud, TikTok, Vimeo...",
+      icon: Link2,
     },
   ];
 
@@ -2384,7 +2487,7 @@ function VbeeStyleFooter() {
       <div className="mt-3 flex flex-wrap justify-center gap-x-6 gap-y-2 font-semibold text-primary">
         <Link to="/">Vbee</Link>
         <Link to="/pricing">Bảng giá</Link>
-        <Link to="/upload">Tải file</Link>
+        <Link to="/upload">Tải tệp</Link>
         <Link to="/api">API</Link>
       </div>
       <p className="mt-5 inline-flex items-center justify-center gap-2">

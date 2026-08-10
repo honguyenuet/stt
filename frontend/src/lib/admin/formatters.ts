@@ -73,7 +73,7 @@ export const auditActionLabel: Record<AuditAction, string> = {
   "user.activate": "Mở khóa người dùng",
   "user.delete": "Xóa người dùng",
   "user.role_update": "Cập nhật vai trò",
-  "quota.adjust": "Điều chỉnh quota",
+  "quota.adjust": "Điều chỉnh thời lượng",
   "transcription.retry": "Chạy lại chuyển giọng nói",
   "transcription.cancel": "Hủy chuyển giọng nói",
   "file.delete": "Xóa tệp",
@@ -86,8 +86,8 @@ export const auditActionLabel: Record<AuditAction, string> = {
 
 export function validateQuotaAdjustment(currentQuota: number, delta: number) {
   if (!Number.isFinite(delta) || delta === 0)
-    return "Quota thay đổi phải khác 0";
-  if (currentQuota + delta < 0) return "Quota không được âm";
+    return "Thời lượng thay đổi phải khác 0";
+  if (currentQuota + delta < 0) return "Thời lượng không được âm";
   return "";
 }
 

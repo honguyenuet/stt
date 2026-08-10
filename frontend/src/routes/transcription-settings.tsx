@@ -98,7 +98,7 @@ function TranscriptionSettingsPage() {
     })
       .then(async (res) => {
         const data = (await res.json()) as SettingsPayload;
-        if (!res.ok) throw new Error(data.error || "Không tải được settings");
+        if (!res.ok) throw new Error(data.error || "Không tải được cài đặt");
         if (ignore) return;
         const next = data.transcriptionSettings || DEFAULT_SETTINGS;
         setSettings(next);
@@ -109,7 +109,7 @@ function TranscriptionSettingsPage() {
         setError(
           loadError instanceof Error
             ? loadError.message
-            : "Không tải được transcription settings",
+            : "Không tải được cài đặt văn bản",
         );
       })
       .finally(() => {
@@ -135,16 +135,16 @@ function TranscriptionSettingsPage() {
         body: JSON.stringify({ transcriptionSettings: settings }),
       });
       const data = (await res.json()) as SettingsPayload;
-      if (!res.ok) throw new Error(data.error || "Không lưu được settings");
+      if (!res.ok) throw new Error(data.error || "Không lưu được cài đặt");
       const next = data.transcriptionSettings || settings;
       setSettings(next);
       setSavedSettings(next);
-      setMessage("Đã lưu transcription settings");
+      setMessage("Đã lưu cài đặt văn bản");
     } catch (saveError: unknown) {
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Không lưu được transcription settings",
+          : "Không lưu được cài đặt văn bản",
       );
     } finally {
       setSaving(false);
@@ -168,14 +168,14 @@ function TranscriptionSettingsPage() {
         <section className="min-w-0">
           <div className="mb-5 border-b-2 border-[#ffcb05] pb-4">
             <h1 className="text-2xl font-light tracking-tight md:text-3xl">
-              Cài đặt transcript
+              Cài đặt văn bản
             </h1>
           </div>
 
           <div className="max-w-3xl rounded-lg border border-border bg-white px-5 shadow-soft sm:px-6">
             <SettingBlock
-              title="Tự động điều chỉnh mốc thời gian từ metadata"
-              description="Mốc thời gian ảnh hưởng đến thời điểm bắt đầu của file và toàn bộ timestamp theo từng từ. Bạn có thể để transcript bắt đầu từ 00:00:00.000 hoặc dùng metadata của file."
+              title="Tự động điều chỉnh mốc thời gian từ dữ liệu mô tả"
+              description="Mốc thời gian ảnh hưởng đến thời điểm bắt đầu của tệp và toàn bộ thời điểm theo từng từ. Bạn có thể để văn bản bắt đầu từ 00:00:00.000 hoặc dùng dữ liệu mô tả của tệp."
             >
               <select
                 value={settings.timecodeOffset}
@@ -197,9 +197,9 @@ function TranscriptionSettingsPage() {
             </SettingBlock>
 
             <SettingBlock
-              eyebrow="🇺🇸 🇬🇧 🇦🇺 Chỉ áp dụng cho transcript tiếng Anh"
+              eyebrow="🇺🇸 🇬🇧 🇦🇺 Chỉ áp dụng cho văn bản tiếng Anh"
               title="Kiểu chính tả tiếng Anh"
-              description="Từ điển riêng luôn được ưu tiên. Chọn kiểu chính tả mong muốn khi tạo transcript tiếng Anh."
+              description="Từ điển riêng luôn được ưu tiên. Chọn kiểu chính tả mong muốn khi tạo văn bản tiếng Anh."
             >
               <select
                 value={settings.spellingPreference}
@@ -219,9 +219,9 @@ function TranscriptionSettingsPage() {
             </SettingBlock>
 
             <SettingBlock
-              eyebrow="🇺🇸 🇬🇧 🇦🇺 Chỉ áp dụng cho transcript tiếng Anh"
+              eyebrow="🇺🇸 🇬🇧 🇦🇺 Chỉ áp dụng cho văn bản tiếng Anh"
               title="Từ đệm khi nói"
-              description='Các âm ngập ngừng như "um", "ah" và "hmm" có thể được giữ lại hoặc bỏ qua trong transcript.'
+              description='Các âm ngập ngừng như "ưm", "à" và "ừm" có thể được giữ lại hoặc bỏ qua trong văn bản.'
             >
               <select
                 value={settings.fillerWords}
@@ -234,7 +234,7 @@ function TranscriptionSettingsPage() {
                 className="w-full rounded-md border border-border bg-[#fbf8ef] px-3 py-2.5 text-sm font-semibold outline-none transition focus:border-primary"
               >
                 <option value="yes">
-                  CÓ: Giữ từ đệm trong transcript (mặc định)
+                  CÓ: Giữ từ đệm trong văn bản (mặc định)
                 </option>
                 <option value="no">KHÔNG: Bỏ qua từ đệm</option>
               </select>
@@ -243,7 +243,7 @@ function TranscriptionSettingsPage() {
             <SettingBlock
               eyebrow="🇺🇸 🇬🇧 🇪🇸 🇲🇽 🇮🇹 Áp dụng cho tiếng Anh, Tây Ban Nha và Ý"
               title="Bộ lọc từ nhạy cảm"
-              description="Ẩn từ nhạy cảm bằng cách chỉ hiển thị chữ cái đầu và các dấu sao, giúp transcript phù hợp hơn khi chia sẻ."
+              description="Ẩn từ nhạy cảm bằng cách chỉ hiển thị chữ cái đầu và các dấu sao, giúp văn bản phù hợp hơn khi chia sẻ."
             >
               <select
                 value={settings.profanityFilter}
@@ -267,7 +267,7 @@ function TranscriptionSettingsPage() {
             <Languages className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <p>
               Các lựa chọn được lưu theo từng tài khoản và áp dụng cho những
-              transcript mới. Một số cài đặt có thể phụ thuộc vào nhà cung cấp
+              văn bản mới. Một số cài đặt có thể phụ thuộc vào nhà cung cấp
               nhận dạng giọng nói mà doanh nghiệp đang sử dụng.
             </p>
           </div>
@@ -290,7 +290,7 @@ function TranscriptionSettingsPage() {
               className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
             >
               <Check className="h-4 w-4" />
-              {saving ? "ĐANG LƯU..." : "LƯU CÀI ĐẶT TRANSCRIPT"}
+              {saving ? "ĐANG LƯU..." : "LƯU CÀI ĐẶT VĂN BẢN"}
             </button>
             <button
               onClick={() => {

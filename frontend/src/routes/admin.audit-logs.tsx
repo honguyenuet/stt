@@ -48,7 +48,7 @@ function AdminAuditLogsPage() {
       .then(setRows)
       .catch((err) =>
         setError(
-          err instanceof Error ? err.message : "Không tải được audit logs",
+          err instanceof Error ? err.message : "Không tải được nhật ký kiểm toán",
         ),
       )
       .finally(() => setLoading(false));

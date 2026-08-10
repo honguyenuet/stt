@@ -25,7 +25,7 @@ export const Route = createFileRoute("/contact")({
       { title: "Liên hệ Vbee" },
       {
         name: "description",
-        content: "Gửi yêu cầu tư vấn và liên hệ với Vbee Speech Workspace.",
+        content: "Gửi yêu cầu tư vấn và liên hệ với không gian giọng nói Vbee.",
       },
     ],
   }),
@@ -48,7 +48,7 @@ function ContactPage() {
     event.preventDefault();
     if (!name.trim() || !email.trim() || !message.trim()) {
       setStatus("error");
-      setNotice("Vui lòng điền họ tên, email và nội dung cần tư vấn.");
+      setNotice("Vui lòng điền họ tên, thư điện tử và nội dung cần tư vấn.");
       return;
     }
 
@@ -66,7 +66,7 @@ function ContactPage() {
         metadata: { purpose, phone: phone.trim() },
       });
       setStatus("success");
-      setNotice("Đã gửi thông tin. Vbee sẽ liên hệ lại qua email bạn đã cung cấp.");
+      setNotice("Đã gửi thông tin. Vbee sẽ liên hệ lại qua thư điện tử bạn đã cung cấp.");
       setMessage("");
     } catch (error) {
       setStatus("error");
@@ -92,7 +92,7 @@ function ContactPage() {
             Hãy bắt đầu một cuộc trò chuyện.
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-[#6a5a8f]">
-            Gửi nhu cầu của bạn về speech-to-text, API hoặc triển khai cho đội
+            Gửi nhu cầu chuyển giọng nói thành văn bản, tích hợp API hoặc triển khai cho đội
             ngũ. Vbee sẽ tiếp nhận và phản hồi theo thông tin bạn cung cấp.
           </p>
         </div>
@@ -118,7 +118,7 @@ function ContactPage() {
                   <Mail className="h-5 w-5" />
                 </span>
                 <span>
-                  <span className="block text-sm font-black">Email</span>
+                  <span className="block text-sm font-black">Thư điện tử</span>
                   <span className="mt-1 block text-sm text-[#6a5a8f]">contact@vbee.ai</span>
                 </span>
               </a>
@@ -167,7 +167,7 @@ function ContactPage() {
               <Field label="Số điện thoại" value={phone} onChange={setPhone} placeholder="Nhập số điện thoại" type="tel" />
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Field label="Email *" value={email} onChange={setEmail} placeholder="name@company.com" type="email" />
+              <Field label="Thư điện tử *" value={email} onChange={setEmail} placeholder="name@company.com" type="email" />
               <label className="grid gap-2 text-[13px] font-black">
                 Mục đích liên hệ *
                 <select value={purpose} onChange={(event) => setPurpose(event.target.value)} className="h-10 rounded-xl border border-[#ddd5ef] bg-white px-3 text-[13px] font-semibold text-[#21104a] outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20">
@@ -203,7 +203,7 @@ function ContactPage() {
           {[
             [Clock3, "Tiếp nhận rõ ràng", "Mọi yêu cầu gửi từ form được tạo thành hồ sơ để theo dõi."],
             [MessageCircle, "Đúng nhu cầu", "Chọn đúng mục đích liên hệ giúp Vbee phân loại nhanh hơn."],
-            [Headphones, "Có kênh hỗ trợ", "Vấn đề thao tác, quota hoặc API có trang hỗ trợ riêng."],
+            [Headphones, "Có kênh hỗ trợ", "Vấn đề thao tác, thời lượng hoặc API có trang hỗ trợ riêng."],
           ].map(([Icon, title, text]) => {
             const ItemIcon = Icon as typeof Clock3;
             return (

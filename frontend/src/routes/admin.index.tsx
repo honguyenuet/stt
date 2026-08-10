@@ -66,7 +66,7 @@ function AdminDashboardPage() {
             />
             <Metric
               icon={<CheckCircle2 className="h-5 w-5" />}
-              label="Job"
+              label="Tác vụ"
               value={data.total_jobs}
             />
             <Metric
@@ -79,7 +79,7 @@ function AdminDashboardPage() {
           <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
             <AdminPanel>
               <AdminPanelHeader
-                title="Usage 7 ngày"
+                title="Mức sử dụng 7 ngày"
                 description="Mức sử dụng web và API theo ngày"
               />
               <div className="flex h-72 items-end gap-3 p-4">
@@ -108,7 +108,7 @@ function AdminDashboardPage() {
 
             <AdminPanel>
               <AdminPanelHeader
-                title="Tình trạng job"
+                title="Tình trạng tác vụ"
                 description="Tỷ lệ xử lý và trạng thái"
               />
               <div className="space-y-4 p-4">
@@ -149,8 +149,8 @@ function AdminDashboardPage() {
           </div>
 
           <div className="grid gap-5 xl:grid-cols-2">
-            <JobList title="Jobs gần nhất" jobs={data.recent_jobs} />
-            <JobList title="Jobs lỗi gần nhất" jobs={data.recent_failed_jobs} />
+            <JobList title="Tác vụ gần nhất" jobs={data.recent_jobs} />
+            <JobList title="Tác vụ lỗi gần nhất" jobs={data.recent_failed_jobs} />
           </div>
         </div>
       )}
@@ -194,7 +194,7 @@ function JobList({
       <AdminPanelHeader title={title} />
       <div className="divide-y divide-[#efe7d8]">
         {jobs.length === 0 ? (
-          <p className="p-4 text-sm text-[#756894]">Không có job.</p>
+          <p className="p-4 text-sm text-[#756894]">Không có tác vụ.</p>
         ) : (
           jobs.map((job) => (
             <div

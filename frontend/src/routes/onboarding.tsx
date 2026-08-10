@@ -33,7 +33,7 @@ const JOB_ROLES = [
 
 const USAGE_PURPOSES = [
   { value: "meeting", label: "Cuộc họp và hội thảo" },
-  { value: "content", label: "Video, podcast và nội dung" },
+  { value: "content", label: "Nội dung nghe nhìn, chương trình âm thanh và nội dung khác" },
   { value: "interview", label: "Phỏng vấn và nghiên cứu" },
   { value: "education", label: "Bài giảng và học tập" },
   { value: "subtitles", label: "Phụ đề và bản dịch" },
@@ -152,7 +152,7 @@ function OnboardingPage() {
               Thiết lập lần đầu
             </p>
             <h1 className="mt-3 text-3xl font-black leading-tight">
-              Chuẩn bị không gian làm việc của bạn
+              Chuẩn bị thông tin đăng nhập của bạn
             </h1>
             <p className="mt-4 text-sm leading-7 text-white/75">
               Vbee dùng thông tin này để gợi ý luồng chuyển đổi, ngôn ngữ và
@@ -161,8 +161,8 @@ function OnboardingPage() {
             <ul className="mt-8 space-y-4 text-sm font-bold">
               {[
                 "30 phút trải nghiệm miễn phí",
-                "Tự động lưu transcript vào lịch sử",
-                "Chỉnh sửa văn bản đồng bộ với audio",
+                "Tự động lưu văn bản vào lịch sử",
+                "Chỉnh sửa văn bản đồng bộ với âm thanh",
               ].map((item) => (
                 <li key={item} className="flex items-center gap-3">
                   <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ffcb05] text-[#21104a]">
@@ -258,7 +258,7 @@ function OnboardingPage() {
                 className="onboarding-input"
               >
                 <option value="vi">Tiếng Việt</option>
-                <option value="en">English</option>
+                <option value="en">Tiếng Anh</option>
                 <option value="auto">Tự động nhận diện</option>
               </select>
             </Field>

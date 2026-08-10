@@ -3,18 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
 const { normalizeFilename } = require("./filenameEncoding");
-const { SAFE_MEDIA_FORMATS } = require("./adminSettingsService");
+const {
+  DEFAULT_SUPPORTED_MEDIA_FORMATS,
+  SAFE_MEDIA_FORMATS,
+} = require("./adminSettingsService");
 
-const DEFAULT_MEDIA_FORMATS = [
-  "mp3",
-  "wav",
-  "m4a",
-  "ogg",
-  "flac",
-  "aac",
-  "mp4",
-  "webm",
-];
+const DEFAULT_MEDIA_FORMATS = DEFAULT_SUPPORTED_MEDIA_FORMATS;
 const STAGING_DIR = path.resolve(
   process.env.UPLOAD_STAGING_DIR || path.join(__dirname, "..", "upload-staging"),
 );

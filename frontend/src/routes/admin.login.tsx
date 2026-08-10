@@ -75,7 +75,9 @@ function AdminLoginPage() {
       await loginAdmin(email, password);
       void navigate({ to: from || "/admin" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Đăng nhập admin thất bại");
+      setError(
+        err instanceof Error ? err.message : "Đăng nhập quản trị thất bại",
+      );
     } finally {
       setLoading(false);
     }
@@ -100,7 +102,7 @@ function AdminLoginPage() {
           className="space-y-4"
         >
           <label className="block text-sm font-bold">
-            Email
+              Thư điện tử
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -126,7 +128,7 @@ function AdminLoginPage() {
             disabled={loading}
             className="w-full rounded-md bg-[#21104a] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
           >
-            {loading ? "Đang đăng nhập..." : "Đăng nhập admin"}
+            {loading ? "Đang đăng nhập..." : "Đăng nhập quản trị"}
           </button>
         </form>
         <div className="mt-5 rounded-md bg-[#fbf8ef] p-3 text-xs leading-5 text-[#756894]">

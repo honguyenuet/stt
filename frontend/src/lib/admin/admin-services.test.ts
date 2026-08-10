@@ -70,7 +70,7 @@ describe("admin utilities", () => {
   });
 
   it("validates quota adjustment and prevents negative quota", () => {
-    expect(validateQuotaAdjustment(30, -31)).toBe("Quota không được âm");
+    expect(validateQuotaAdjustment(30, -31)).toBe("Thời lượng không được âm");
     expect(validateQuotaAdjustment(30, 15)).toBe("");
   });
 
@@ -232,7 +232,7 @@ describe("admin services", () => {
 
     await expect(
       listUsers({ page: 1, limit: 10, search: "", role: "all", status: "all" }),
-    ).rejects.toThrow("Phiên admin đã hết hạn");
+    ).rejects.toThrow("Phiên quản trị đã hết hạn");
   });
 
   it("keeps the CMS session when the current role is forbidden", async () => {

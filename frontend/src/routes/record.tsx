@@ -39,9 +39,11 @@ import {
   languageLabel,
   type TranslationResult,
 } from "@/lib/language-options";
-import { getApiBaseUrl } from "@/lib/api-base-url";
+import { SPEAKER_COUNT_OPTIONS } from "@/lib/speaker-options";
 
-const API_URL = getApiBaseUrl();
+const API_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "http://localhost:3001";
 
 interface Word {
   text: string;
@@ -81,14 +83,14 @@ function formatTime(seconds: number) {
 }
 
 function getRecorderLabel(status: RecordStatus) {
-  if (status === "recording") return "RECORDING";
-  if (status === "paused") return "PAUSED";
-  if (status === "recorded") return "RECORDED";
-  if (status === "processing") return "PROCESSING";
-  if (status === "queued") return "QUEUED";
-  if (status === "done") return "TRANSCRIBED";
-  if (status === "error") return "ERROR";
-  return "READY WHEN YOU ARE";
+  if (status === "recording") return "ĐANG GHI ÂM";
+  if (status === "paused") return "ĐÃ TẠM DỪNG";
+  if (status === "recorded") return "ĐÃ GHI ÂM";
+  if (status === "processing") return "ĐANG XỬ LÝ";
+  if (status === "queued") return "ĐANG CHỜ XỬ LÝ";
+  if (status === "done") return "ĐÃ CHUYỂN THÀNH VĂN BẢN";
+  if (status === "error") return "CÓ LỖI";
+  return "SẴN SÀNG GHI ÂM";
 }
 
 function getProcessingEstimate(seconds: number) {
@@ -108,6 +110,7 @@ function RecordPage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioMime, setAudioMime] = useState("audio/webm");
   const [speakerLabels, setSpeakerLabels] = useState(false);
+  const [speakerCount, setSpeakerCount] = useState("auto");
   const [transcriptionLanguage, setTranscriptionLanguage] = useState("auto");
   const [translateTo, setTranslateTo] = useState("none");
   const [translation, setTranslation] = useState<TranslationResult | null>(
@@ -121,7 +124,7 @@ function RecordPage() {
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [micStatus, setMicStatus] = useState<MicAccessStatus>("checking");
   const [micStatusMessage, setMicStatusMessage] = useState(
-    "Đang kiểm tra microphone...",
+    "Đang kiểm tra micrô...",
   );
   const [micDeviceLabel, setMicDeviceLabel] = useState("");
   const [audioLevel, setAudioLevel] = useState(0);
@@ -234,7 +237,7 @@ function RecordPage() {
         }
         if (job.status === "cancelled") {
           setQueuedJobId(null);
-          setRecordingNotice("Đã hủy job. Bản ghi vẫn sẵn sàng để bạn xử lý lại.");
+          setRecordingNotice("Đã hủy tác vụ. Bản ghi vẫn sẵn sàng để bạn xử lý lại.");
           setStatus("recorded");
           return;
         }
@@ -286,16 +289,16 @@ function RecordPage() {
         },
       );
       const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Không hủy được job");
+      if (!response.ok) throw new Error(data.error || "Không hủy được tác vụ");
       setQueuedJobId(null);
       setJobEstimate({ queuePosition: 0, remainingSeconds: 0 });
-      setRecordingNotice("Đã gửi yêu cầu hủy job xử lý.");
+      setRecordingNotice("Đã gửi yêu cầu hủy tác vụ xử lý.");
       setStatus("recorded");
     } catch (cancelError) {
       setError(
         cancelError instanceof Error
           ? cancelError.message
-          : "Không hủy được job xử lý.",
+          : "Không hủy được tác vụ xử lý.",
       );
     }
   }
@@ -304,9 +307,9 @@ function RecordPage() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const mic = devices.find((device) => device.kind === "audioinput");
-      setMicDeviceLabel(mic?.label || "Microphone mặc định");
+      setMicDeviceLabel(mic?.label || "Micrô mặc định");
     } catch {
-      setMicDeviceLabel("Microphone mặc định");
+      setMicDeviceLabel("Micrô mặc định");
     }
   }
 
@@ -320,7 +323,7 @@ function RecordPage() {
     }
 
     setMicStatus("checking");
-    setMicStatusMessage("Đang kiểm tra quyền microphone...");
+    setMicStatusMessage("Đang kiểm tra quyền micrô...");
 
     try {
       if (navigator.permissions?.query) {
@@ -331,7 +334,7 @@ function RecordPage() {
         if (permission.state === "denied") {
           setMicStatus("blocked");
           setMicStatusMessage(
-            "Microphone đang bị chặn. Hãy mở quyền microphone trong trình duyệt rồi tải lại trang.",
+            "Micrô đang bị chặn. Hãy mở quyền micrô trong trình duyệt rồi tải lại trang.",
           );
           return;
         }
@@ -339,7 +342,7 @@ function RecordPage() {
         if (permission.state === "granted") {
           setMicStatus("ready");
           setMicStatusMessage(
-            "Quyền microphone đã được cấp. Bạn có thể bắt đầu ghi âm.",
+            "Quyền micrô đã được cấp. Bạn có thể bắt đầu ghi âm.",
           );
           await loadMicrophoneLabel();
           return;
@@ -348,12 +351,12 @@ function RecordPage() {
 
       setMicStatus("prompt");
       setMicStatusMessage(
-        "Nhấn Bắt đầu ghi âm để cấp quyền microphone và bắt đầu ghi âm.",
+        "Nhấn Bắt đầu ghi âm để cấp quyền micrô và bắt đầu ghi âm.",
       );
     } catch {
       setMicStatus("prompt");
       setMicStatusMessage(
-        "Nhấn Bắt đầu ghi âm để cấp quyền microphone và bắt đầu ghi âm.",
+        "Nhấn Bắt đầu ghi âm để cấp quyền micrô và bắt đầu ghi âm.",
       );
     }
   }
@@ -395,7 +398,7 @@ function RecordPage() {
           : null;
         if (maxSeconds && next >= maxSeconds) {
           setRecordingNotice(
-            "Vbee đã tự dừng ghi âm vì phiên này chạm giới hạn quota/gói cước.",
+            "Vbee đã tự dừng ghi âm vì phiên này chạm giới hạn thời lượng của gói cước.",
           );
           window.setTimeout(() => stopRecording(), 0);
         }
@@ -458,7 +461,7 @@ function RecordPage() {
         }
         if (performance.now() - silenceStartedAtRef.current > 3500) {
           setAudioWarning(
-            "Âm thanh đang quá nhỏ. Hãy nói gần microphone hơn hoặc kiểm tra thiết bị thu âm.",
+            "Âm thanh đang quá nhỏ. Hãy nói gần micrô hơn hoặc kiểm tra thiết bị thu âm.",
           );
         }
       } else {
@@ -479,13 +482,13 @@ function RecordPage() {
   async function startRecording() {
     if (quota?.isLimitReached) {
       setError(
-        "Quota Theo lượt đã hết. Vui lòng nâng cấp gói để ghi âm tiếp.",
+        "Gói miễn phí đã hết 30 phút. Vui lòng nâng cấp gói cao cấp để ghi âm tiếp.",
       );
       setStatus("error");
       return;
     }
     if (quota && quota.remainingSeconds <= 0) {
-      setError("Bạn không còn quota để ghi âm.");
+      setError("Bạn không còn thời lượng để ghi âm.");
       setStatus("error");
       return;
     }
@@ -504,9 +507,9 @@ function RecordPage() {
       chunksRef.current = [];
       const track = stream.getAudioTracks()[0];
       setMicStatus("ready");
-      setMicDeviceLabel(track?.label || "Microphone mặc định");
+      setMicDeviceLabel(track?.label || "Micrô mặc định");
       setMicStatusMessage(
-        "Quyền microphone đã được cấp. Bạn có thể bắt đầu ghi âm.",
+        "Quyền micrô đã được cấp. Bạn có thể bắt đầu ghi âm.",
       );
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -528,7 +531,7 @@ function RecordPage() {
       startAudioMonitor(stream);
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Không thể truy cập microphone";
+        err instanceof Error ? err.message : "Không thể truy cập micrô";
       const name = err instanceof DOMException ? err.name : "";
       if (name === "NotAllowedError" || name === "SecurityError") {
         setMicStatus("blocked");
@@ -537,8 +540,8 @@ function RecordPage() {
         msg.includes("Permission") ||
           msg.includes("denied") ||
           name === "NotAllowedError"
-          ? "Trình duyệt chưa cấp quyền microphone. Vui lòng cho phép quyền truy cập."
-          : `Lỗi microphone: ${msg}`,
+          ? "Trình duyệt chưa cấp quyền micrô. Vui lòng cho phép quyền truy cập."
+          : `Lỗi micrô: ${msg}`,
       );
       setStatus("error");
     }
@@ -598,6 +601,7 @@ function RecordPage() {
     const formData = new FormData();
     formData.append("audio", blob, "recording.webm");
     formData.append("speakerLabels", String(speakerLabels));
+    if (speakerLabels) formData.append("speakerCount", speakerCount);
     formData.append("source", "recording");
     formData.append("expectedDuration", String(Math.max(1, recordTime)));
     formData.append("language", transcriptionLanguage);
@@ -623,14 +627,14 @@ function RecordPage() {
       if (data.quota) setQuota(data.quota);
       const jobId = Number(data.jobId);
       if (!Number.isFinite(jobId)) {
-        setError("Server chưa trả về job xử lý.");
+        setError("Máy chủ chưa trả về tác vụ xử lý.");
         setStatus("error");
         return;
       }
       setQueuedJobId(jobId);
       setStatus(data.status === "processing" ? "processing" : "queued");
     } catch {
-      setError("Không thể kết nối đến server");
+      setError("Không thể kết nối đến máy chủ");
       setStatus("error");
     }
   }
@@ -648,7 +652,7 @@ function RecordPage() {
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const lines = translated
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -684,7 +688,7 @@ function RecordPage() {
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const content = translated
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -769,7 +773,7 @@ function RecordPage() {
             <div className="order-1 min-w-0 xl:order-2">
               <RecorderPanel status={status} recordTime={recordTime} />
               {status === "idle" && (
-                <div className="mt-3 flex flex-col items-center gap-2 text-center">
+                <div className="mt-2 flex flex-col items-center gap-2 text-center">
                   <button
                     onClick={() => void startRecording()}
                     disabled={
@@ -783,13 +787,13 @@ function RecordPage() {
                     {quota?.isLimitReached
                       ? "Nâng cấp để ghi âm"
                       : micStatus === "blocked"
-                        ? "Microphone bị chặn"
+                        ? "Micrô bị chặn"
                         : "Bắt đầu ghi âm"}
                   </button>
                   <p className="max-w-xl text-base leading-7 text-muted-foreground">
                     {quota?.isLimitReached
-                      ? "Quota đã hết. Nâng cấp gói để ghi âm tiếp."
-                      : "Microphone đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
+                      ? "Gói miễn phí đã hết thời lượng. Hãy nâng cấp gói để tiếp tục ghi âm."
+                      : "Micrô đã sẵn sàng. Bạn có thể bắt đầu ghi âm."}
                   </p>
                 </div>
               )}
@@ -814,7 +818,7 @@ function RecordPage() {
           <div className="mt-0 flex flex-col items-center gap-2 text-center">
             {status === "requesting" && (
               <p className="text-lg font-semibold text-muted-foreground">
-                Đang yêu cầu quyền microphone...
+                Đang yêu cầu quyền micrô...
               </p>
             )}
 
@@ -861,6 +865,8 @@ function RecordPage() {
                 audioUrl={audioUrl}
                 speakerLabels={speakerLabels}
                 setSpeakerLabels={setSpeakerLabels}
+                speakerCount={speakerCount}
+                setSpeakerCount={setSpeakerCount}
                 transcriptionLanguage={transcriptionLanguage}
                 setTranscriptionLanguage={setTranscriptionLanguage}
                 translateTo={translateTo}
@@ -878,7 +884,7 @@ function RecordPage() {
                   Đang gửi bản ghi vào hàng đợi...
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  File được lưu xong sẽ tiếp tục xử lý nền. Bạn không cần giữ trang này sau khi nhận trạng thái Đang chờ.
+                  Tệp được lưu xong sẽ tiếp tục xử lý nền. Bạn không cần giữ trang này sau khi nhận trạng thái Đang chờ.
                 </p>
                 {jobEstimate.remainingSeconds > 0 && (
                   <p className="mt-2 text-xs font-bold text-primary">
@@ -902,7 +908,7 @@ function RecordPage() {
                   Bản ghi đã được xếp hàng xử lý
                 </p>
                 <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-muted-foreground">
-                  Bạn có thể rời trang hoặc tiếp tục làm việc. Transcript sẽ tự cập nhật khi hoàn tất.
+                  Bạn có thể rời trang hoặc tiếp tục làm việc. Văn bản sẽ tự cập nhật khi hoàn tất.
                 </p>
                 <p className="mt-2 text-xs font-bold text-primary">
                   {jobEstimate.queuePosition > 0
@@ -1007,7 +1013,7 @@ function RecorderPanel({
     <div className="overflow-hidden rounded-lg border border-border bg-white shadow-soft">
       <div className="flex items-center justify-center gap-3 bg-primary px-5 py-3 text-xl font-black uppercase tracking-wide text-primary-foreground">
         <Mic className="h-5 w-5" />
-        Record
+        Ghi âm
       </div>
       <div className="relative flex min-h-[340px] flex-col items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(255,203,5,0.18),transparent_34%),linear-gradient(180deg,#21104a_0%,#17092f_100%)] px-6">
         <div
@@ -1095,11 +1101,11 @@ function RecorderReadinessPanel({
               {micStatus === "checking"
                 ? "Đang kiểm tra mic"
                 : micStatus === "ready"
-                  ? "Microphone sẵn sàng"
+                  ? "Micrô sẵn sàng"
                   : micStatus === "prompt"
-                    ? "Chờ cấp quyền microphone"
+                    ? "Chờ cấp quyền micrô"
                     : micStatus === "blocked"
-                      ? "Microphone bị chặn"
+                      ? "Micrô bị chặn"
                       : "Trình duyệt chưa hỗ trợ"}
             </p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -1149,7 +1155,7 @@ function RecorderReadinessPanel({
             {sessionLimit ? formatQuotaTime(sessionLimit) : "Đang tải"}
           </p>
           <p className="mt-1 text-[11px] font-semibold leading-4 text-muted-foreground">
-            Theo quota và giới hạn gói hiện tại.
+            Theo thời lượng và giới hạn gói hiện tại.
           </p>
         </div>
 
@@ -1170,8 +1176,8 @@ function RecorderReadinessPanel({
           </p>
           <p className="mt-1 text-[11px] font-semibold leading-4 text-muted-foreground">
             {nearLimit
-              ? "Sắp hết quota, Vbee có thể tự dừng ghi âm."
-              : "Quota được trừ theo số giây ghi âm."}
+              ? "Sắp hết thời lượng, Vbee có thể tự dừng ghi âm."
+              : "Thời lượng được trừ theo số giây ghi âm."}
           </p>
         </div>
       </div>
@@ -1183,6 +1189,8 @@ function RecordedActions({
   audioUrl,
   speakerLabels,
   setSpeakerLabels,
+  speakerCount,
+  setSpeakerCount,
   transcriptionLanguage,
   setTranscriptionLanguage,
   translateTo,
@@ -1194,6 +1202,8 @@ function RecordedActions({
   audioUrl: string | null;
   speakerLabels: boolean;
   setSpeakerLabels: (checked: boolean) => void;
+  speakerCount: string;
+  setSpeakerCount: (value: string) => void;
   transcriptionLanguage: string;
   setTranscriptionLanguage: (value: string) => void;
   translateTo: string;
@@ -1239,6 +1249,26 @@ function RecordedActions({
         </span>
       </label>
 
+      {speakerLabels && (
+        <label className="rounded-lg border border-border bg-[#fbf8ef] px-4 py-3 text-left">
+          <span className="text-sm font-bold">Số người nói dự kiến</span>
+          <select
+            value={speakerCount}
+            onChange={(event) => setSpeakerCount(event.target.value)}
+            className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
+          >
+            {SPEAKER_COUNT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <span className="mt-2 block text-xs leading-5 text-muted-foreground">
+            Chọn chính xác nếu bạn biết số người trong bản ghi.
+          </span>
+        </label>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="rounded-lg border border-border bg-[#fbf8ef] px-4 py-3 text-left">
           <span className="text-sm font-bold">Ngôn ngữ âm thanh</span>
@@ -1276,7 +1306,7 @@ function RecordedActions({
           className="inline-flex items-center justify-center gap-2 rounded-full border border-border px-5 py-3 text-sm font-black transition hover:bg-primary/10 hover:text-primary"
         >
           <Download className="h-4 w-4" />
-          Audio
+          Âm thanh
         </button>
         <button
           onClick={() => void startTranscription()}
@@ -1412,7 +1442,7 @@ function TranscriptResult({
 
       {translationError && (
         <div className="mt-4 rounded-xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
-          Transcript gốc đã tạo xong, nhưng chưa dịch được: {translationError}
+          Văn bản gốc đã tạo xong, nhưng chưa dịch được: {translationError}
         </div>
       )}
 
@@ -1433,7 +1463,7 @@ function TranscriptResult({
           className="inline-flex items-center justify-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-5 py-3 text-sm font-black text-primary transition hover:bg-primary/20"
         >
           <Download className="h-4 w-4" />
-          Tải audio
+          Tải âm thanh
         </button>
         <button
           onClick={handleDownloadTxt}
@@ -1455,31 +1485,31 @@ function TranscriptResult({
 }
 
 const HELP_QUESTIONS = [
-  "Cách bắt đầu ghi âm bằng microphone?",
-  "Tại sao bản ghi âm chưa có transcript?",
-  "Làm sao tải xuống file audio đã ghi?",
+  "Cách bắt đầu ghi âm bằng micrô?",
+  "Tại sao bản ghi âm chưa có văn bản?",
+  "Làm sao tải xuống tệp âm thanh đã ghi?",
   "Có thể nhận diện nhiều người nói không?",
 ];
 
 const HELP_COLLECTIONS = [
   {
     title: "Ghi âm trực tiếp",
-    desc: "Hướng dẫn cấp quyền microphone, tạm dừng và lưu bản ghi",
+    desc: "Hướng dẫn cấp quyền micrô, tạm dừng và lưu bản ghi",
     articles: "8 bài viết",
   },
   {
     title: "Chất lượng âm thanh",
-    desc: "Cách giảm nhiễu, đặt microphone và ghi âm rõ hơn",
+    desc: "Cách giảm nhiễu, đặt micrô và ghi âm rõ hơn",
     articles: "6 bài viết",
   },
   {
     title: "Chuyển thành văn bản",
-    desc: "Các câu hỏi về xử lý transcript, highlight từ và tải .docx",
+    desc: "Các câu hỏi về xử lý văn bản, làm nổi bật từ và tải .docx",
     articles: "12 bài viết",
   },
   {
     title: "Tài khoản và API",
-    desc: "Quản lý lịch sử, API key và tích hợp vào ứng dụng riêng",
+    desc: "Quản lý lịch sử, khóa API và tích hợp vào ứng dụng riêng",
     articles: "9 bài viết",
   },
 ];
@@ -1679,7 +1709,7 @@ function HelpChat({
       </div>
       <div className="flex min-h-[560px] flex-col bg-secondary">
         <p className="px-8 pt-6 text-center text-sm text-secondary-foreground/75">
-          Vbee sẵn sàng hỗ trợ bạn trong quá trình ghi âm và tạo transcript.
+          Vbee sẵn sàng hỗ trợ bạn trong quá trình ghi âm và tạo văn bản.
         </p>
         <div className="mt-auto p-4">
           <div className="rounded-lg border-2 border-primary bg-white p-4">
@@ -1811,7 +1841,7 @@ function VbeeStyleFooter() {
       <div className="mt-3 flex flex-wrap justify-center gap-x-6 gap-y-2 font-semibold text-primary">
         <Link to="/">Vbee</Link>
         <Link to="/pricing">Bảng giá</Link>
-        <Link to="/upload">Tải file</Link>
+        <Link to="/upload">Tải tệp</Link>
         <Link to="/api">API</Link>
       </div>
       <p className="mt-5 inline-flex items-center justify-center gap-2">

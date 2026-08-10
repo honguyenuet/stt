@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const NAV_ITEMS = [
-  { to: "/upload", label: "Tải file lên", icon: Upload },
+  { to: "/upload", label: "Tải tệp lên", icon: Upload },
   { to: "/record", label: "Ghi âm", icon: Mic },
   { to: "/realtime", label: "Realtime", icon: Radio },
   { to: "/history", label: "Lịch sử", icon: History },

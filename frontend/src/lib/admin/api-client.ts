@@ -56,7 +56,7 @@ export async function adminRequest<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const session = getAdminSession();
-  if (!session) throw new AdminApiError("Phiên admin đã hết hạn", 401);
+  if (!session) throw new AdminApiError("Phiên quản trị đã hết hạn", 401);
 
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${session.token}`);
@@ -69,7 +69,7 @@ export async function adminRequest<T>(
   if (!res.ok) {
     if (res.status === 401) clearAdminSession();
     throw new AdminApiError(
-      data.error || "Admin API request failed",
+      data.error || "Yêu cầu API quản trị thất bại",
       res.status,
     );
   }
@@ -78,7 +78,7 @@ export async function adminRequest<T>(
 
 export async function adminBlobRequest(path: string): Promise<Blob> {
   const session = getAdminSession();
-  if (!session) throw new AdminApiError("Phiên admin đã hết hạn", 401);
+  if (!session) throw new AdminApiError("Phiên quản trị đã hết hạn", 401);
 
   const res = await fetch(`${API_URL}${path}`, {
     headers: { Authorization: `Bearer ${session.token}` },
@@ -106,7 +106,7 @@ export async function adminPublicRequest<T>(
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok)
     throw new AdminApiError(
-      data.error || "Admin API request failed",
+      data.error || "Yêu cầu API quản trị thất bại",
       res.status,
     );
   return data;

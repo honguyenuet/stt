@@ -1,5 +1,22 @@
 const pool = require("../db");
 
+const DEFAULT_SUPPORTED_MEDIA_FORMATS = Object.freeze([
+  "mp3",
+  "wav",
+  "m4a",
+  "ogg",
+  "flac",
+  "aac",
+  "mp4",
+  "webm",
+]);
+const LEGACY_DEFAULT_SUPPORTED_MEDIA_FORMATS = Object.freeze([
+  "mp3",
+  "wav",
+  "m4a",
+  "mp4",
+  "mov",
+]);
 const SAFE_MEDIA_FORMATS = new Set([
   "aac",
   "aiff",
@@ -34,7 +51,7 @@ function defaultAdminSettings() {
   return {
     max_file_size_mb: envPositiveInt("MAX_UPLOAD_MB", 500),
     max_file_duration_minutes: 180,
-    supported_formats: ["mp3", "wav", "m4a", "mp4", "mov"],
+    supported_formats: [...DEFAULT_SUPPORTED_MEDIA_FORMATS],
     supported_languages: ["auto", "multi", "vi", "en", "ja", "ko", "zh"],
     max_retry_attempts: 3,
     default_quota_minutes: Math.ceil(
@@ -180,6 +197,8 @@ async function saveAdminSettings(settings, updatedBy, db = pool) {
 }
 
 module.exports = {
+  DEFAULT_SUPPORTED_MEDIA_FORMATS,
+  LEGACY_DEFAULT_SUPPORTED_MEDIA_FORMATS,
   SAFE_MEDIA_FORMATS,
   defaultAdminSettings,
   getAdminSettings,

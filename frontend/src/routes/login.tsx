@@ -60,7 +60,7 @@ function LoginPage() {
     setFormError("");
 
     if (!form.email.trim() || !form.password) {
-      setFormError("Vui lòng nhập email và mật khẩu");
+      setFormError("Vui lòng nhập thư điện tử và mật khẩu");
       return;
     }
 
@@ -85,7 +85,7 @@ function LoginPage() {
 
       await setToken(data.token, data.user);
     } catch {
-      setFormError("Không kết nối được backend. Hãy kiểm tra http://localhost:3001");
+      setFormError("Không kết nối được máy chủ. Hãy kiểm tra http://localhost:3001");
     } finally {
       setIsSubmitting(false);
     }
@@ -93,17 +93,17 @@ function LoginPage() {
 
   const errorMessages: Record<string, string> = {
     google_failed: "Đăng nhập Google thất bại. Vui lòng thử lại.",
-    google_email_exists: "Email này đã đăng ký bằng mật khẩu. Hãy đăng nhập bằng email để bảo vệ tài khoản.",
-    google_not_configured: "Google OAuth chưa được cấu hình. Hãy dùng email/password hoặc điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET.",
-    google_email_required: "Google chưa cung cấp email đã xác minh.",
+    google_email_exists: "Thư điện tử này đã đăng ký bằng mật khẩu. Hãy đăng nhập bằng thư điện tử để bảo vệ tài khoản.",
+    google_not_configured: "Google OAuth chưa được cấu hình. Hãy dùng thư điện tử và mật khẩu hoặc điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET.",
+    google_email_required: "Google chưa cung cấp thư điện tử đã xác minh.",
     facebook_failed: "Đăng nhập Facebook thất bại hoặc đã bị hủy.",
-    facebook_email_exists: "Email Facebook đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    facebook_email_required: "Facebook chưa cung cấp email. Hãy kiểm tra quyền email của ứng dụng Facebook.",
-    facebook_not_configured: "Facebook Login chưa được cấu hình trên máy chủ.",
+    facebook_email_exists: "Thư điện tử Facebook đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    facebook_email_required: "Facebook chưa cung cấp thư điện tử. Hãy kiểm tra quyền thư điện tử của ứng dụng Facebook.",
+    facebook_not_configured: "Đăng nhập Facebook chưa được cấu hình trên máy chủ.",
     apple_failed: "Đăng nhập Apple thất bại hoặc đã bị hủy.",
-    apple_email_exists: "Email Apple đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    apple_email_required: "Apple chưa cung cấp email đã xác minh cho tài khoản này.",
-    apple_not_configured: "Sign in with Apple chưa được cấu hình trên máy chủ.",
+    apple_email_exists: "Thư điện tử Apple đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    apple_email_required: "Apple chưa cung cấp thư điện tử đã xác minh cho tài khoản này.",
+    apple_not_configured: "Đăng nhập bằng Apple chưa được cấu hình trên máy chủ.",
     account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
     server_error: "Có lỗi xảy ra. Vui lòng thử lại sau.",
   };
@@ -132,7 +132,7 @@ function LoginPage() {
             Đăng nhập vào <span className="mt-1 block text-[#21104a]">Vbee AIVoice</span>
           </h1>
           <p className="mt-4 text-sm text-muted-foreground max-w-sm">
-            Đăng nhập bằng email, Google, Facebook hoặc Apple để tiếp tục vào không gian làm việc.
+            Đăng nhập bằng thư điện tử, Google, Facebook hoặc Apple để tiếp tục.
           </p>
 
           <div className="mt-6 grid w-full max-w-sm grid-cols-3 gap-2">
@@ -171,7 +171,7 @@ function LoginPage() {
 
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Email</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Thư điện tử</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input

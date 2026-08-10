@@ -127,8 +127,8 @@ const monthlyPlans: Plan[] = [
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "5 giờ xử lý mỗi tháng",
-      "Tải file tối đa 200MB",
-      "File dài tối đa 2 giờ",
+      "Tải tệp tối đa 200 MB",
+      "Tệp dài tối đa 2 giờ",
       "Ghi âm tối đa 1 giờ",
       "Lưu dữ liệu 90 ngày",
       "API Speech to Text",
@@ -139,7 +139,7 @@ const monthlyPlans: Plan[] = [
     code: "special",
     name: "Đặc biệt",
     label: "Phổ biến",
-    desc: "Cho người sáng tạo và chuyên viên cần xử lý nhiều file thường xuyên.",
+    desc: "Cho người sáng tạo và chuyên viên cần xử lý nhiều tệp thường xuyên.",
     price: "449.000đ",
     unit: "/tháng",
     minutes: "20 giờ",
@@ -148,8 +148,8 @@ const monthlyPlans: Plan[] = [
     cta: "Đăng ký Đặc biệt",
     features: [
       "20 giờ xử lý mỗi tháng",
-      "Tải file tối đa 1GB",
-      "File dài tối đa 4 giờ",
+      "Tải tệp tối đa 1 GB",
+      "Tệp dài tối đa 4 giờ",
       "Ghi âm tối đa 2 giờ",
       "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
@@ -167,8 +167,8 @@ const monthlyPlans: Plan[] = [
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "40 giờ xử lý mỗi tháng",
-      "Tải file tối đa 2GB",
-      "File dài tối đa 8 giờ",
+      "Tải tệp tối đa 2 GB",
+      "Tệp dài tối đa 8 giờ",
       "Ghi âm tối đa 8 giờ",
       "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
@@ -190,8 +190,8 @@ const yearlyPlans: Plan[] = [
     cta: "Chọn gói Tiêu chuẩn",
     features: [
       "Cấp đủ 60 giờ ngay sau thanh toán",
-      "Tải file tối đa 200MB",
-      "File dài tối đa 2 giờ",
+      "Tải tệp tối đa 200 MB",
+      "Tệp dài tối đa 2 giờ",
       "Ghi âm tối đa 1 giờ",
       "Lưu dữ liệu 90 ngày",
       "API và ưu tiên xử lý 2×",
@@ -211,8 +211,8 @@ const yearlyPlans: Plan[] = [
     cta: "Đăng ký Đặc biệt năm",
     features: [
       "Cấp đủ 240 giờ ngay sau thanh toán",
-      "Tải file tối đa 1GB",
-      "File dài tối đa 4 giờ",
+      "Tải tệp tối đa 1 GB",
+      "Tệp dài tối đa 4 giờ",
       "Ghi âm tối đa 2 giờ",
       "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
@@ -231,8 +231,8 @@ const yearlyPlans: Plan[] = [
     cta: "Chọn gói Chuyên nghiệp",
     features: [
       "Cấp đủ 480 giờ ngay sau thanh toán",
-      "Tải file tối đa 2GB",
-      "File dài tối đa 8 giờ",
+      "Tải tệp tối đa 2 GB",
+      "Tệp dài tối đa 8 giờ",
       "Ghi âm tối đa 8 giờ",
       "Lưu dữ liệu 1 năm",
       "Nhận diện nhiều người nói",
@@ -258,7 +258,7 @@ const topUps: TopUp[] = [
     code: "topup_5h",
     hours: "5 giờ",
     price: "195.000đ",
-    desc: "Lựa chọn phổ biến cho nhiều file ngắn.",
+    desc: "Lựa chọn phổ biến cho nhiều tệp ngắn.",
     popular: true,
   },
   {
@@ -298,11 +298,11 @@ const faqs = [
   },
   {
     q: "Hết số phút xử lý thì có dùng tiếp được không?",
-    a: "Bạn vẫn vào được tài khoản và xem lịch sử. Để xử lý file mới, bạn cần nâng cấp gói hoặc mua thêm phút xử lý.",
+    a: "Bạn vẫn vào được tài khoản và xem lịch sử. Để xử lý tệp mới, bạn cần nâng cấp gói hoặc mua thêm phút xử lý.",
   },
   {
-    q: "Có thể xuất file Word không?",
-    a: "Có. Sau khi chuyển đổi hoàn tất, bạn có thể sao chép văn bản hoặc tải transcript ở định dạng TXT và DOCX.",
+    q: "Có thể xuất tệp Word không?",
+    a: "Có. Sau khi chuyển đổi hoàn tất, bạn có thể sao chép văn bản hoặc tải văn bản ở định dạng TXT và DOCX.",
   },
   {
     q: "Gói nào có thể tích hợp API?",
@@ -339,14 +339,14 @@ const featureGroups: Array<{
         business: "40 giờ/tháng",
       },
       {
-        feature: "Thời lượng tối đa mỗi file",
+        feature: "Thời lượng tối đa mỗi tệp",
         free: "Theo gói hiện tại",
         basic: "2 giờ",
         pro: "4 giờ",
         business: "8 giờ",
       },
       {
-        feature: "Kích thước file tối đa",
+        feature: "Kích thước tệp tối đa",
         free: "Theo gói hiện tại",
         basic: "200MB",
         pro: "1GB",
@@ -379,7 +379,7 @@ const featureGroups: Array<{
     title: "Chuyển giọng nói thành văn bản",
     rows: [
       {
-        feature: "Tải file audio và video",
+        feature: "Tải tệp âm thanh và nội dung nghe nhìn",
         free: true,
         basic: true,
         pro: true,
@@ -393,14 +393,14 @@ const featureGroups: Array<{
         business: true,
       },
       {
-        feature: "Nói realtime",
+        feature: "Realtime",
         free: true,
         basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Nhập video từ liên kết YouTube",
+        feature: "Nhập nội dung từ liên kết YouTube",
         free: true,
         basic: true,
         pro: true,
@@ -440,14 +440,14 @@ const featureGroups: Array<{
     title: "Biên tập, dịch và xuất dữ liệu",
     rows: [
       {
-        feature: "Chỉnh sửa transcript trực tuyến",
+        feature: "Chỉnh sửa văn bản trực tuyến",
         free: true,
         basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Tìm kiếm trong lịch sử transcript",
+        feature: "Tìm kiếm trong lịch sử văn bản",
         free: true,
         basic: true,
         pro: true,
@@ -482,7 +482,7 @@ const featureGroups: Array<{
         business: true,
       },
       {
-        feature: "Dịch transcript sang ngôn ngữ khác",
+        feature: "Dịch văn bản sang ngôn ngữ khác",
         free: true,
         basic: true,
         pro: true,
@@ -515,7 +515,7 @@ const featureGroups: Array<{
         business: true,
       },
       {
-        feature: "Theo dõi trạng thái job",
+        feature: "Theo dõi trạng thái tác vụ",
         free: true,
         basic: true,
         pro: true,
@@ -541,21 +541,21 @@ const featureGroups: Array<{
     title: "Tài khoản, bảo mật và hỗ trợ",
     rows: [
       {
-        feature: "Không gian làm việc cá nhân",
+        feature: "Tài khoản đăng nhập cá nhân",
         free: "1 người dùng",
         basic: "1 người dùng",
         pro: "1 người dùng",
         business: "1 người dùng",
       },
       {
-        feature: "Đăng nhập email và mạng xã hội",
+        feature: "Đăng nhập bằng thư điện tử và mạng xã hội",
         free: true,
         basic: true,
         pro: true,
         business: true,
       },
       {
-        feature: "Quét an toàn file tải lên",
+        feature: "Quét an toàn tệp tải lên",
         free: true,
         basic: true,
         pro: true,
@@ -569,7 +569,7 @@ const featureGroups: Array<{
         business: true,
       },
       {
-        feature: "Hỗ trợ qua email",
+        feature: "Hỗ trợ qua thư điện tử",
         free: false,
         basic: true,
         pro: true,
@@ -617,8 +617,8 @@ function PricingPage() {
               ),
               features: [
                 `${formatQuotaHours(cycle.quotaSeconds, billing === "yearly")} xử lý${billing === "monthly" ? " mỗi tháng" : ""}`,
-                `Tải file tối đa ${formatUploadLimit(catalogPlan.limits.maxUploadMb)}`,
-                `File dài tối đa ${formatLimitSeconds(catalogPlan.limits.maxFileSeconds)}`,
+                `Tải tệp tối đa ${formatUploadLimit(catalogPlan.limits.maxUploadMb)}`,
+                `Tệp dài tối đa ${formatLimitSeconds(catalogPlan.limits.maxFileSeconds)}`,
                 `Ghi âm tối đa ${formatLimitSeconds(catalogPlan.limits.maxRecordSeconds)}`,
                 ...plan.features.slice(4),
               ],
@@ -853,7 +853,7 @@ function PricingHero({
           Gói cước rõ ràng cho mọi nhu cầu chuyển đổi
         </h1>
         <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-white/72">
-          Mua thêm giờ khi cần hoặc đăng ký theo tháng, theo năm để nhận quota
+          Mua thêm giờ khi cần hoặc đăng ký theo tháng, theo năm để nhận thời lượng
           định kỳ và mức ưu tiên xử lý cao hơn.
         </p>
 
@@ -956,10 +956,6 @@ function PlanCards({
                 : "Thanh toán năm tiết kiệm hơn"}
             </h2>
           </div>
-          <p className="max-w-xl text-sm leading-7 text-[#6a5a8f]">
-            Mua theo lượt khi nhu cầu không đều, hoặc đăng ký thuê bao để có
-            quota định kỳ và được ưu tiên xử lý nhanh hơn.
-          </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1181,7 +1177,7 @@ function TopUpCards({
               {[
                 `${hourlyPrice} cho mỗi giờ chuyển đổi`,
                 "Thời lượng đã mua không hết hạn",
-                "Cộng trực tiếp vào quota hiện có",
+                "Cộng trực tiếp vào thời lượng hiện có",
                 "Thanh toán QR ngay trên website",
               ].map((item) => (
                 <div key={item} className="flex items-start gap-3">
@@ -1259,7 +1255,7 @@ function TopUpCards({
             </button>
             <p className="mt-4 flex items-center justify-center gap-2 text-center text-xs font-bold text-[#8d829f]">
               <ShieldCheck className="h-4 w-4 text-[#17b26a]" /> Thanh toán an
-              toàn qua PayOS by Casso
+              toàn qua PayOS do Casso cung cấp
             </p>
           </div>
         </div>
@@ -1283,7 +1279,7 @@ function PricingValueBand() {
     {
       icon: PlugZap,
       title: "API sẵn sàng mở rộng",
-      desc: "Tạo API key, gửi file và theo dõi trạng thái job để đưa chuyển đổi vào quy trình hiện có.",
+      desc: "Tạo khóa API, gửi tệp và theo dõi trạng thái tác vụ để đưa chuyển đổi vào quy trình hiện có.",
     },
   ];
 
@@ -1332,10 +1328,10 @@ function CompareTable({
         if (row.feature === "Thời lượng xử lý") {
           return `${plan.minutes}${billing === "monthly" ? "/tháng" : ""}`;
         }
-        if (row.feature === "Thời lượng tối đa mỗi file") {
+        if (row.feature === "Thời lượng tối đa mỗi tệp") {
           return formatLimitSeconds(plan.maxFileSeconds);
         }
-        if (row.feature === "Kích thước file tối đa") {
+        if (row.feature === "Kích thước tệp tối đa") {
           return formatUploadLimit(plan.maxUploadMb);
         }
         if (row.feature === "Thời lượng ghi âm tối đa") {
@@ -1371,7 +1367,7 @@ function CompareTable({
               Bảng so sánh tính năng
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-[#6a5a8f]">
-              So sánh nhanh thời lượng, giới hạn file, xuất dữ liệu, API và hỗ
+              So sánh nhanh thời lượng, giới hạn tệp, xuất dữ liệu, API và hỗ
               trợ để chọn gói phù hợp trước khi thanh toán.
             </p>
           </div>
@@ -1648,7 +1644,7 @@ function EnterpriseCta({ onStart }: { onStart: () => void }) {
               />
               <input
                 className="w-full rounded-2xl border border-[#e8decc] bg-white px-4 py-3 text-sm font-semibold text-[#21104a] outline-none transition focus:border-[#ffcb05]"
-                placeholder="Email hoặc số điện thoại"
+                placeholder="Thư điện tử hoặc số điện thoại"
               />
               <textarea
                 className="min-h-28 w-full rounded-2xl border border-[#e8decc] bg-white px-4 py-3 text-sm font-semibold text-[#21104a] outline-none transition focus:border-[#ffcb05]"
