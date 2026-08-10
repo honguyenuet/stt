@@ -40,7 +40,6 @@ export function formatMinutes(minutes: number) {
 }
 
 export const jobStatusLabel: Record<JobStatus, string> = {
-  uploaded: "Đã tải lên",
   queued: "Đang chờ",
   processing: "Đang xử lý",
   completed: "Hoàn tất",

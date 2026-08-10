@@ -34,6 +34,19 @@ const QUEUE_STALE_SECONDS = getEnvInt(
   "TRANSCRIPTION_QUEUE_STALE_SECONDS",
   20 * 60,
 );
+const QUEUE_JOB_TIMEOUT_SECONDS = getEnvInt(
+  "TRANSCRIPTION_JOB_TIMEOUT_SECONDS",
+  60 * 60,
+);
+const QUEUE_MAX_ATTEMPTS = getEnvInt("TRANSCRIPTION_QUEUE_MAX_ATTEMPTS", 3);
+const QUEUE_RETRY_BASE_SECONDS = getEnvInt(
+  "TRANSCRIPTION_QUEUE_RETRY_BASE_SECONDS",
+  15,
+);
+const QUEUE_RETRY_MAX_SECONDS = getEnvInt(
+  "TRANSCRIPTION_QUEUE_RETRY_MAX_SECONDS",
+  5 * 60,
+);
 const QUEUE_HEARTBEAT_MS = Math.min(
   getEnvInt("TRANSCRIPTION_QUEUE_HEARTBEAT_MS", 60 * 1000),
   Math.max(5 * 1000, QUEUE_STALE_SECONDS * 1000 - 1000),
@@ -45,6 +58,17 @@ const STANDARD_RETENTION_DAYS = getEnvInt("STANDARD_AUDIO_RETENTION_DAYS", 180);
 const SPECIAL_RETENTION_DAYS = getEnvInt("SPECIAL_AUDIO_RETENTION_DAYS", 36500);
 const BUSINESS_RETENTION_DAYS = getEnvInt("BUSINESS_AUDIO_RETENTION_DAYS", 36500);
 const MAX_REASONABLE_DURATION_SECONDS = 31 * 24 * 60 * 60;
+const ACTIVE_JOB_STATUSES = ["queued", "pending", "uploaded", "processing"];
+const WAITING_JOB_STATUSES = ["queued", "pending", "uploaded"];
+
+function normalizeTranscriptionStatus(status) {
+  const value = String(status || "").trim().toLowerCase();
+  if (value === "pending" || value === "uploaded") return "queued";
+  if (["queued", "processing", "completed", "failed", "cancelled"].includes(value)) {
+    return value;
+  }
+  return value || "queued";
+}
 
 function getPlanPendingJobLimit(plan) {
   const config = getPlanConfig(plan);
@@ -166,6 +190,97 @@ function numberOrNull(value) {
     : null;
 }
 
+function normalizeUploadFingerprint(value) {
+  const clean = String(value || "").trim().slice(0, 128);
+  return /^[a-z0-9:_-]{12,128}$/i.test(clean) ? clean : null;
+}
+
+function getProgressStageLabel(stage, status) {
+  const labels = {
+    queued: "Đang chờ trong hàng đợi",
+    retry_waiting: "Đang chờ thử lại",
+    processing_started: "Worker đã nhận job",
+    preparing_provider: "Đang chuẩn bị file cho provider",
+    provider_transcribing: "Provider đang chuyển giọng nói thành văn bản",
+    finalizing: "Đang lưu transcript và cập nhật quota",
+    completed: "Hoàn tất",
+    failed: "Xử lý thất bại",
+    dead_lettered: "Đã chuyển vào hàng lỗi cần xử lý",
+    timed_out: "Job quá thời gian xử lý",
+    recovered: "Đã phục hồi sau restart worker",
+    cancelled: "Đã hủy",
+  };
+  return labels[stage] || labels[normalizeTranscriptionStatus(status)] || "Đang xử lý";
+}
+
+function getRetryPolicy() {
+  return {
+    maxAttempts: QUEUE_MAX_ATTEMPTS,
+    baseDelaySeconds: QUEUE_RETRY_BASE_SECONDS,
+    maxDelaySeconds: QUEUE_RETRY_MAX_SECONDS,
+    timeoutSeconds: QUEUE_JOB_TIMEOUT_SECONDS,
+    multiplier: 2,
+  };
+}
+
+function computeRetryDelaySeconds(attempt, retryAfterSeconds = null) {
+  const retryAfter = Number(retryAfterSeconds);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(QUEUE_RETRY_MAX_SECONDS, Math.ceil(retryAfter));
+  }
+  const retryAt = Date.parse(String(retryAfterSeconds || ""));
+  if (Number.isFinite(retryAt)) {
+    const seconds = Math.ceil((retryAt - Date.now()) / 1000);
+    if (seconds > 0) return Math.min(QUEUE_RETRY_MAX_SECONDS, seconds);
+  }
+  const exponent = Math.max(0, Number(attempt || 1) - 1);
+  const rawDelay = QUEUE_RETRY_BASE_SECONDS * 2 ** exponent;
+  const jitter = Math.max(1, Math.round(rawDelay * 0.2));
+  return Math.min(QUEUE_RETRY_MAX_SECONDS, rawDelay + jitter);
+}
+
+function createJobTimeoutError(job) {
+  const error = new Error(
+    `Job quá thời gian xử lý ${Number(job.timeout_seconds || QUEUE_JOB_TIMEOUT_SECONDS)} giây.`,
+  );
+  error.code = "JOB_TIMEOUT";
+  error.retryable = true;
+  return error;
+}
+
+function withJobTimeout(promise, job) {
+  const timeoutSeconds = Number(job.timeout_seconds || QUEUE_JOB_TIMEOUT_SECONDS);
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(createJobTimeoutError(job)), timeoutSeconds * 1000);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function summarizeProviderFailure(error) {
+  const attempts = Array.isArray(error?.providerAttempts)
+    ? error.providerAttempts
+    : [];
+  const failed = attempts.filter((attempt) => attempt?.status === "failed");
+  if (failed.length === 0) return String(error?.message || "Không thể xử lý transcript");
+  const names = failed
+    .map((attempt) => String(attempt.provider || "provider").toUpperCase())
+    .filter(Boolean)
+    .join(", ");
+  const last = failed[failed.length - 1] || {};
+  const status = last.httpStatus || last.statusCode || "";
+  const reason = String(last.error || error?.message || "").slice(0, 300);
+  return [
+    `Các provider (${names}) chưa xử lý được file này${status ? `, mã ${status}` : ""}.`,
+    reason,
+    "Bạn có thể thử lại job; nếu vẫn lỗi, hãy đổi file sang WAV/MP3 hoặc kiểm tra cấu hình provider.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 async function moveUploadedFile(file, storedPath) {
   if (file.path) {
     if (!isInsideStaging(file.path)) {
@@ -198,6 +313,7 @@ async function enqueueTranscriptionJob({
   expectedDurationSeconds = null,
   dictionaryKeywords = [],
   transcriptionSettings = {},
+  uploadFingerprint = null,
 }) {
   if (!file || (!file.buffer && !file.path)) {
     const error = new Error("Vui lòng chọn file âm thanh");
@@ -218,6 +334,40 @@ async function enqueueTranscriptionJob({
 
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [2026071601]);
+    const cleanFingerprint = normalizeUploadFingerprint(uploadFingerprint);
+    if (cleanFingerprint) {
+      const existing = await client.query(
+        `SELECT job.id, job.status, job.progress, job.expected_duration_seconds,
+                transcript.id AS transcription_id, transcript.filename,
+                transcript.file_size, transcript.audio_filename, transcript.created_at
+         FROM transcription_jobs job
+         JOIN transcriptions transcript ON transcript.id = job.transcription_id
+         WHERE job.user_id = $1
+           AND job.upload_fingerprint = $2
+           AND job.status = ANY($3::text[])
+         ORDER BY job.created_at DESC
+         LIMIT 1`,
+        [userId, cleanFingerprint, ACTIVE_JOB_STATUSES],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        await fs.promises.unlink(storedPath).catch(() => {});
+        return {
+          jobId: existing.rows[0].id,
+          status: normalizeTranscriptionStatus(existing.rows[0].status),
+          progress: existing.rows[0].progress,
+          expectedDurationSeconds: existing.rows[0].expected_duration_seconds,
+          reused: true,
+          transcription: {
+            id: existing.rows[0].transcription_id,
+            filename: existing.rows[0].filename,
+            file_size: existing.rows[0].file_size,
+            audio_filename: existing.rows[0].audio_filename,
+            created_at: existing.rows[0].created_at,
+          },
+        };
+      }
+    }
     const account = await client.query(
       "SELECT id, plan FROM users WHERE id = $1 FOR UPDATE",
       [userId],
@@ -227,8 +377,8 @@ async function enqueueTranscriptionJob({
       `SELECT COUNT(*) FILTER (WHERE user_id = $1)::integer AS user_count,
               COUNT(*)::integer AS global_count
        FROM transcription_jobs
-       WHERE status IN ('queued', 'processing') AND cancel_requested = FALSE`,
-      [userId],
+       WHERE status = ANY($2::text[]) AND cancel_requested = FALSE`,
+      [userId, ACTIVE_JOB_STATUSES],
     );
     if (Number(pending.rows[0]?.user_count || 0) >= maxPendingJobsForPlan) {
       const error = new Error(
@@ -271,9 +421,11 @@ async function enqueueTranscriptionJob({
     const job = await client.query(
       `INSERT INTO transcription_jobs (
          user_id, transcription_id, status, progress, source, language, audio_mode, translate_to,
-         speaker_labels, expected_duration_seconds, payload
+         speaker_labels, expected_duration_seconds, upload_fingerprint, progress_stage, payload,
+         max_attempts, timeout_seconds, retry_policy
        )
-       VALUES ($1, $2, 'queued', 0, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       VALUES ($1, $2, 'queued', 0, $3, $4, $5, $6, $7, $8, $9, 'queued', $10::jsonb,
+               $11, $12, $13::jsonb)
        RETURNING id, status, progress, expected_duration_seconds, created_at`,
       [
         userId,
@@ -284,11 +436,15 @@ async function enqueueTranscriptionJob({
         normalizeQueueTranslationTarget(translateTo),
         Boolean(speakerLabels),
         expectedDuration,
+        cleanFingerprint,
         JSON.stringify({
           mimeType: file.mimetype || "audio/webm",
           dictionaryKeywords,
           transcriptionSettings,
         }),
+        QUEUE_MAX_ATTEMPTS,
+        QUEUE_JOB_TIMEOUT_SECONDS,
+        JSON.stringify(getRetryPolicy()),
       ],
     );
 
@@ -340,7 +496,8 @@ async function recoverStaleJobs() {
     await client.query(
       `UPDATE transcription_jobs job
        SET status = 'queued', progress = 0, locked_at = NULL, lock_token = NULL,
-           available_at = NOW(), updated_at = NOW(),
+           progress_stage = 'recovered',
+           available_at = NOW(), recovered_at = NOW(), updated_at = NOW(),
            error_message = 'Worker trước đó đã dừng, job được xếp lại.'
        FROM users account
        WHERE job.user_id = account.id
@@ -369,7 +526,7 @@ async function claimNextJob() {
          SELECT job.id
          FROM transcription_jobs job
           JOIN users account ON account.id = job.user_id
-          WHERE job.status = 'queued'
+          WHERE job.status = ANY($2::text[])
             AND job.cancel_requested = FALSE
             AND account.account_status = 'active'
             AND job.available_at <= NOW()
@@ -384,14 +541,15 @@ async function claimNextJob() {
          LIMIT 1
        )
        UPDATE transcription_jobs job
-       SET status = 'processing', progress = 10, attempts = attempts + 1,
+       SET status = 'processing', progress = 10, progress_stage = 'processing_started',
+           attempts = attempts + 1,
            locked_at = NOW(), lock_token = $1,
            started_at = COALESCE(started_at, NOW()), updated_at = NOW(),
            error_message = NULL
        FROM next_job
        WHERE job.id = next_job.id
        RETURNING job.*`,
-      [lockToken],
+      [lockToken, WAITING_JOB_STATUSES],
     );
     await client.query("COMMIT");
     return rows[0] || null;
@@ -444,12 +602,15 @@ function startJobHeartbeat(job) {
   };
 }
 
-async function setJobProgress(job, progress) {
+async function setJobProgress(job, progress, stage = null) {
   const result = await pool.query(
     `UPDATE transcription_jobs
-     SET progress = $3, locked_at = NOW(), updated_at = NOW()
+     SET progress = $3,
+         progress_stage = COALESCE($4, progress_stage),
+         locked_at = NOW(),
+         updated_at = NOW()
      WHERE id = $1 AND status = 'processing' AND lock_token = $2`,
-    [job.id, job.lock_token, progress],
+    [job.id, job.lock_token, progress, stage],
   );
   if (result.rowCount === 0) throw createLeaseLostError(job.id);
 }
@@ -461,7 +622,7 @@ async function completeJob(job, result) {
     const finalizeJob = await client.query(
       `UPDATE transcription_jobs
        SET status = 'completed', progress = 100, locked_at = NULL, lock_token = NULL,
-           completed_at = NOW(), updated_at = NOW(), error_message = NULL
+           progress_stage = 'completed', completed_at = NOW(), updated_at = NOW(), error_message = NULL
        WHERE id = $1 AND status = 'processing' AND lock_token = $2
        RETURNING id`,
       [job.id, job.lock_token],
@@ -517,26 +678,29 @@ async function completeJob(job, result) {
 }
 
 async function failJob(job, error) {
-  const message = String(error?.message || "Khong the xu ly transcript").slice(
-    0,
-    2000,
-  );
   const retryable =
     (error?.retryable === true ||
       (error?.retryable !== false && !error?.statusCode)) &&
     job.attempts < job.max_attempts;
+  const failureSummary = summarizeProviderFailure(error).slice(0, 2000);
 
   if (retryable) {
+    const retryDelaySeconds = computeRetryDelaySeconds(
+      job.attempts,
+      error?.retryAfterSeconds,
+    );
     const retry = await pool.query(
       `UPDATE transcription_jobs
        SET status = 'queued', progress = 0, locked_at = NULL, lock_token = NULL,
+           progress_stage = 'retry_waiting',
            available_at = NOW() + ($2::text || ' seconds')::interval,
+           next_retry_at = NOW() + ($2::text || ' seconds')::interval,
            updated_at = NOW(), error_message = $3
        WHERE id = $1 AND status = 'processing' AND lock_token = $4`,
       [
         job.id,
-        String(Math.min(60, Math.max(5, job.attempts * 10))),
-        message,
+        String(retryDelaySeconds),
+        `Lần thử ${job.attempts}/${job.max_attempts} thất bại. Tự động thử lại sau ${retryDelaySeconds} giây. ${failureSummary}`.slice(0, 2000),
         job.lock_token,
       ],
     );
@@ -550,10 +714,19 @@ async function failJob(job, error) {
     const failedJob = await client.query(
       `UPDATE transcription_jobs
        SET status = 'failed', progress = 0, locked_at = NULL, lock_token = NULL,
-           completed_at = NOW(), updated_at = NOW(), error_message = $3
+           progress_stage = $4, completed_at = NOW(), updated_at = NOW(), error_message = $3,
+           dead_lettered = TRUE, dead_letter_reason = $3,
+           timed_out_at = CASE WHEN $5 = TRUE THEN NOW() ELSE timed_out_at END,
+           next_retry_at = NULL
        WHERE id = $1 AND status = 'processing' AND lock_token = $2
        RETURNING id`,
-      [job.id, job.lock_token, message],
+      [
+        job.id,
+        job.lock_token,
+        failureSummary,
+        error?.code === "JOB_TIMEOUT" ? "timed_out" : "dead_lettered",
+        error?.code === "JOB_TIMEOUT",
+      ],
     );
     if (failedJob.rowCount === 0) throw createLeaseLostError(job.id);
     await client.query(
@@ -563,7 +736,7 @@ async function failJob(job, error) {
        WHERE id = $1 AND user_id = $3`,
       [
         job.transcription_id,
-        message,
+        failureSummary,
         job.user_id,
         JSON.stringify(error?.providerAttempts || []),
       ],
@@ -602,35 +775,39 @@ async function processJob(job) {
       ? null
       : await fs.promises.readFile(audioPath);
     const payload = job.payload || {};
-    await setJobProgress(job, 25);
+    await setJobProgress(job, 25, "preparing_provider");
+    await setJobProgress(job, 45, "provider_transcribing");
 
     const expectedDuration = numberOrNull(job.expected_duration_seconds);
-    const result = await transcribeFile({
-      userId: job.user_id,
-      file: {
-        buffer,
-        originalname: transcription.filename,
-        mimetype: payload.mimeType || "audio/webm",
-        size: Number(transcription.file_size || buffer?.length || 0),
-        fileUrl: useSonixFileUrl ? createProviderFileUrl(job.id) : null,
-        getFileUrl: () => createProviderFileUrl(job.id),
-      },
-      speakerLabels: job.speaker_labels,
-      source: job.source,
-      language: job.language,
-      audioMode: job.audio_mode,
-      translateTo: job.translate_to || "",
-      dictionaryKeywords: payload.dictionaryKeywords || [],
-      transcriptionSettings: payload.transcriptionSettings || {},
-      providerMetadata: { job_id: job.id },
-      validateResult: ({ duration }) =>
-        validateAfterTranscription({
-          userId: job.user_id,
-          durationSeconds: expectedDuration || numberOrNull(duration),
-          source: job.source,
-          excludeJobId: job.id,
-        }),
-    });
+    const result = await withJobTimeout(
+      transcribeFile({
+        userId: job.user_id,
+        file: {
+          buffer,
+          originalname: transcription.filename,
+          mimetype: payload.mimeType || "audio/webm",
+          size: Number(transcription.file_size || buffer?.length || 0),
+          fileUrl: useSonixFileUrl ? createProviderFileUrl(job.id) : null,
+          getFileUrl: () => createProviderFileUrl(job.id),
+        },
+        speakerLabels: job.speaker_labels,
+        source: job.source,
+        language: job.language,
+        audioMode: job.audio_mode,
+        translateTo: job.translate_to || "",
+        dictionaryKeywords: payload.dictionaryKeywords || [],
+        transcriptionSettings: payload.transcriptionSettings || {},
+        providerMetadata: { job_id: job.id },
+        validateResult: ({ duration }) =>
+          validateAfterTranscription({
+            userId: job.user_id,
+            durationSeconds: expectedDuration || numberOrNull(duration),
+            source: job.source,
+            excludeJobId: job.id,
+          }),
+      }),
+      job,
+    );
     result.duration =
       expectedDuration || numberOrNull(result.duration);
     if (!result.duration) {
@@ -641,6 +818,7 @@ async function processJob(job) {
       throw durationError;
     }
     heartbeat.assertActive();
+    await setJobProgress(job, 85, "finalizing");
 
     const cancelCheck = await pool.query(
       `SELECT cancel_requested
@@ -654,7 +832,7 @@ async function processJob(job) {
       return;
     }
 
-    await setJobProgress(job, 90);
+    await setJobProgress(job, 90, "finalizing");
     await completeJob(job, result);
   } catch (error) {
     if (isLeaseLostError(error)) {
@@ -680,7 +858,7 @@ async function markJobCancelled(job, audioFilename = null) {
     const cancelledJob = await client.query(
       `UPDATE transcription_jobs
        SET status = 'cancelled', progress = 0, locked_at = NULL, lock_token = NULL,
-           completed_at = NOW(), updated_at = NOW(), error_message = NULL
+           progress_stage = 'cancelled', completed_at = NOW(), updated_at = NOW(), error_message = NULL
        WHERE id = $1 AND status = 'processing' AND lock_token = $2
        RETURNING id`,
       [job.id, job.lock_token],
@@ -762,9 +940,14 @@ function stopTranscriptionWorker() {
 
 async function getTranscriptionJobForUser(jobId, userId) {
   const { rows } = await pool.query(
-    `SELECT job.id, job.status, job.progress, job.error_message, job.expected_duration_seconds,
+    `SELECT job.id, job.status, job.progress, job.progress_stage,
+            job.error_message, job.expected_duration_seconds,
+            job.attempts, job.max_attempts,
+            job.dead_lettered, job.dead_letter_reason, job.next_retry_at,
+            job.timeout_seconds, job.recovered_at, job.timed_out_at,
             job.created_at, job.started_at, job.completed_at, job.transcription_id,
-            transcript.filename, transcript.duration, transcript.processing_seconds,
+            transcript.filename, transcript.audio_filename,
+            transcript.duration, transcript.processing_seconds,
              transcript.text, transcript.words, transcript.source_language,
              transcript.translated_text, transcript.translation_target_language,
               transcript.translation_provider, transcript.translation_error,
@@ -802,7 +985,7 @@ async function getTranscriptionJobForUser(jobId, userId) {
 
   let queuePosition = 0;
   let estimatedWaitSeconds = 0;
-  if (job.status === "queued") {
+  if (normalizeTranscriptionStatus(job.status) === "queued") {
     const ahead = await pool.query(
       `WITH ranked AS (
          SELECT job.id,
@@ -812,7 +995,7 @@ async function getTranscriptionJobForUser(jobId, userId) {
                 ) AS queue_position
          FROM transcription_jobs job
          JOIN users account ON account.id = job.user_id
-         WHERE job.status = 'queued'
+         WHERE job.status = ANY($2::text[])
            AND job.cancel_requested = FALSE
            AND job.available_at <= NOW()
            AND NOT EXISTS (
@@ -831,7 +1014,7 @@ async function getTranscriptionJobForUser(jobId, userId) {
        FROM target
        LEFT JOIN ranked ON TRUE
        GROUP BY target.queue_position`,
-      [job.id],
+      [job.id, WAITING_JOB_STATUSES],
     );
     queuePosition = Number(ahead.rows[0]?.position || 1);
     estimatedWaitSeconds = Math.ceil(
@@ -844,20 +1027,129 @@ async function getTranscriptionJobForUser(jobId, userId) {
     ? Math.max(0, (Date.now() - new Date(job.started_at).getTime()) / 1000)
     : 0;
   const estimatedRemainingSeconds =
-    job.status === "queued"
+    normalizeTranscriptionStatus(job.status) === "queued"
       ? estimatedWaitSeconds + estimatedProcessingSeconds
-      : job.status === "processing"
+      : normalizeTranscriptionStatus(job.status) === "processing"
         ? Math.max(1, Math.ceil(estimatedProcessingSeconds - elapsedSeconds))
         : 0;
+  const dynamicProgress =
+    normalizeTranscriptionStatus(job.status) === "processing"
+      ? Math.max(
+          Number(job.progress || 0),
+          Math.min(
+            88,
+            25 +
+              Math.round(
+                (Math.min(elapsedSeconds, estimatedProcessingSeconds) /
+                  Math.max(1, estimatedProcessingSeconds)) *
+                  60,
+              ),
+          ),
+        )
+      : Number(job.progress || 0);
 
   return {
     ...job,
+    status: normalizeTranscriptionStatus(job.status),
+    progress: dynamicProgress,
+    progress_stage_label: getProgressStageLabel(job.progress_stage, job.status),
+    retry_attempt: Number(job.attempts || 0),
+    max_attempts: Number(job.max_attempts || QUEUE_MAX_ATTEMPTS),
+    dead_lettered: Boolean(job.dead_lettered),
+    dead_letter_reason: job.dead_letter_reason || null,
+    next_retry_at: job.next_retry_at || null,
+    timeout_seconds: Number(job.timeout_seconds || QUEUE_JOB_TIMEOUT_SECONDS),
+    retry_available:
+      normalizeTranscriptionStatus(job.status) === "failed" &&
+      Boolean(job.audio_filename),
     filename: normalizeFilename(job.filename),
     queue_position: queuePosition,
     estimated_wait_seconds: estimatedWaitSeconds,
     estimated_processing_seconds: estimatedProcessingSeconds,
     estimated_remaining_seconds: estimatedRemainingSeconds,
   };
+}
+
+async function retryTranscriptionJobForUser(jobId, userId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT job.*, transcript.audio_filename
+       FROM transcription_jobs job
+       JOIN transcriptions transcript ON transcript.id = job.transcription_id
+       WHERE job.id = $1 AND job.user_id = $2
+       FOR UPDATE OF job, transcript`,
+      [jobId, userId],
+    );
+    const job = rows[0];
+    if (!job) {
+      const error = new Error("Không tìm thấy job");
+      error.statusCode = 404;
+      throw error;
+    }
+    if (normalizeTranscriptionStatus(job.status) !== "failed") {
+      const error = new Error("Chỉ có thể thử lại job đã thất bại.");
+      error.statusCode = 409;
+      throw error;
+    }
+    if (!job.audio_filename || !fs.existsSync(resolveStoredAudioPath(job.audio_filename))) {
+      const error = new Error(
+        "File gốc của job này không còn trên server. Vui lòng tải lại file.",
+      );
+      error.statusCode = 410;
+      throw error;
+    }
+    const expectedDuration = numberOrNull(job.expected_duration_seconds);
+    if (expectedDuration) {
+      await validateAfterTranscription({
+        userId,
+        durationSeconds: expectedDuration,
+        source: job.source,
+        excludeJobId: job.id,
+        db: client,
+      });
+    }
+    await client.query(
+      `UPDATE transcription_jobs
+       SET status = 'queued',
+           progress = 0,
+           progress_stage = 'queued',
+           attempts = 0,
+           cancel_requested = FALSE,
+           error_message = NULL,
+           dead_lettered = FALSE,
+           dead_letter_reason = NULL,
+           timed_out_at = NULL,
+           next_retry_at = NULL,
+           available_at = NOW(),
+           locked_at = NULL,
+           lock_token = NULL,
+           started_at = NULL,
+           completed_at = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [jobId],
+    );
+    await client.query(
+      `UPDATE transcriptions
+       SET status = 'queued',
+           text = '',
+           words = '[]'::jsonb,
+           error_message = NULL,
+           provider_attempts = '[]'::jsonb
+       WHERE id = $1 AND user_id = $2`,
+      [job.transcription_id, userId],
+    );
+    await client.query("COMMIT");
+    kickTranscriptionWorker();
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return getTranscriptionJobForUser(jobId, userId);
 }
 
 async function cancelTranscriptionJobForUser(jobId, userId) {
@@ -884,12 +1176,13 @@ async function cancelTranscriptionJobForUser(jobId, userId) {
       return getTranscriptionJobForUser(jobId, userId);
     }
 
-    if (job.status === "queued") {
+    if (normalizeTranscriptionStatus(job.status) === "queued") {
       audioFilename = job.audio_filename;
       await client.query(
         `UPDATE transcription_jobs
          SET status = 'cancelled', cancel_requested = TRUE, completed_at = NOW(),
-             updated_at = NOW(), error_message = NULL
+             progress_stage = 'cancelled', updated_at = NOW(), error_message = NULL,
+             next_retry_at = NULL
          WHERE id = $1`,
         [jobId],
       );
@@ -924,11 +1217,17 @@ async function cancelTranscriptionJobForUser(jobId, userId) {
 }
 
 module.exports = {
+  ACTIVE_JOB_STATUSES,
+  WAITING_JOB_STATUSES,
   cancelTranscriptionJobForUser,
   cleanupExpiredAudioFiles,
+  computeRetryDelaySeconds,
   enqueueTranscriptionJob,
+  getRetryPolicy,
   getTranscriptionJobForUser,
   kickTranscriptionWorker,
+  normalizeTranscriptionStatus,
+  retryTranscriptionJobForUser,
   startTranscriptionWorker,
   stopTranscriptionWorker,
 };

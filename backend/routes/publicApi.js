@@ -4,7 +4,7 @@ const pool = require("../db");
 const { hashApiKey } = require("./apiKeys");
 const {
   assertTranscriptionProviderReady,
-  getTranscriptionProvider,
+  getTranscriptionProviderStatus,
   probeMediaFile,
   transcribeAndSave,
 } = require("../services/transcriptionService");
@@ -108,13 +108,22 @@ async function apiKeyAuth(req, res, next) {
 }
 
 router.get("/health", async (_req, res) => {
+  const transcriptionProvider = getTranscriptionProviderStatus();
+  let providerReady = false;
+  let providerError = null;
+  try {
+    await assertTranscriptionProviderReady();
+    providerReady = true;
+  } catch (error) {
+    providerError = error.message || "Provider chưa sẵn sàng";
+  }
+
   res.json({
-    status: "ok",
+    status: providerReady ? "ok" : "degraded",
     service: "Vbee API",
     version: "v1",
-    ...(IS_PRODUCTION
-      ? {}
-      : { transcriptionProvider: await getTranscriptionProvider() }),
+    provider_ready: providerReady,
+    ...(IS_PRODUCTION ? {} : { transcriptionProvider, providerError }),
   });
 });
 

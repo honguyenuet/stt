@@ -41,15 +41,23 @@ type ApiKeyItem = {
 type ApiKeyResponse = ApiKeyItem & { key: string };
 
 type ApiResult = {
+  object?: "transcription" | "transcription_job";
   id?: number;
+  jobId?: number;
   provider?: string;
   providerId?: string;
   filename?: string;
+  status?: "queued" | "processing" | "completed" | "failed" | "cancelled";
+  progress?: number;
+  queuePosition?: number;
+  estimatedRemainingSeconds?: number | null;
+  expectedDurationSeconds?: number;
   duration?: number | null;
   text?: string;
   sourceLanguage?: string;
   translation?: TranslationResult | null;
   translationError?: string;
+  message?: string;
   error?: string;
 };
 
@@ -76,6 +84,10 @@ function formatDate(value: string | null) {
     month: "2-digit",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function ApiPage() {
@@ -224,6 +236,35 @@ function ApiPage() {
       });
       const data = (await res.json()) as ApiResult;
       setApiResult(data);
+      const jobId = data.jobId ?? data.id;
+      if (
+        res.ok &&
+        jobId &&
+        (data.object === "transcription_job" || data.status === "queued")
+      ) {
+        for (let attempt = 0; attempt < 45; attempt += 1) {
+          await delay(2000);
+          const statusResponse = await fetch(
+            `${API_URL}/api/v1/transcribe/jobs/${jobId}`,
+            { headers: { "x-api-key": testKey.trim() } },
+          );
+          const statusData = (await statusResponse.json()) as ApiResult;
+          setApiResult(statusData);
+          if (
+            !statusResponse.ok ||
+            ["completed", "failed", "cancelled"].includes(
+              String(statusData.status || ""),
+            )
+          ) {
+            return;
+          }
+        }
+        setApiResult((current) => ({
+          ...current,
+          message:
+            "Job vẫn đang xử lý. Dùng endpoint status để tiếp tục theo dõi kết quả.",
+        }));
+      }
     } catch {
       setApiResult({
         error:
@@ -236,12 +277,12 @@ function ApiPage() {
 
   const curlSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en"`;
+    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "async=true" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en"`;
   }, [createdKey]);
 
   const jsSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `const formData = new FormData();\nformData.append("audio", file);\nformData.append("speakerLabels", "true");\nformData.append("language", "auto");\nformData.append("translateTo", "en");\n\nconst res = await fetch("${API_URL}/api/v1/transcribe", {\n  method: "POST",\n  headers: { "x-api-key": "${key}" },\n  body: formData,\n});\n\nconst data = await res.json();\nconsole.log(data.text);\nconsole.log(data.translation?.text);`;
+    return `const formData = new FormData();\nformData.append("audio", file);\nformData.append("async", "true");\nformData.append("speakerLabels", "true");\nformData.append("language", "auto");\nformData.append("translateTo", "en");\n\nconst res = await fetch("${API_URL}/api/v1/transcribe", {\n  method: "POST",\n  headers: { "x-api-key": "${key}" },\n  body: formData,\n});\n\nconst data = await res.json();\n\nif (data.object === "transcription_job") {\n  console.log("Queued job:", data.jobId, data.status, data.progress);\n} else {\n  console.log(data.text);\n  console.log(data.translation?.text);\n}`;
   }, [createdKey]);
 
   if (isLoading || (!user && !token)) {
@@ -555,7 +596,13 @@ function ApiPage() {
 
             {apiResult && (
               <div
-                className={`mt-5 rounded-lg p-4 ${apiResult.error ? "bg-destructive/10 text-destructive" : "bg-primary/5 text-primary"}`}
+                className={`mt-5 rounded-lg p-4 ${
+                  apiResult.error ||
+                  apiResult.status === "failed" ||
+                  apiResult.status === "cancelled"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-primary/5 text-primary"
+                }`}
               >
                 <div className="mb-2 flex items-center gap-2 font-black">
                   {apiResult.error ? (
@@ -563,8 +610,36 @@ function ApiPage() {
                   ) : (
                     <Check className="h-5 w-5" />
                   )}
-                  {apiResult.error ? "API lỗi" : "API thành công"}
+                  {apiResult.error ||
+                  apiResult.status === "failed" ||
+                  apiResult.status === "cancelled"
+                    ? "API lỗi"
+                    : apiResult.status === "completed"
+                      ? "API hoàn tất"
+                      : apiResult.object === "transcription_job" ||
+                          apiResult.jobId
+                        ? "API đang xử lý"
+                        : "API thành công"}
                 </div>
+                {!apiResult.error &&
+                  (apiResult.object === "transcription_job" ||
+                    apiResult.jobId) &&
+                  apiResult.status !== "completed" && (
+                    <p className="mb-3 text-sm font-bold">
+                      Job #{apiResult.jobId ?? apiResult.id} đang ở trạng thái{" "}
+                      {apiResult.status ?? "queued"}. Gọi{" "}
+                      <code className="rounded bg-card px-1 py-0.5">
+                        GET /api/v1/transcribe/jobs/
+                        {apiResult.jobId ?? apiResult.id}
+                      </code>{" "}
+                      để lấy tiến độ và kết quả.
+                    </p>
+                  )}
+                {apiResult.message && (
+                  <p className="mb-3 text-sm font-bold">
+                    {apiResult.message}
+                  </p>
+                )}
                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-card p-3 text-xs leading-5">
                   {JSON.stringify(apiResult, null, 2)}
                 </pre>

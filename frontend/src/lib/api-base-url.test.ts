@@ -5,14 +5,14 @@ describe("resolveApiBaseUrl", () => {
   it("uses the local backend when the frontend is opened from localhost", () => {
     expect(
       resolveApiBaseUrl({
-        envApiUrl: "https://myth-mowing-reliant.ngrok-free.dev",
+        envApiUrl: "http://localhost:3001",
         hostname: "localhost",
       }),
     ).toBe("http://localhost:3001");
 
     expect(
       resolveApiBaseUrl({
-        envApiUrl: "https://myth-mowing-reliant.ngrok-free.dev",
+        envApiUrl: "http://localhost:3001",
         hostname: "127.0.0.1",
       }),
     ).toBe("http://localhost:3001");
@@ -21,9 +21,9 @@ describe("resolveApiBaseUrl", () => {
   it("uses the configured public backend when the frontend is opened from a domain", () => {
     expect(
       resolveApiBaseUrl({
-        envApiUrl: "https://api-example.ngrok-free.dev",
-        hostname: "frontend-example.ngrok-free.dev",
+        envApiUrl: "https://api.example.com",
+        hostname: "app.example.com",
       }),
-    ).toBe("https://api-example.ngrok-free.dev");
+    ).toBe("https://api.example.com");
   });
 });

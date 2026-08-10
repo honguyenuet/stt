@@ -5,12 +5,12 @@ const { JWT_SECRET } = require("../config/security");
 const SOCIAL_PROVIDERS = new Set(["google", "facebook", "apple"]);
 const USER_COLUMNS = `
   id, first_name, last_name, email, avatar, plan, auth_version,
-  role, status, account_status
+  role, status, account_status, email_verified
 `;
 const ACCOUNT_USER_COLUMNS = `
   account.id, account.first_name, account.last_name, account.email,
   account.avatar, account.plan, account.auth_version, account.role,
-  account.status, account.account_status
+  account.status, account.account_status, account.email_verified
 `;
 
 function createSocialIdentityError(code, message, statusCode = 400) {
@@ -205,6 +205,17 @@ async function findOrCreateSocialUser({
       if (user.identity_id) {
         await touchIdentity(client, user.identity_id, email);
       }
+      if (emailVerified !== false && user.email_verified === false) {
+        const updated = await client.query(
+          `UPDATE users
+           SET email_verified = TRUE,
+               email_verified_at = COALESCE(email_verified_at, NOW())
+           WHERE id = $1
+           RETURNING ${USER_COLUMNS}`,
+          [user.id],
+        );
+        user = updated.rows[0];
+      }
       if (!user.avatar && safeAvatar) {
         const updated = await client.query(
           `UPDATE users SET avatar = $2 WHERE id = $1
@@ -256,9 +267,10 @@ async function findOrCreateSocialUser({
 
     const inserted = await client.query(
       `INSERT INTO users (
-         first_name, last_name, email, password, google_id, avatar
+         first_name, last_name, email, password, google_id, avatar,
+         email_verified, email_verified_at
        )
-       VALUES ($1, $2, $3, NULL, $4, $5)
+       VALUES ($1, $2, $3, NULL, $4, $5, TRUE, NOW())
        RETURNING ${USER_COLUMNS}`,
       [
         cleanName(firstName, "Người dùng"),

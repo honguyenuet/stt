@@ -44,6 +44,8 @@ async function initDatabase() {
       plan_cancellation_requested_at TIMESTAMP WITH TIME ZONE,
       role VARCHAR(30) NOT NULL DEFAULT 'user',
       account_status VARCHAR(20) NOT NULL DEFAULT 'active',
+      email_verified BOOLEAN NOT NULL DEFAULT TRUE,
+      email_verified_at TIMESTAMP WITH TIME ZONE,
       admin_note TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
@@ -138,6 +140,8 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_cancellation_requested_at TIMESTAMP WITH TIME ZONE;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(30) NOT NULL DEFAULT 'user';`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) NOT NULL DEFAULT 'active';`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP WITH TIME ZONE;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_note TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;`);
@@ -187,6 +191,19 @@ async function initDatabase() {
     ON CONFLICT (provider, provider_user_id) DO NOTHING;
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_auth_identities_user ON user_auth_identities(user_id);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      used_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_created ON email_verification_tokens(user_id, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry ON email_verification_tokens(expires_at) WHERE used_at IS NULL;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS oauth_login_states (
@@ -304,6 +321,19 @@ async function initDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS transcription_versions (
+      id BIGSERIAL PRIMARY KEY,
+      transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL DEFAULT '',
+      words JSONB NOT NULL DEFAULT '[]'::jsonb,
+      label VARCHAR(120),
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_versions_transcription_created ON transcription_versions(transcription_id, created_at DESC);`);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
       id UUID PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -313,11 +343,21 @@ async function initDatabase() {
       replaced_by UUID,
       ip_hash VARCHAR(64),
       user_agent VARCHAR(500),
+      device_name VARCHAR(120),
+      browser_name VARCHAR(120),
+      os_name VARCHAR(120),
+      last_seen_at TIMESTAMP WITH TIME ZONE,
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`ALTER TABLE auth_refresh_tokens ADD COLUMN IF NOT EXISTS device_name VARCHAR(120);`);
+  await pool.query(`ALTER TABLE auth_refresh_tokens ADD COLUMN IF NOT EXISTS browser_name VARCHAR(120);`);
+  await pool.query(`ALTER TABLE auth_refresh_tokens ADD COLUMN IF NOT EXISTS os_name VARCHAR(120);`);
+  await pool.query(`ALTER TABLE auth_refresh_tokens ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`UPDATE auth_refresh_tokens SET last_seen_at = COALESCE(last_seen_at, created_at) WHERE last_seen_at IS NULL;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_refresh_user_active ON auth_refresh_tokens(user_id, expires_at) WHERE revoked_at IS NULL;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_refresh_cleanup ON auth_refresh_tokens(expires_at, revoked_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_auth_refresh_user_seen ON auth_refresh_tokens(user_id, last_seen_at DESC);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS security_audit_events (
@@ -392,9 +432,18 @@ async function initDatabase() {
       translate_to VARCHAR(20),
       speaker_labels BOOLEAN NOT NULL DEFAULT FALSE,
       expected_duration_seconds NUMERIC,
+      upload_fingerprint VARCHAR(128),
+      progress_stage VARCHAR(60) NOT NULL DEFAULT 'queued',
       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
       attempts INTEGER NOT NULL DEFAULT 0,
       max_attempts INTEGER NOT NULL DEFAULT 2,
+      retry_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      next_retry_at TIMESTAMP WITH TIME ZONE,
+      timeout_seconds INTEGER NOT NULL DEFAULT 3600,
+      dead_lettered BOOLEAN NOT NULL DEFAULT FALSE,
+      dead_letter_reason TEXT,
+      recovered_at TIMESTAMP WITH TIME ZONE,
+      timed_out_at TIMESTAMP WITH TIME ZONE,
       cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
       error_message TEXT,
       available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -414,9 +463,18 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS translate_to VARCHAR(20);`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS speaker_labels BOOLEAN NOT NULL DEFAULT FALSE;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS expected_duration_seconds NUMERIC;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS upload_fingerprint VARCHAR(128);`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS progress_stage VARCHAR(60) NOT NULL DEFAULT 'queued';`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 2;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS retry_policy JSONB NOT NULL DEFAULT '{}'::jsonb;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 3600;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS dead_lettered BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS dead_letter_reason TEXT;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS recovered_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS timed_out_at TIMESTAMP WITH TIME ZONE;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS error_message TEXT;`);
   await pool.query(`ALTER TABLE transcription_jobs ADD COLUMN IF NOT EXISTS available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
@@ -486,6 +544,8 @@ async function initDatabase() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_jobs_ready ON transcription_jobs(status, available_at, created_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_jobs_user_status ON transcription_jobs(user_id, status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_jobs_user_fingerprint ON transcription_jobs(user_id, upload_fingerprint) WHERE upload_fingerprint IS NOT NULL;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_jobs_dead_letter ON transcription_jobs(dead_lettered, completed_at DESC) WHERE dead_lettered = TRUE;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS transcription_provider_circuits (
       provider VARCHAR(40) PRIMARY KEY,

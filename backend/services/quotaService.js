@@ -3,6 +3,12 @@ const { rewardReferralAfterFirstUsage } = require("./referralService");
 const { syncQuotaAlertState } = require("./quotaAlertService");
 
 const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 102400);
+const ACTIVE_TRANSCRIPTION_JOB_STATUSES = [
+  "queued",
+  "pending",
+  "uploaded",
+  "processing",
+];
 
 function createHttpError(statusCode, message, details = {}) {
   const error = new Error(message);
@@ -227,7 +233,7 @@ async function getReservedSeconds(userId, excludeJobId = null, db = pool) {
     `SELECT COALESCE(SUM(expected_duration_seconds), 0)::float AS reserved_seconds
      FROM transcription_jobs
      WHERE user_id = $1
-       AND status IN ('queued', 'processing')${excludeClause}`,
+       AND status = ANY($${values.push(ACTIVE_TRANSCRIPTION_JOB_STATUSES)}::text[])${excludeClause}`,
     values,
   );
   return Math.max(0, Math.ceil(Number(rows[0]?.reserved_seconds || 0)));

@@ -65,14 +65,19 @@ function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: form.email.trim(), password: form.password }),
       });
-      const data = (await res.json()) as { token?: string; error?: string };
+      const data = (await res.json()) as {
+        token?: string;
+        expiresIn?: number;
+        user?: Parameters<typeof setToken>[1];
+        error?: string;
+      };
 
       if (!res.ok || !data.token) {
         setFormError(data.error ?? "Đăng nhập thất bại");
         return;
       }
 
-      setToken(data.token);
+      setToken(data.token, data.user, data.expiresIn);
       redirectAfterAuth(from);
     } catch {
       setFormError("Không kết nối được backend. Hãy kiểm tra http://localhost:3001");

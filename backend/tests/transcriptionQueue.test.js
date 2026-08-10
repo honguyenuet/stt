@@ -3,10 +3,36 @@ const assert = require("node:assert/strict");
 
 const {
   cleanupExpiredAudioFiles,
+  computeRetryDelaySeconds,
+  getRetryPolicy,
+  normalizeTranscriptionStatus,
 } = require("../services/transcriptionQueue");
 const pool = require("../db");
 
 test.after(() => pool.end());
+
+test("legacy waiting statuses normalize to queued", () => {
+  assert.equal(normalizeTranscriptionStatus("pending"), "queued");
+  assert.equal(normalizeTranscriptionStatus("uploaded"), "queued");
+  assert.equal(normalizeTranscriptionStatus("queued"), "queued");
+  assert.equal(normalizeTranscriptionStatus("processing"), "processing");
+});
+
+test("queue retry policy uses capped exponential backoff", () => {
+  const policy = getRetryPolicy();
+  assert.equal(policy.maxAttempts >= 1, true);
+  assert.equal(policy.timeoutSeconds >= 1, true);
+  assert.equal(
+    computeRetryDelaySeconds(1),
+    Math.min(policy.maxDelaySeconds, policy.baseDelaySeconds + Math.max(1, Math.round(policy.baseDelaySeconds * 0.2))),
+  );
+  assert.equal(
+    computeRetryDelaySeconds(2),
+    Math.min(policy.maxDelaySeconds, policy.baseDelaySeconds * 2 + Math.max(1, Math.round(policy.baseDelaySeconds * 2 * 0.2))),
+  );
+  assert.equal(computeRetryDelaySeconds(99), policy.maxDelaySeconds);
+  assert.equal(computeRetryDelaySeconds(1, 4), 4);
+});
 
 test("audio retention cleanup keeps the old filename and skips invalid paths", async () => {
   const queries = [];

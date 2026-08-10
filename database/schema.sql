@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
   quota_alert_seconds INTEGER NOT NULL DEFAULT 300,
   plan_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   plan_expires_at TIMESTAMP WITH TIME ZONE,
+  email_verified BOOLEAN NOT NULL DEFAULT TRUE,
+  email_verified_at TIMESTAMP WITH TIME ZONE,
   created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -38,6 +40,48 @@ CREATE TABLE IF NOT EXISTS user_auth_identities (
 
 CREATE INDEX IF NOT EXISTS idx_user_auth_identities_user
 ON user_auth_identities(user_id);
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  used_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_created
+ON email_verification_tokens(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_expiry
+ON email_verification_tokens(expires_at)
+WHERE used_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+  id UUID PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  revoked_at TIMESTAMP WITH TIME ZONE,
+  replaced_by UUID,
+  ip_hash VARCHAR(64),
+  user_agent VARCHAR(500),
+  device_name VARCHAR(120),
+  browser_name VARCHAR(120),
+  os_name VARCHAR(120),
+  last_seen_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_user_active
+ON auth_refresh_tokens(user_id, expires_at)
+WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_cleanup
+ON auth_refresh_tokens(expires_at, revoked_at);
+
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_user_seen
+ON auth_refresh_tokens(user_id, last_seen_at DESC);
 
 CREATE TABLE IF NOT EXISTS oauth_login_states (
   state_hash CHAR(64) PRIMARY KEY,
@@ -76,6 +120,68 @@ CREATE TABLE IF NOT EXISTS transcriptions (
 
 CREATE INDEX IF NOT EXISTS idx_transcriptions_user_created
 ON transcriptions(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS transcription_versions (
+  id BIGSERIAL PRIMARY KEY,
+  transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL DEFAULT '',
+  words JSONB NOT NULL DEFAULT '[]'::jsonb,
+  label VARCHAR(120),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_versions_transcription_created
+ON transcription_versions(transcription_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS transcription_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  transcription_id INTEGER NOT NULL UNIQUE REFERENCES transcriptions(id) ON DELETE CASCADE,
+  status VARCHAR(20) NOT NULL DEFAULT 'queued',
+  progress SMALLINT NOT NULL DEFAULT 0,
+  progress_stage VARCHAR(60) NOT NULL DEFAULT 'queued',
+  source VARCHAR(20) NOT NULL DEFAULT 'upload',
+  language VARCHAR(20) NOT NULL DEFAULT 'auto',
+  audio_mode VARCHAR(20) NOT NULL DEFAULT 'speech',
+  translate_to VARCHAR(20),
+  speaker_labels BOOLEAN NOT NULL DEFAULT FALSE,
+  expected_duration_seconds NUMERIC,
+  upload_fingerprint VARCHAR(128),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 2,
+  retry_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+  next_retry_at TIMESTAMP WITH TIME ZONE,
+  timeout_seconds INTEGER NOT NULL DEFAULT 3600,
+  dead_lettered BOOLEAN NOT NULL DEFAULT FALSE,
+  dead_letter_reason TEXT,
+  recovered_at TIMESTAMP WITH TIME ZONE,
+  timed_out_at TIMESTAMP WITH TIME ZONE,
+  cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+  error_message TEXT,
+  available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMP WITH TIME ZONE,
+  lock_token VARCHAR(64),
+  started_at TIMESTAMP WITH TIME ZONE,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_jobs_ready
+ON transcription_jobs(status, available_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_jobs_user_status
+ON transcription_jobs(user_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_jobs_user_fingerprint
+ON transcription_jobs(user_id, upload_fingerprint)
+WHERE upload_fingerprint IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_transcription_jobs_dead_letter
+ON transcription_jobs(dead_lettered, completed_at DESC)
+WHERE dead_lettered = TRUE;
 
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

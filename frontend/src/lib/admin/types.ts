@@ -4,7 +4,6 @@ export type UserStatus = "active" | "suspended" | "deleted";
 export type ManagedUserPlan = "free" | "standard" | "special" | "business";
 export type BillingCycle = "monthly" | "yearly";
 export type JobStatus =
-  | "uploaded"
   | "queued"
   | "processing"
   | "completed"
@@ -84,6 +83,17 @@ export interface TranscriptionJob {
   created_at: string;
   completed_at: string | null;
   error_message?: string;
+  queue_job_id?: number | null;
+  progress?: number;
+  progress_stage?: string;
+  attempts?: number;
+  max_attempts?: number;
+  next_retry_at?: string | null;
+  timeout_seconds?: number | null;
+  dead_lettered?: boolean;
+  dead_letter_reason?: string | null;
+  recovered_at?: string | null;
+  timed_out_at?: string | null;
   transcript?: string;
 }
 

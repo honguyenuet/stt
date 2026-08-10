@@ -11,7 +11,8 @@ import type { PlanCode } from "@/lib/quota";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
 const API_URL = getApiBaseUrl();
-const TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const MIN_TOKEN_REFRESH_DELAY_MS = 30_000;
 const ACCOUNT_STATUS_CHECK_INTERVAL_MS = 60 * 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -40,13 +41,14 @@ interface User {
   plan?: PlanCode;
   role?: "user" | "support" | "admin";
   accountStatus?: "active" | "suspended" | "deleted";
+  emailVerified?: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   token: string | null;
-  setToken: (token: string) => void;
+  setToken: (token: string, user?: User, expiresIn?: number) => void;
   updateUser: (partial: Partial<User>) => void;
   logout: () => void;
 }
@@ -64,13 +66,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [token, setTokenState] = useState<string | null>(null);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
   const refreshInFlight = useRef<Promise<boolean> | null>(null);
   const userRef = useRef<User | null>(null);
   const tokenRef = useRef<string | null>(null);
+  const tokenExpiresAtRef = useRef<number | null>(null);
 
   const clearSession = useCallback(() => {
     setTokenState(null);
+    setTokenExpiresAt(null);
     setUser(null);
+    tokenRef.current = null;
+    tokenExpiresAtRef.current = null;
+    userRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -80,6 +88,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     tokenRef.current = token;
   }, [token]);
+
+  useEffect(() => {
+    tokenExpiresAtRef.current = tokenExpiresAt;
+  }, [tokenExpiresAt]);
+
+  const getTokenExpiresAt = useCallback((authToken: string, expiresIn?: number) => {
+    if (Number.isFinite(expiresIn) && Number(expiresIn) > 0) {
+      return Date.now() + Number(expiresIn) * 1000;
+    }
+    try {
+      const payload = JSON.parse(window.atob(authToken.split(".")[1] || ""));
+      const exp = Number(payload.exp);
+      return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const applySession = useCallback((nextToken: string, nextUser?: User, expiresIn?: number) => {
+    const expiresAt = getTokenExpiresAt(nextToken, expiresIn);
+    setTokenState(nextToken);
+    setTokenExpiresAt(expiresAt);
+    tokenRef.current = nextToken;
+    tokenExpiresAtRef.current = expiresAt;
+    if (nextUser) {
+      setUser(nextUser);
+      userRef.current = nextUser;
+    }
+  }, [getTokenExpiresAt]);
 
   const refreshSession = useCallback(({ showLoading = false } = {}) => {
     if (refreshInFlight.current) return refreshInFlight.current;
@@ -96,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         let data = (await res.json().catch(() => ({}))) as {
           token?: string;
           user?: User;
+          expiresIn?: number;
           retry?: boolean;
         };
         if (res.status === 409 && data.retry) {
@@ -110,8 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!res.ok || !data.token || !data.user) {
           throw new Error("auth service temporarily unavailable");
         }
-        setTokenState(data.token);
-        setUser(data.user);
+        applySession(data.token, data.user, data.expiresIn);
         return true;
       } catch {
         return Boolean(userRef.current && tokenRef.current);
@@ -124,22 +161,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshInFlight.current = null;
     });
     return refreshInFlight.current;
-  }, [clearSession]);
+  }, [applySession, clearSession]);
 
   const fetchUser = useCallback(
     async (authToken: string, showLoading = true) => {
       if (showLoading) setIsLoading(true);
       try {
-        const res = await fetchWithTimeout(`${API_URL}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${authToken}` },
-        });
+        const requestMe = (activeToken: string) =>
+          fetchWithTimeout(`${API_URL}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${activeToken}` },
+          });
+        let res = await requestMe(authToken);
         if (res.status === 403) {
           clearSession();
           return;
         }
         if (res.status === 401) {
-          await refreshSession();
-          return;
+          const refreshed = await refreshSession();
+          const refreshedToken = tokenRef.current;
+          if (!refreshed || !refreshedToken || refreshedToken === authToken) {
+            return;
+          }
+          res = await requestMe(refreshedToken);
         }
         if (!res.ok) throw new Error("auth service temporarily unavailable");
         const data = (await res.json()) as User;
@@ -153,9 +196,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [clearSession, refreshSession],
   );
 
-  function setToken(newToken: string) {
-    setTokenState(newToken);
-    void fetchUser(newToken);
+  function setToken(newToken: string, nextUser?: User, expiresIn?: number) {
+    applySession(newToken, nextUser, expiresIn);
+    if (!nextUser) void fetchUser(newToken);
   }
 
   function updateUser(partial: Partial<User>) {
@@ -171,8 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? { Authorization: `Bearer ${currentToken}` }
         : undefined,
     }).catch(() => {});
-    setTokenState(null);
-    setUser(null);
+    clearSession();
   }
 
   useEffect(() => {
@@ -182,19 +224,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    const timer = window.setInterval(
+    const expiresAt = tokenExpiresAtRef.current;
+    const refreshDelay = expiresAt
+      ? Math.max(
+          MIN_TOKEN_REFRESH_DELAY_MS,
+          expiresAt - Date.now() - 60_000,
+        )
+      : DEFAULT_TOKEN_REFRESH_INTERVAL_MS;
+    const timer = window.setTimeout(
       () => void refreshSession(),
-      TOKEN_REFRESH_INTERVAL_MS,
+      refreshDelay,
     );
     const handleVisibility = () => {
       if (document.visibilityState === "visible") void refreshSession();
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [user, refreshSession]);
+  }, [user, tokenExpiresAt, refreshSession]);
 
   useEffect(() => {
     if (!user || !token) return;

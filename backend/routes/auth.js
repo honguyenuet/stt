@@ -22,17 +22,29 @@ const {
 } = require('../config/security');
 const {
   clearRefreshCookie,
+  hasSimilarRecentSession,
   issueSession,
+  listUserSessions,
   readCookie,
   revokeAllSessions,
+  revokeOtherSessions,
   revokeRefreshToken,
+  revokeUserSession,
   rotateSession,
 } = require('../services/sessionService');
 const { writeSecurityAudit } = require('../services/securityAuditService');
 const {
   hasSmtpConfig,
+  sendLoginAlertEmail,
+  sendEmailVerificationEmail,
   sendPasswordResetEmail,
 } = require('../services/emailService');
+const {
+  isValidEmail,
+  normalizeEmail,
+  validatePassword,
+  validateRegistrationSpamTrap,
+} = require('../services/registrationValidation');
 const {
   normalizeReferralCode,
   registerReferralForNewUser,
@@ -72,6 +84,14 @@ const PASSWORD_RESET_TTL_MINUTES = Math.max(
 );
 const PASSWORD_RESET_MESSAGE =
   'Nếu email tồn tại trong hệ thống, Vbee đã gửi hướng dẫn đặt lại mật khẩu.';
+const EMAIL_VERIFICATION_TTL_HOURS = Math.max(
+  1,
+  Math.min(72, Number.parseInt(process.env.EMAIL_VERIFICATION_TTL_HOURS || '24', 10))
+);
+const EMAIL_VERIFICATION_REQUIRED =
+  process.env.EMAIL_VERIFICATION_REQUIRED !== 'false' && hasSmtpConfig();
+const LOGIN_ALERT_EMAIL_ENABLED =
+  process.env.LOGIN_ALERT_EMAIL_ENABLED !== 'false' && hasSmtpConfig();
 const OAUTH_STATE_COOKIE = IS_PRODUCTION
   ? '__Host-vbee_oauth_state'
   : 'vbee_oauth_state';
@@ -93,6 +113,10 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
 );
 
 function hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function hashEmailVerificationToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
@@ -121,6 +145,7 @@ function normalizeUser(row) {
     plan: normalizePlan(row.plan),
     role: row.role || 'user',
     accountStatus: row.account_status || 'active',
+    emailVerified: row.email_verified !== false,
   };
 }
 
@@ -131,22 +156,52 @@ function requireTrustedOrigin(req, res, next) {
   return next();
 }
 
-function validatePassword(password) {
-  if (password.length < 12) return 'Mật khẩu phải có ít nhất 12 ký tự';
-  if (password.length > 128) return 'Mật khẩu không được vượt quá 128 ký tự';
-  const normalized = password.toLowerCase().replace(/\s+/g, '');
-  const blocked = new Set([
-    '123456789012',
-    'password1234',
-    'qwerty123456',
-    'vbee12345678',
-  ]);
-  if (blocked.has(normalized)) return 'Mật khẩu này quá phổ biến';
-  return '';
-}
-
 function cleanOAuthMode(value) {
   return String(value || '').trim() === 'register' ? 'register' : 'login';
+}
+
+async function createEmailVerificationToken(userId) {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashEmailVerificationToken(rawToken);
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
+  await pool.query(
+    `UPDATE email_verification_tokens
+     SET used_at = NOW()
+     WHERE user_id = $1 AND used_at IS NULL`,
+    [userId],
+  );
+  await pool.query(
+    `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [userId, tokenHash, expiresAt],
+  );
+  return rawToken;
+}
+
+async function sendLoginAlertIfUnusual({ user, req, session, wasKnownDevice }) {
+  if (!LOGIN_ALERT_EMAIL_ENABLED || wasKnownDevice) return;
+  try {
+    await sendLoginAlertEmail({
+      to: user.email,
+      firstName: user.first_name,
+      session: session.metadata || {},
+      loginTime: new Date().toLocaleString('vi-VN'),
+    });
+  } catch (error) {
+    console.error('Login alert email error:', error.message);
+  }
+  await writeSecurityAudit({
+    event: 'auth.login_alert',
+    outcome: 'sent',
+    req,
+    userId: user.id,
+    sessionId: session.sessionId,
+    metadata: {
+      deviceName: session.metadata?.deviceName,
+      browserName: session.metadata?.browserName,
+      wasKnownDevice,
+    },
+  });
 }
 
 function cleanOAuthFrom(value) {
@@ -234,7 +289,9 @@ async function completeOAuthLogin({
     }
   }
 
+  const wasKnownDevice = await hasSimilarRecentSession(user.id, req);
   const session = await issueSession(user, req, res);
+  await sendLoginAlertIfUnusual({ user, req, session, wasKnownDevice });
   await writeSecurityAudit({
     event: `auth.${provider}_login`,
     outcome: 'success',
@@ -583,36 +640,82 @@ router.post('/register', requireTrustedOrigin, registrationLimiter, async (req, 
     }
     const cleanFirstName = String(firstName || '').trim().slice(0, 100);
     const cleanLastName = String(lastName || '').trim().slice(0, 100);
-    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanEmail = normalizeEmail(email);
     const cleanPassword = String(password || '');
 
     if (!cleanFirstName || !cleanLastName || !cleanEmail || !cleanPassword) {
       return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin' });
     }
-    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+    if (!isValidEmail(cleanEmail)) {
       return res.status(400).json({ error: 'Email không hợp lệ' });
+    }
+    const spamError = validateRegistrationSpamTrap({
+      website: req.body.website,
+      registerStartedAt: req.body.registerStartedAt,
+    });
+    if (spamError) {
+      await writeSecurityAudit({
+        event: 'auth.register',
+        outcome: 'failure',
+        req,
+        metadata: { reason: 'spam_trap' },
+      });
+      return res.status(400).json({ error: spamError });
     }
     if (oauthProfile && oauthProfile.email !== cleanEmail) {
       return res.status(400).json({
         error: 'Email đăng ký phải trùng với email Google đã xác minh.',
       });
     }
-    const passwordError = validatePassword(cleanPassword);
+    const passwordError = validatePassword(cleanPassword, {
+      email: cleanEmail,
+      firstName: cleanFirstName,
+      lastName: cleanLastName,
+    });
     if (passwordError) return res.status(400).json({ error: passwordError });
 
-    const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
+    const existing = await pool.query(
+      'SELECT id, first_name, email, email_verified FROM users WHERE LOWER(email) = LOWER($1)',
+      [cleanEmail],
+    );
     if (existing.rows.length > 0) {
+      const existingUser = existing.rows[0];
+      if (EMAIL_VERIFICATION_REQUIRED && existingUser.email_verified === false) {
+        const recentToken = await pool.query(
+          `SELECT id FROM email_verification_tokens
+           WHERE user_id = $1
+             AND used_at IS NULL
+             AND created_at > NOW() - INTERVAL '60 seconds'
+           LIMIT 1`,
+          [existingUser.id],
+        );
+        if (!recentToken.rows[0]) {
+          const verificationToken = await createEmailVerificationToken(existingUser.id);
+          const verificationUrl = `${getRequestFrontendUrl(req).replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+          await sendEmailVerificationEmail({
+            to: existingUser.email,
+            firstName: existingUser.first_name,
+            verificationUrl,
+            expiresHours: EMAIL_VERIFICATION_TTL_HOURS,
+          });
+        }
+        return res.status(202).json({
+          requiresEmailVerification: true,
+          message: 'Email này đang chờ xác thực. Vbee đã gửi lại liên kết nếu bạn có thể nhận email mới.',
+        });
+      }
       return res.status(400).json({ error: 'Email này đã được đăng ký' });
     }
 
     const hashedPassword = await bcrypt.hash(cleanPassword, 12);
+    const isEmailVerified = Boolean(oauthProfile?.emailVerified) || !EMAIL_VERIFICATION_REQUIRED;
 
     const { rows } = await pool.query(
-      `INSERT INTO users (first_name, last_name, email, password)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (first_name, last_name, email, password, email_verified, email_verified_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 THEN NOW() ELSE NULL END)
        RETURNING id, first_name, last_name, email, avatar, plan, auth_version,
-                 role, account_status`,
-      [cleanFirstName, cleanLastName, cleanEmail, hashedPassword]
+                 role, account_status, email_verified`,
+      [cleanFirstName, cleanLastName, cleanEmail, hashedPassword, isEmailVerified]
     );
 
     const user = rows[0];
@@ -657,7 +760,44 @@ router.post('/register', requireTrustedOrigin, registrationLimiter, async (req, 
         console.error('Referral registration error:', referralError.message);
       }
     }
+    if (!isEmailVerified) {
+      const verificationToken = await createEmailVerificationToken(user.id);
+      const verificationUrl = `${getRequestFrontendUrl(req).replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(verificationToken)}`;
+      try {
+        await sendEmailVerificationEmail({
+          to: user.email,
+          firstName: user.first_name,
+          verificationUrl,
+          expiresHours: EMAIL_VERIFICATION_TTL_HOURS,
+        });
+      } catch (emailError) {
+        await pool.query('DELETE FROM users WHERE id = $1 AND email_verified = FALSE', [
+          user.id,
+        ]).catch(() => {});
+        console.error('Email verification send error:', emailError.message);
+        return res.status(503).json({
+          error: 'Chưa thể gửi email xác thực. Vui lòng thử lại sau.',
+        });
+      }
+      await writeSecurityAudit({
+        event: 'auth.register',
+        outcome: 'accepted',
+        req,
+        userId: user.id,
+        metadata: {
+          requiresEmailVerification: true,
+          referralRegistered: Boolean(referralRegistration?.registered),
+        },
+      });
+      return res.status(201).json({
+        requiresEmailVerification: true,
+        message: 'Tài khoản đã được tạo. Vui lòng kiểm tra email để xác thực trước khi đăng nhập.',
+        referral: referralRegistration,
+      });
+    }
+    const wasKnownDevice = await hasSimilarRecentSession(user.id, req);
     const session = await issueSession(user, req, res);
+    await sendLoginAlertIfUnusual({ user, req, session, wasKnownDevice });
     await writeSecurityAudit({
       event: 'auth.register',
       outcome: 'success',
@@ -702,7 +842,7 @@ router.post('/login', requireTrustedOrigin, loginLimiter, async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT id, first_name, last_name, email, password, avatar, plan,
-              auth_version, role, status, account_status
+              auth_version, role, status, account_status, email_verified
        FROM users WHERE LOWER(email) = LOWER($1)`,
       [email]
     );
@@ -732,7 +872,22 @@ router.post('/login', requireTrustedOrigin, loginLimiter, async (req, res) => {
       });
       return res.status(403).json({ error: 'Tài khoản đã bị khóa' });
     }
+    if (user.email_verified === false && EMAIL_VERIFICATION_REQUIRED) {
+      await writeSecurityAudit({
+        event: 'auth.login',
+        outcome: 'failure',
+        req,
+        userId: user.id,
+        metadata: { reason: 'email_unverified' },
+      });
+      return res.status(403).json({
+        error: 'Vui lòng xác thực email trước khi đăng nhập.',
+        requiresEmailVerification: true,
+      });
+    }
+    const wasKnownDevice = await hasSimilarRecentSession(user.id, req);
     const session = await issueSession(user, req, res);
+    await sendLoginAlertIfUnusual({ user, req, session, wasKnownDevice });
     await writeSecurityAudit({
       event: 'auth.login',
       outcome: 'success',
@@ -758,14 +913,96 @@ router.post('/login', requireTrustedOrigin, loginLimiter, async (req, res) => {
   }
 });
 
+// POST /api/auth/verify-email — xác thực email bằng token một lần rồi đăng nhập.
+router.post('/verify-email', requireTrustedOrigin, passwordLimiter, async (req, res) => {
+  const rawToken = String(req.body.token || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(rawToken)) {
+    return res.status(400).json({ error: 'Liên kết xác thực email không hợp lệ' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT token.id, token.user_id
+       FROM email_verification_tokens token
+       JOIN users account ON account.id = token.user_id
+       WHERE token.token_hash = $1
+         AND token.used_at IS NULL
+         AND token.expires_at > NOW()
+         AND account.email_verified = FALSE
+       FOR UPDATE`,
+      [hashEmailVerificationToken(rawToken)],
+    );
+    const verification = rows[0];
+    if (!verification) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Liên kết đã hết hạn hoặc đã được sử dụng',
+      });
+    }
+
+    const updated = await client.query(
+      `UPDATE users
+       SET email_verified = TRUE,
+           email_verified_at = NOW()
+       WHERE id = $1
+       RETURNING id, first_name, last_name, email, avatar, plan,
+                 auth_version, role, status, account_status, email_verified`,
+      [verification.user_id],
+    );
+    await client.query(
+      `UPDATE email_verification_tokens
+       SET used_at = NOW()
+       WHERE user_id = $1 AND used_at IS NULL`,
+      [verification.user_id],
+    );
+    await client.query('COMMIT');
+
+    const user = updated.rows[0];
+    if (user.account_status !== 'active' || user.status !== 'active') {
+      await writeSecurityAudit({
+        event: 'auth.email_verified',
+        outcome: 'failure',
+        req,
+        userId: user.id,
+        metadata: { reason: 'account_blocked' },
+      });
+      return res.status(403).json({ error: 'Tài khoản đã bị khóa' });
+    }
+    const wasKnownDevice = await hasSimilarRecentSession(user.id, req);
+    const session = await issueSession(user, req, res);
+    await sendLoginAlertIfUnusual({ user, req, session, wasKnownDevice });
+    await writeSecurityAudit({
+      event: 'auth.email_verified',
+      outcome: 'success',
+      req,
+      userId: user.id,
+      sessionId: session.sessionId,
+    });
+    return res.json({
+      token: session.token,
+      expiresIn: session.expiresIn,
+      user: normalizeUser(user),
+      message: 'Email đã được xác thực.',
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Verify email error:', error);
+    return res.status(500).json({ error: 'Không xác thực được email' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/auth/forgot-password — luôn dùng thông báo chung để tránh lộ email đã đăng ký.
 router.post('/forgot-password', requireTrustedOrigin, passwordLimiter, async (req, res) => {
   try {
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const email = normalizeEmail(req.body.email);
     const isLocalRequest = ['localhost', '127.0.0.1', '::1'].includes(
       String(req.hostname || '').toLowerCase()
     );
-    if (email.length > 254 || !/^\S+@\S+\.\S+$/.test(email)) {
+    if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Email không hợp lệ' });
     }
 
@@ -932,7 +1169,7 @@ router.post('/refresh', requireTrustedOrigin, refreshLimiter, async (req, res) =
       return res.status(401).json({ error: 'Phiên đăng nhập đã hết hạn' });
     }
     const { rows } = await pool.query(
-      `SELECT id, first_name, last_name, email, avatar, plan, role, status, account_status
+      `SELECT id, first_name, last_name, email, avatar, plan, role, status, account_status, email_verified
        FROM users WHERE id = $1`,
       [session.userId]
     );
@@ -954,6 +1191,67 @@ router.post('/refresh', requireTrustedOrigin, refreshLimiter, async (req, res) =
 // GET /api/auth/me — lấy thông tin user hiện tại qua JWT
 router.get('/me', requireAuth, (req, res) => {
   return res.json(normalizeUser(req.user));
+});
+
+// GET /api/auth/sessions — danh sách thiết bị/phiên đăng nhập gần đây.
+router.get('/sessions', requireAuth, async (req, res) => {
+  try {
+    const sessions = await listUserSessions(req.user.id, req.auth?.sid);
+    return res.json({ sessions });
+  } catch (error) {
+    console.error('List sessions error:', error.message);
+    return res.status(500).json({ error: 'Không tải được danh sách phiên đăng nhập' });
+  }
+});
+
+// DELETE /api/auth/sessions/:id — thu hồi một phiên đăng nhập.
+router.delete('/sessions/:id', requireTrustedOrigin, requireAuth, async (req, res) => {
+  const sessionId = String(req.params.id || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) {
+    return res.status(400).json({ error: 'Phiên đăng nhập không hợp lệ' });
+  }
+  try {
+    const result = await revokeUserSession({
+      userId: req.user.id,
+      sessionId,
+      currentSessionId: req.auth?.sid,
+    });
+    if (!result.revoked) {
+      return res.status(404).json({ error: 'Không tìm thấy phiên đăng nhập' });
+    }
+    if (result.revokedCurrent) clearRefreshCookie(res, req);
+    await writeSecurityAudit({
+      event: 'auth.session_revoked',
+      outcome: 'success',
+      req,
+      userId: req.user.id,
+      sessionId,
+      metadata: { revokedCurrent: result.revokedCurrent },
+    });
+    return res.json({ success: true, revokedCurrent: result.revokedCurrent });
+  } catch (error) {
+    console.error('Revoke session error:', error.message);
+    return res.status(500).json({ error: 'Không thu hồi được phiên đăng nhập' });
+  }
+});
+
+// POST /api/auth/sessions/revoke-others — giữ phiên hiện tại, thu hồi mọi phiên khác.
+router.post('/sessions/revoke-others', requireTrustedOrigin, requireAuth, async (req, res) => {
+  try {
+    const revokedCount = await revokeOtherSessions(req.user.id, req.auth?.sid);
+    await writeSecurityAudit({
+      event: 'auth.sessions_revoked_other',
+      outcome: 'success',
+      req,
+      userId: req.user.id,
+      sessionId: req.auth?.sid,
+      metadata: { revokedCount },
+    });
+    return res.json({ success: true, revokedCount });
+  } catch (error) {
+    console.error('Revoke other sessions error:', error.message);
+    return res.status(500).json({ error: 'Không thu hồi được các phiên khác' });
+  }
 });
 
 // POST /api/auth/logout — revoke this server-side session immediately.

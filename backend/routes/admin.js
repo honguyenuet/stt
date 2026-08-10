@@ -6,10 +6,16 @@ const path = require("path");
 const fs = require("fs");
 const pool = require("../db");
 const { encryptProviderSecret } = require("../services/providerSecrets");
-const { UPLOADS_DIR } = require("../services/transcriptionService");
 const {
+  UPLOADS_DIR,
+  isTranscriptionProviderConfigured,
+} = require("../services/transcriptionService");
+const {
+  ACTIVE_JOB_STATUSES,
   cancelTranscriptionJobForUser,
   kickTranscriptionWorker,
+  normalizeTranscriptionStatus,
+  WAITING_JOB_STATUSES,
 } = require("../services/transcriptionQueue");
 const { revokeAllSessions } = require("../services/sessionService");
 const {
@@ -179,7 +185,7 @@ function normalizeManagedUser(row) {
 }
 
 function normalizeJob(row) {
-  const status = row.status || "completed";
+  const status = normalizeTranscriptionStatus(row.queue_status || row.status || "completed");
   return {
     job_id: `job_${row.id}`,
     user_id: String(row.user_id),
@@ -199,6 +205,17 @@ function normalizeJob(row) {
     completed_at:
       row.completed_at || (status === "completed" ? row.created_at : null),
     error_message: row.error_message || undefined,
+    queue_job_id: row.queue_job_id ? Number(row.queue_job_id) : null,
+    progress: Number(row.queue_progress || 0),
+    progress_stage: row.progress_stage || undefined,
+    attempts: Number(row.attempts || 0),
+    max_attempts: Number(row.max_attempts || 0),
+    next_retry_at: row.next_retry_at || null,
+    timeout_seconds: row.timeout_seconds ? Number(row.timeout_seconds) : null,
+    dead_lettered: Boolean(row.dead_lettered),
+    dead_letter_reason: row.dead_letter_reason || null,
+    recovered_at: row.recovered_at || null,
+    timed_out_at: row.timed_out_at || null,
     transcript: row.text || "",
   };
 }
@@ -226,7 +243,7 @@ function normalizeFile(row) {
     file_size: Number(row.file_size || 0),
     duration_seconds: Math.round(Number(row.duration || 0)),
     storage_status: storageStatus,
-    transcription_status: row.status || "completed",
+    transcription_status: normalizeTranscriptionStatus(row.status || "completed"),
     created_at: row.created_at,
     media_url: row.audio_filename
       ? `/api/admin/files/file_${row.id}/media`
@@ -422,8 +439,9 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
       cancelled: 0,
     };
     statusResult.rows.forEach((row) => {
-      if (Object.prototype.hasOwnProperty.call(jobsByStatus, row.status)) {
-        jobsByStatus[row.status] = row.count;
+      const status = normalizeTranscriptionStatus(row.status);
+      if (Object.prototype.hasOwnProperty.call(jobsByStatus, status)) {
+        jobsByStatus[status] += Number(row.count || 0);
       }
     });
     const completed = jobsByStatus.completed;
@@ -781,8 +799,12 @@ router.get("/jobs", requireAdmin, async (req, res) => {
       );
     }
     if (status !== "all") {
-      params.push(status);
-      filters.push(`t.status = $${params.length}`);
+      const statuses =
+        normalizeTranscriptionStatus(status) === "queued"
+          ? WAITING_JOB_STATUSES
+          : [status];
+      params.push(statuses);
+      filters.push(`COALESCE(q.status, t.status) = ANY($${params.length}::text[])`);
     }
     if (language !== "all") {
       params.push(language);
@@ -790,9 +812,15 @@ router.get("/jobs", requireAdmin, async (req, res) => {
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const { rows } = await pool.query(
-      `SELECT t.*, u.first_name, u.last_name, u.email
+      `SELECT t.*, u.first_name, u.last_name, u.email,
+              q.id AS queue_job_id, q.status AS queue_status,
+              q.progress AS queue_progress, q.progress_stage,
+              q.attempts, q.max_attempts, q.next_retry_at,
+              q.timeout_seconds, q.dead_lettered, q.dead_letter_reason,
+              q.recovered_at, q.timed_out_at
        FROM transcriptions t
        JOIN users u ON u.id = t.user_id
+       LEFT JOIN transcription_jobs q ON q.transcription_id = t.id
        ${where}
        ORDER BY t.created_at DESC
        LIMIT 500`,
@@ -856,7 +884,10 @@ router.post(
       await client.query(
         `UPDATE transcription_jobs
          SET status = 'queued', progress = 0, attempts = 0,
+             progress_stage = 'queued',
              cancel_requested = FALSE, error_message = NULL,
+             dead_lettered = FALSE, dead_letter_reason = NULL,
+             timed_out_at = NULL, next_retry_at = NULL,
              available_at = NOW(), locked_at = NULL, lock_token = NULL,
              started_at = NULL, completed_at = NULL, updated_at = NOW()
          WHERE id = $1`,
@@ -904,10 +935,10 @@ router.post(
     );
     const job = rows[0];
     if (!job) return res.status(404).json({ error: "Không tìm thấy job" });
-    if (!["queued", "processing"].includes(job.status)) {
+    if (!ACTIVE_JOB_STATUSES.includes(job.status)) {
       return res
         .status(400)
-        .json({ error: "Chỉ hủy job queued hoặc processing" });
+        .json({ error: "Chỉ hủy job đang chờ hoặc đang xử lý" });
     }
     if (!job.queue_job_id) {
       return res.status(409).json({
@@ -1591,13 +1622,29 @@ router.post(
           .json({ error: "ID nhà cung cấp không hợp lệ" });
       }
 
-      const latency = 120 + Math.floor(Math.random() * 280);
-      const healthStatus = latency > 330 ? "degraded" : "healthy";
+      const providerResult = await pool.query(
+        "SELECT code, enabled, api_key_encrypted FROM stt_providers WHERE id = $1",
+        [providerId],
+      );
+      const provider = providerResult.rows[0];
+      if (!provider) {
+        return res.status(404).json({ error: "Không tìm thấy nhà cung cấp" });
+      }
+
+      const envConfigured = isTranscriptionProviderConfigured(provider.code);
+      const hasCmsKey = Boolean(provider.api_key_encrypted);
+      const enabled = Boolean(provider.enabled);
+      const healthStatus = !enabled
+        ? "down"
+        : hasCmsKey || envConfigured
+          ? "healthy"
+          : "down";
+      const latency = healthStatus === "healthy" ? 0 : null;
       const { rows } = await pool.query(
         `UPDATE stt_providers
        SET health_status = $1,
            avg_latency_ms = $2,
-           success_rate = CASE WHEN $1 = 'healthy' THEN 99.2 ELSE 94.5 END,
+           success_rate = CASE WHEN $1 = 'healthy' THEN 100 ELSE 0 END,
            last_checked_at = NOW(),
            updated_at = NOW()
        WHERE id = $3
@@ -1729,9 +1776,12 @@ router.get("/system/status", requireAdmin, async (_req, res) => {
     pool.query(
       `SELECT
          COUNT(*)::integer AS total,
-         COUNT(*) FILTER (WHERE status = 'queued')::integer AS queued,
-         COUNT(*) FILTER (WHERE status = 'processing')::integer AS active
+         COUNT(*) FILTER (WHERE status = ANY($1::text[]))::integer AS queued,
+         COUNT(*) FILTER (WHERE status = 'processing')::integer AS active,
+         COUNT(*) FILTER (WHERE dead_lettered = TRUE)::integer AS dead_lettered,
+         COUNT(*) FILTER (WHERE status = 'queued' AND next_retry_at IS NOT NULL)::integer AS retry_waiting
        FROM transcription_jobs`,
+      [WAITING_JOB_STATUSES],
     ),
   ]);
   return res.json({
@@ -1745,6 +1795,8 @@ router.get("/system/status", requireAdmin, async (_req, res) => {
       total: Number(queue.rows[0]?.total || 0),
       queued: Number(queue.rows[0]?.queued || 0),
       active: Number(queue.rows[0]?.active || 0),
+      retry_waiting: Number(queue.rows[0]?.retry_waiting || 0),
+      dead_lettered: Number(queue.rows[0]?.dead_lettered || 0),
     },
     providers: providers.rows,
     generated_at: new Date().toISOString(),

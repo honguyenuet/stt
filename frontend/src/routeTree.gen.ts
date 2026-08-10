@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as UploadRouteImport } from './routes/upload'
 import { Route as TranscriptionSettingsRouteImport } from './routes/transcription-settings'
 import { Route as SupportRouteImport } from './routes/support'
@@ -43,6 +44,11 @@ import { Route as AdminJobsRouteImport } from './routes/admin.jobs'
 import { Route as AdminFilesRouteImport } from './routes/admin.files'
 import { Route as AdminAuditLogsRouteImport } from './routes/admin.audit-logs'
 
+const VerifyEmailRoute = VerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/admin/audit-logs': typeof AdminAuditLogsRoute
   '/admin/files': typeof AdminFilesRoute
   '/admin/jobs': typeof AdminJobsRoute
@@ -263,6 +270,7 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/admin/audit-logs': typeof AdminAuditLogsRoute
   '/admin/files': typeof AdminFilesRoute
   '/admin/jobs': typeof AdminJobsRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/admin/audit-logs': typeof AdminAuditLogsRoute
   '/admin/files': typeof AdminFilesRoute
   '/admin/jobs': typeof AdminJobsRoute
@@ -336,6 +345,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/transcription-settings'
     | '/upload'
+    | '/verify-email'
     | '/admin/audit-logs'
     | '/admin/files'
     | '/admin/jobs'
@@ -370,6 +380,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/transcription-settings'
     | '/upload'
+    | '/verify-email'
     | '/admin/audit-logs'
     | '/admin/files'
     | '/admin/jobs'
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/transcription-settings'
     | '/upload'
+    | '/verify-email'
     | '/admin/audit-logs'
     | '/admin/files'
     | '/admin/jobs'
@@ -441,12 +453,20 @@ export interface RootRouteChildren {
   SupportRoute: typeof SupportRoute
   TranscriptionSettingsRoute: typeof TranscriptionSettingsRoute
   UploadRoute: typeof UploadRoute
+  VerifyEmailRoute: typeof VerifyEmailRoute
   CheckoutOrderIdRoute: typeof CheckoutOrderIdRoute
   TranscriptIdRoute: typeof TranscriptIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/verify-email': {
+      id: '/verify-email'
+      path: '/verify-email'
+      fullPath: '/verify-email'
+      preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/upload': {
       id: '/upload'
       path: '/upload'
@@ -733,6 +753,7 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   TranscriptionSettingsRoute: TranscriptionSettingsRoute,
   UploadRoute: UploadRoute,
+  VerifyEmailRoute: VerifyEmailRoute,
   CheckoutOrderIdRoute: CheckoutOrderIdRoute,
   TranscriptIdRoute: TranscriptIdRoute,
 }

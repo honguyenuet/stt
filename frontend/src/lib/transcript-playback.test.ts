@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampSeekTime,
   findActiveWordIndex,
+  findTimedWordTextRange,
   formatPlaybackTime,
   replaceTimedWordInText,
 } from "./transcript-playback";
@@ -46,6 +47,17 @@ describe("transcript playback helpers", () => {
         "everyone.",
       ),
     ).toBe("Speaker 0: Hello everyone.");
+  });
+
+  it("finds the editable text range for the active timed word", () => {
+    const editableWords = [
+      { text: "Hello", start: 0, end: 500 },
+      { text: "world.", start: 500, end: 1_000 },
+    ];
+
+    expect(
+      findTimedWordTextRange("Speaker 0: Hello world.", editableWords, 1),
+    ).toEqual({ start: 17, end: 23 });
   });
 
   it("returns null when the timed word cannot be mapped safely", () => {

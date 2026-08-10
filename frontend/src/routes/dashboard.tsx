@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import type { ComponentType } from "react";
 import {
   AudioLines,
@@ -22,10 +22,13 @@ import {
   Languages,
   MessageCircle,
   Mic,
+  MonitorSmartphone,
   Radio,
   RefreshCw,
   Settings,
+  ShieldAlert,
   SlidersHorizontal,
+  Trash2,
   Upload,
   UploadCloud,
   X,
@@ -74,6 +77,18 @@ interface HistoryItem {
   created_at: string;
 }
 
+interface AuthSession {
+  id: string;
+  current: boolean;
+  deviceName: string;
+  browserName: string;
+  osName: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
 type ActionDialogState = {
   title: string;
   description: string;
@@ -86,6 +101,16 @@ function formatDate(value: string) {
     day: "numeric",
     month: "numeric",
     year: "numeric",
+  });
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -165,6 +190,10 @@ function DashboardPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [sessions, setSessions] = useState<AuthSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState("");
+  const [sessionActionId, setSessionActionId] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
   const [activeFolder, setActiveFolder] = useState("Dự án mới");
@@ -187,7 +216,41 @@ function DashboardPage() {
       setEditForm({ firstName: user.firstName, lastName: user.lastName });
   }, [user]);
 
+  const loadSessions = useCallback(async () => {
+    if (!token) return;
+    setSessionsLoading(true);
+    setSessionsError("");
+    try {
+      const response = await fetch(`${API_URL}/api/auth/sessions`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        sessions?: AuthSession[];
+        error?: string;
+      };
+      if (!response.ok || !Array.isArray(data.sessions)) {
+        throw new Error(data.error || "Không tải được danh sách thiết bị");
+      }
+      setSessions(data.sessions);
+    } catch (error) {
+      setSessionsError(
+        error instanceof Error
+          ? error.message
+          : "Không tải được danh sách thiết bị",
+      );
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!editOpen || !token) return;
+    void loadSessions();
+  }, [editOpen, loadSessions, token]);
+
   // ── Handlers ────────────────────────────────────────────────────────
+
   function openEdit() {
     if (user)
       setEditForm({ firstName: user.firstName, lastName: user.lastName });
@@ -202,6 +265,8 @@ function DashboardPage() {
     setShowPasswords({ current: false, next: false, confirm: false });
     setPasswordError("");
     setPasswordSuccess("");
+    setSessionsError("");
+    setSessionActionId("");
     setEditOpen(true);
   }
 
@@ -217,6 +282,64 @@ function DashboardPage() {
     });
     setPasswordError("");
     setPasswordSuccess("");
+    setSessionsError("");
+    setSessionActionId("");
+  }
+
+  async function revokeSession(sessionId: string) {
+    if (!token) return;
+    setSessionActionId(sessionId);
+    setSessionsError("");
+    try {
+      const response = await fetch(`${API_URL}/api/auth/sessions/${sessionId}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        revokedCurrent?: boolean;
+      };
+      if (!response.ok) throw new Error(data.error || "Không thu hồi được phiên");
+      if (data.revokedCurrent) {
+        logout();
+        window.location.href = "/login";
+        return;
+      }
+      await loadSessions();
+    } catch (error) {
+      setSessionsError(
+        error instanceof Error ? error.message : "Không thu hồi được phiên",
+      );
+    } finally {
+      setSessionActionId("");
+    }
+  }
+
+  async function revokeOtherSessions() {
+    if (!token) return;
+    setSessionActionId("others");
+    setSessionsError("");
+    try {
+      const response = await fetch(`${API_URL}/api/auth/sessions/revoke-others`, {
+        method: "POST",
+        credentials: "include",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Không thu hồi được thiết bị khác");
+      await loadSessions();
+    } catch (error) {
+      setSessionsError(
+        error instanceof Error
+          ? error.message
+          : "Không thu hồi được thiết bị khác",
+      );
+    } finally {
+      setSessionActionId("");
+    }
   }
 
   function resizeImage(file: File): Promise<string> {
@@ -1055,6 +1178,116 @@ function DashboardPage() {
                     </>
                   )}
                 </button>
+              </div>
+            </section>
+
+            <section className="border-t border-border pt-4">
+              <div className="mb-3 flex items-start gap-2.5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f7f4ff] text-[#21104a]">
+                  <MonitorSmartphone className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-foreground">
+                    Thiết bị đăng nhập
+                  </h3>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                    Quản lý các phiên đang hoạt động và thu hồi thiết bị không còn dùng.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void loadSessions()}
+                  disabled={sessionsLoading || Boolean(sessionActionId)}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-border px-3 py-2 text-xs font-bold text-foreground transition hover:bg-background disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${sessionsLoading ? "animate-spin" : ""}`} />
+                  Làm mới
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void revokeOtherSessions()}
+                  disabled={sessionsLoading || Boolean(sessionActionId)}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-[#e8decc] bg-[#fff8d7] px-3 py-2 text-xs font-bold text-[#21104a] transition hover:bg-[#ffefad] disabled:opacity-60"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Thu hồi thiết bị khác
+                </button>
+              </div>
+
+              {sessionsError && (
+                <div
+                  role="alert"
+                  className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive"
+                >
+                  <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {sessionsError}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {sessionsLoading && sessions.length === 0 ? (
+                  <div className="rounded-lg border border-border bg-background px-3 py-3 text-xs font-semibold text-muted-foreground">
+                    Đang tải danh sách thiết bị...
+                  </div>
+                ) : (
+                  sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="rounded-lg border border-border bg-background px-3 py-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[#21104a]">
+                          <MonitorSmartphone className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-bold text-foreground">
+                              {session.deviceName}
+                            </p>
+                            {session.current && (
+                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-black text-green-700">
+                                Hiện tại
+                              </span>
+                            )}
+                            {session.revokedAt && (
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-black text-muted-foreground">
+                                Đã thu hồi
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {session.browserName} trên {session.osName}
+                          </p>
+                          <p className="text-xs leading-5 text-muted-foreground/70">
+                            Hoạt động: {formatDateTime(session.lastSeenAt)}
+                          </p>
+                        </div>
+                        {!session.revokedAt && (
+                          <button
+                            type="button"
+                            onClick={() => void revokeSession(session.id)}
+                            disabled={Boolean(sessionActionId)}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                            aria-label={
+                              session.current
+                                ? "Thu hồi phiên hiện tại"
+                                : "Thu hồi phiên đăng nhập"
+                            }
+                          >
+                            {sessionActionId === session.id ? (
+                              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </section>
 

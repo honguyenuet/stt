@@ -55,6 +55,7 @@ import { getApiBaseUrl } from "@/lib/api-base-url";
 
 const API_URL = getApiBaseUrl();
 const MAX_MB = 200;
+const ACTIVE_UPLOAD_JOB_KEY = "vbee_active_upload_job";
 
 const FORMAT_TAGS = ["MP3", "WAV", "M4A", "OGG", "FLAC", "AAC", "MP4", "WEBM"];
 const UPLOAD_LANGUAGE_OPTIONS = SPEECH_LANGUAGE_OPTIONS.map((item) =>
@@ -84,6 +85,55 @@ interface HistoryItem {
   error_message?: string | null;
   job_id?: number | null;
   created_at: string;
+}
+
+interface TranscriptionJobState {
+  id: number;
+  status: "queued" | "processing" | "completed" | "failed" | "cancelled";
+  progress: number;
+  progress_stage_label?: string;
+  error_message?: string | null;
+  retry_attempt?: number;
+  max_attempts?: number;
+  next_retry_at?: string | null;
+  timeout_seconds?: number | null;
+  dead_lettered?: boolean;
+  dead_letter_reason?: string | null;
+  recovered_at?: string | null;
+  retry_available?: boolean;
+  expected_duration_seconds?: number | null;
+  queue_position?: number;
+  estimated_remaining_seconds?: number | null;
+  transcription_id: number;
+  filename: string;
+  file_size?: number;
+  duration?: number | null;
+  text?: string;
+  words?: Word[];
+  source_language?: string | null;
+  translated_text?: string | null;
+  translation_target_language?: string | null;
+  translation_provider?: string | null;
+  translation_error?: string | null;
+  completed_at?: string | null;
+  created_at?: string;
+}
+
+interface UploadQueueResponse {
+  id?: number;
+  jobId?: number;
+  status?: "queued" | "processing" | "completed" | "failed";
+  progress?: number;
+  queuePosition?: number;
+  estimatedRemainingSeconds?: number | null;
+  expectedDurationSeconds?: number;
+  error?: string;
+  filename?: string;
+  fileSize?: number;
+  createdAt?: string;
+  quota?: QuotaStatus;
+  message?: string;
+  reused?: boolean;
 }
 
 type UploadStatus =
@@ -129,6 +179,41 @@ function formatBytes(bytes?: number) {
   if (!bytes) return "";
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function makeUploadFingerprint({
+  file,
+  youtube,
+  expectedDuration,
+  language,
+  audioMode,
+  translateTo,
+  speakerLabels,
+}: {
+  file?: File | null;
+  youtube?: YoutubeMetadata | null;
+  expectedDuration: number | null;
+  language: string;
+  audioMode: AudioMode;
+  translateTo: string;
+  speakerLabels: boolean;
+}) {
+  const source = file
+    ? `${file.name}:${file.size}:${file.lastModified}`
+    : `${youtube?.videoId || youtube?.url || "link"}:${youtube?.durationSeconds || ""}`;
+  const raw = [
+    source,
+    Math.ceil(expectedDuration || 0),
+    language,
+    audioMode,
+    translateTo,
+    speakerLabels ? "speakers" : "plain",
+  ].join("|");
+  let hash = 5381;
+  for (let index = 0; index < raw.length; index += 1) {
+    hash = (hash * 33) ^ raw.charCodeAt(index);
+  }
+  return `upload_${Math.abs(hash).toString(36)}_${Math.ceil(expectedDuration || 0)}`;
 }
 
 function getFileIcon(filename: string) {
@@ -203,10 +288,23 @@ function UploadPage() {
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [expectedDuration, setExpectedDuration] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [queuedJob, setQueuedJob] = useState<{
     id: number;
+    status?: TranscriptionJobState["status"];
+    progress?: number;
+    stageLabel?: string;
     queuePosition: number;
     estimatedRemainingSeconds: number | null;
+    errorMessage?: string | null;
+    retryAttempt?: number;
+    maxAttempts?: number;
+    nextRetryAt?: string | null;
+    timeoutSeconds?: number | null;
+    deadLettered?: boolean;
+    deadLetterReason?: string | null;
+    recoveredAt?: string | null;
+    retryAvailable?: boolean;
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -353,6 +451,186 @@ function UploadPage() {
     activeIdxRef.current = newIdx;
   }
 
+  function rememberActiveJob(jobId: number, filename: string) {
+    window.localStorage.setItem(
+      ACTIVE_UPLOAD_JOB_KEY,
+      JSON.stringify({ jobId, filename, savedAt: Date.now() }),
+    );
+  }
+
+  function clearRememberedJob() {
+    window.localStorage.removeItem(ACTIVE_UPLOAD_JOB_KEY);
+  }
+
+  function applyJobState(job: TranscriptionJobState) {
+    const normalizedStatus = job.status;
+    setQueuedJob({
+      id: job.id,
+      status: normalizedStatus,
+      progress: job.progress,
+      stageLabel: job.progress_stage_label,
+      queuePosition: job.queue_position || 1,
+      estimatedRemainingSeconds: job.estimated_remaining_seconds ?? null,
+      errorMessage: job.error_message ?? null,
+      retryAttempt: job.retry_attempt ?? 0,
+      maxAttempts: job.max_attempts ?? 0,
+      nextRetryAt: job.next_retry_at ?? null,
+      timeoutSeconds: job.timeout_seconds ?? null,
+      deadLettered: Boolean(job.dead_lettered),
+      deadLetterReason: job.dead_letter_reason ?? null,
+      recoveredAt: job.recovered_at ?? null,
+      retryAvailable: job.retry_available ?? false,
+    });
+    setHistory((prev) =>
+      prev.map((item) =>
+        item.job_id === job.id || item.id === job.transcription_id
+          ? {
+              ...item,
+              status: normalizedStatus,
+              progress: job.progress,
+              error_message: job.error_message ?? null,
+              duration: normalizeMediaDuration(job.duration) ?? item.duration,
+              text: job.text ?? item.text,
+            }
+          : item,
+      ),
+    );
+
+    if (normalizedStatus === "completed") {
+      clearRememberedJob();
+      setUploadStatus("done");
+      setQueuedJob(null);
+      setTranscription(job.text || "");
+      setWords(Array.isArray(job.words) ? job.words : []);
+      setDuration(normalizeMediaDuration(job.duration));
+      setTranslation(
+        job.translated_text
+          ? {
+              text: job.translated_text,
+              sourceLanguage: job.source_language || "auto",
+              targetLanguage: job.translation_target_language || translateTo,
+              provider: job.translation_provider || "unknown",
+            }
+          : null,
+      );
+      setTranslationError(job.translation_error || "");
+      if (uploadFile && !audioUrl) {
+        setAudioUrl(URL.createObjectURL(uploadFile));
+      }
+      setQuotaRefreshKey((key) => key + 1);
+    } else if (normalizedStatus === "failed") {
+      clearRememberedJob();
+      setUploadStatus("error");
+      setUploadError(
+        job.dead_letter_reason || job.error_message || "Job xử lý thất bại.",
+      );
+    } else if (normalizedStatus === "cancelled") {
+      clearRememberedJob();
+      setUploadStatus("cancelled");
+      setUploadError("Job đã được hủy.");
+    } else {
+      setUploadStatus("queued");
+      rememberActiveJob(job.id, job.filename);
+    }
+  }
+
+  async function fetchJobState(jobId: number) {
+    if (!token) return null;
+    const response = await fetch(`${API_URL}/api/transcribe/jobs/${jobId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = (await response.json().catch(() => ({}))) as
+      | TranscriptionJobState
+      | { error?: string };
+    if (!response.ok || !("id" in data)) {
+      throw new Error("error" in data ? data.error : "Không tải được tiến độ job");
+    }
+    return data;
+  }
+
+  function uploadFileWithProgress(formData: FormData) {
+    return new Promise<UploadQueueResponse>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_URL}/api/transcribe`);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        setUploadProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      };
+      xhr.onload = () => {
+        const data = JSON.parse(xhr.responseText || "{}") as UploadQueueResponse;
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(Object.assign(new Error(data.error || "Chuyển đổi thất bại"), { data }));
+          return;
+        }
+        setUploadProgress(100);
+        resolve(data);
+      };
+      xhr.onerror = () => reject(new Error("Không thể kết nối đến server"));
+      xhr.ontimeout = () => reject(new Error("Kết nối upload quá thời gian chờ"));
+      xhr.timeout = 10 * 60 * 1000;
+      xhr.send(formData);
+    });
+  }
+
+  useEffect(() => {
+    if (!token || queuedJob?.id) return;
+    const raw = window.localStorage.getItem(ACTIVE_UPLOAD_JOB_KEY);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as { jobId?: number; savedAt?: number };
+      if (!saved.jobId || Date.now() - Number(saved.savedAt || 0) > 24 * 60 * 60 * 1000) {
+        clearRememberedJob();
+        return;
+      }
+      setQueuedJob({
+        id: saved.jobId,
+        status: "queued",
+        progress: 0,
+        queuePosition: 1,
+        estimatedRemainingSeconds: null,
+        retryAttempt: 0,
+        maxAttempts: 0,
+        nextRetryAt: null,
+        timeoutSeconds: null,
+        deadLettered: false,
+        deadLetterReason: null,
+        recoveredAt: null,
+        retryAvailable: false,
+      });
+      setUploadStatus("queued");
+    } catch {
+      clearRememberedJob();
+    }
+  }, [queuedJob?.id, token]);
+
+  useEffect(() => {
+    if (!token || !queuedJob?.id) return;
+    if (queuedJob.status === "failed" || queuedJob.status === "cancelled") return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const job = await fetchJobState(queuedJob.id);
+        if (active && job) applyJobState(job);
+      } catch (error) {
+        if (active) {
+          setUploadError(
+            error instanceof Error ? error.message : "Không tải được tiến độ job",
+          );
+        }
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), 2500);
+    window.addEventListener("focus", poll);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", poll);
+    };
+  }, [queuedJob?.id, queuedJob?.status, token]);
+
   async function handleFileSelect(file: File) {
     if (!/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name)) {
       setUploadError(
@@ -409,8 +687,18 @@ function UploadPage() {
     if (!uploadFile && !youtubeMetadata) return;
     setUploadStatus("uploading");
     setUploadError("");
+    setUploadProgress(0);
+    const uploadFingerprint = makeUploadFingerprint({
+      file: uploadFile,
+      youtube: youtubeMetadata,
+      expectedDuration: normalizedExpectedDuration,
+      language: transcriptionLanguage,
+      audioMode,
+      translateTo,
+      speakerLabels,
+    });
     try {
-      let res: Response;
+      let data: UploadQueueResponse;
       if (uploadFile) {
         const formData = new FormData();
         formData.append("audio", uploadFile);
@@ -419,19 +707,17 @@ function UploadPage() {
         formData.append("audioMode", audioMode);
         formData.append("language", transcriptionLanguage);
         formData.append("translateTo", translateTo);
+        formData.append("uploadFingerprint", uploadFingerprint);
         if (normalizedExpectedDuration) {
           formData.append(
             "expectedDuration",
             String(normalizedExpectedDuration),
           );
         }
-        res = await fetch(`${API_URL}/api/transcribe`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        });
+        data = await uploadFileWithProgress(formData);
       } else {
-        res = await fetch(`${API_URL}/api/transcribe/url`, {
+        setUploadProgress(100);
+        const res = await fetch(`${API_URL}/api/transcribe/url`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -444,37 +730,35 @@ function UploadPage() {
             audioMode,
             language: transcriptionLanguage,
             translateTo,
+            uploadFingerprint,
           }),
         });
-      }
-      const data = (await res.json()) as {
-        id?: number;
-        jobId?: number;
-        status?: "queued" | "processing" | "completed" | "failed";
-        progress?: number;
-        queuePosition?: number;
-        estimatedRemainingSeconds?: number | null;
-        expectedDurationSeconds?: number;
-        error?: string;
-        filename?: string;
-        fileSize?: number;
-        createdAt?: string;
-        quota?: QuotaStatus;
-        message?: string;
-      };
-      if (!res.ok) {
-        if (data.quota) setQuota(data.quota);
-        setUploadError(data.error ?? "Chuyển đổi thất bại");
-        setUploadStatus("error");
-        return;
+        data = (await res.json()) as UploadQueueResponse;
+        if (!res.ok) {
+          if (data.quota) setQuota(data.quota);
+          setUploadError(data.error ?? "Chuyển đổi thất bại");
+          setUploadStatus("error");
+          return;
+        }
       }
       setUploadStatus("queued");
       if (data.jobId) {
         setQueuedJob({
           id: data.jobId,
+          status: data.status,
+          progress: data.progress ?? 0,
           queuePosition: data.queuePosition || 1,
           estimatedRemainingSeconds: data.estimatedRemainingSeconds ?? null,
+          retryAttempt: 0,
+          maxAttempts: 0,
+          nextRetryAt: null,
+          timeoutSeconds: null,
+          deadLettered: false,
+          deadLetterReason: null,
+          recoveredAt: null,
+          retryAvailable: false,
         });
+        rememberActiveJob(data.jobId, data.filename ?? selectedFilename);
       }
       setQuotaRefreshKey((key) => key + 1);
       if (data.quota) setQuota(data.quota);
@@ -498,8 +782,10 @@ function UploadPage() {
           ].slice(0, 4),
         );
       }
-    } catch {
-      setUploadError("Không thể kết nối đến server");
+    } catch (error) {
+      const data = (error as { data?: UploadQueueResponse })?.data;
+      if (data?.quota) setQuota(data.quota);
+      setUploadError(error instanceof Error ? error.message : "Không thể kết nối đến server");
       setUploadStatus("error");
     }
   }
@@ -516,6 +802,7 @@ function UploadPage() {
       );
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Không hủy được job");
+      clearRememberedJob();
       setQueuedJob(null);
       setUploadStatus("idle");
       setUploadError("");
@@ -525,6 +812,37 @@ function UploadPage() {
         cancelError instanceof Error
           ? cancelError.message
           : "Không hủy được job xử lý.",
+      );
+    }
+  }
+
+  async function handleRetryQueuedJob() {
+    if (!queuedJob || !token) return;
+    setUploadError("");
+    setUploadStatus("queued");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/jobs/${queuedJob.id}/retry`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        job?: TranscriptionJobState;
+        quota?: QuotaStatus;
+        error?: string;
+      };
+      if (!response.ok || !data.job) {
+        if (data.quota) setQuota(data.quota);
+        throw new Error(data.error || "Không thử lại được job");
+      }
+      if (data.quota) setQuota(data.quota);
+      applyJobState(data.job);
+    } catch (error) {
+      setUploadStatus("error");
+      setUploadError(
+        error instanceof Error ? error.message : "Không thử lại được job",
       );
     }
   }
@@ -614,7 +932,9 @@ function UploadPage() {
     setUploadError("");
     setDuration(null);
     setExpectedDuration(null);
+    setUploadProgress(0);
     setQueuedJob(null);
+    clearRememberedJob();
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -1028,7 +1348,10 @@ function UploadPage() {
                 )}
 
                 {uploadStatus === "uploading" && (
-                  <ProcessingPanel translateTo={translateTo} />
+                  <ProcessingPanel
+                    translateTo={translateTo}
+                    uploadProgress={uploadProgress}
+                  />
                 )}
 
                 {uploadStatus === "queued" && (
@@ -1044,6 +1367,24 @@ function UploadPage() {
                           sẽ xử lý nền và cập nhật transcript trong Lịch sử.
                         </p>
                         <p className="mt-2 text-xs font-bold text-primary">
+                          Tiến độ: {queuedJob?.progress ?? 0}%.
+                          {queuedJob?.stageLabel ? ` ${queuedJob.stageLabel}.` : ""}
+                        </p>
+                        {queuedJob?.maxAttempts ? (
+                          <p className="mt-1 text-xs font-bold text-primary">
+                            Lần xử lý: {queuedJob.retryAttempt || 0}/
+                            {queuedJob.maxAttempts}
+                            {queuedJob.nextRetryAt
+                              ? `, thử lại lúc ${formatDate(queuedJob.nextRetryAt)}.`
+                              : "."}
+                          </p>
+                        ) : null}
+                        {queuedJob?.recoveredAt ? (
+                          <p className="mt-1 text-xs font-semibold text-muted-foreground">
+                            Job đã được phục hồi sau khi worker restart.
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-xs font-bold text-primary">
                           Vị trí hàng đợi: {queuedJob?.queuePosition || 1}.
                           {queuedJob?.estimatedRemainingSeconds
                             ? ` Dự kiến còn ${formatQuotaTime(queuedJob.estimatedRemainingSeconds)}.`
@@ -1072,7 +1413,32 @@ function UploadPage() {
                   <div className="space-y-3">
                     <div className="rounded-xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
                       {uploadError}
+                      {queuedJob?.deadLettered ? (
+                        <p className="mt-2 text-xs font-bold">
+                          Job đã vào hàng lỗi sau {queuedJob.retryAttempt || 0}/
+                          {queuedJob.maxAttempts || 0} lần thử. Có thể chạy lại
+                          job nếu file gốc vẫn còn trên server.
+                        </p>
+                      ) : null}
                     </div>
+                    {queuedJob?.status === "failed" && (
+                      <button
+                        onClick={() => void handleRetryQueuedJob()}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Thử lại job này
+                      </button>
+                    )}
+                    {(uploadFile || youtubeMetadata) && queuedJob?.status !== "failed" && (
+                      <button
+                        onClick={() => void handleUpload()}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Gửi lại upload
+                      </button>
+                    )}
                     <button
                       onClick={reset}
                       className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-3 text-sm font-bold transition hover:bg-card"
@@ -1513,7 +1879,13 @@ function UploadRequirements({
   );
 }
 
-function ProcessingPanel({ translateTo }: { translateTo: string }) {
+function ProcessingPanel({
+  translateTo,
+  uploadProgress,
+}: {
+  translateTo: string;
+  uploadProgress: number;
+}) {
   const phases = [
     ["Đang gửi file", "Tải file an toàn lên máy chủ Vbee."],
     [
@@ -1539,6 +1911,18 @@ function ProcessingPanel({ translateTo }: { translateTo: string }) {
           <p className="mt-0.5 text-xs text-muted-foreground">
             Không đóng trang này cho đến khi trạng thái hoàn tất.
           </p>
+        </div>
+      </div>
+      <div className="mt-4">
+        <div className="flex items-center justify-between text-xs font-bold text-primary">
+          <span>Upload lên server</span>
+          <span>{uploadProgress}%</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+          <div
+            className="h-full rounded-full bg-primary transition-all"
+            style={{ width: `${uploadProgress}%` }}
+          />
         </div>
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-3">

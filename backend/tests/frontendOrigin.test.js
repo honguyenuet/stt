@@ -12,15 +12,29 @@ function loadSecurity(overrides) {
   return security;
 }
 
-test("development allows localhost frontend alongside configured ngrok origin", () => {
+function loadSessionService(overrides) {
+  const securityPath = require.resolve("../config/security");
+  const sessionPath = require.resolve("../services/sessionService");
+  delete require.cache[securityPath];
+  delete require.cache[sessionPath];
+  const previousEnv = { ...process.env };
+  Object.assign(process.env, overrides);
+  const sessionService = require("../services/sessionService");
+  process.env = previousEnv;
+  delete require.cache[sessionPath];
+  delete require.cache[securityPath];
+  return sessionService;
+}
+
+test("development allows localhost frontend alongside configured public origin", () => {
   const { getAllowedOrigins } = loadSecurity({
     NODE_ENV: "development",
-    FRONTEND_URL: "https://myth-mowing-reliant.ngrok-free.dev",
-    CORS_ALLOWED_ORIGINS: "https://myth-mowing-reliant.ngrok-free.dev",
+    FRONTEND_URL: "https://app.example.com",
+    CORS_ALLOWED_ORIGINS: "https://app.example.com",
   });
 
   assert.deepEqual(getAllowedOrigins(), [
-    "https://myth-mowing-reliant.ngrok-free.dev",
+    "https://app.example.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
   ]);
@@ -29,8 +43,8 @@ test("development allows localhost frontend alongside configured ngrok origin", 
 test("request frontend URL follows trusted localhost origin in development", () => {
   const { getRequestFrontendUrl } = loadSecurity({
     NODE_ENV: "development",
-    FRONTEND_URL: "https://myth-mowing-reliant.ngrok-free.dev",
-    CORS_ALLOWED_ORIGINS: "https://myth-mowing-reliant.ngrok-free.dev",
+    FRONTEND_URL: "https://app.example.com",
+    CORS_ALLOWED_ORIGINS: "https://app.example.com",
   });
 
   assert.equal(
@@ -44,22 +58,22 @@ test("request frontend URL follows trusted localhost origin in development", () 
 test("request frontend URL falls back to configured domain without trusted origin", () => {
   const { getRequestFrontendUrl } = loadSecurity({
     NODE_ENV: "development",
-    FRONTEND_URL: "https://myth-mowing-reliant.ngrok-free.dev",
-    CORS_ALLOWED_ORIGINS: "https://myth-mowing-reliant.ngrok-free.dev",
+    FRONTEND_URL: "https://app.example.com",
+    CORS_ALLOWED_ORIGINS: "https://app.example.com",
   });
 
   assert.equal(
     getRequestFrontendUrl({
       get: () => "",
     }),
-    "https://myth-mowing-reliant.ngrok-free.dev",
+    "https://app.example.com",
   );
 });
 
 test("OAuth callback URL follows the backend host that starts the flow", () => {
   const { getOAuthCallbackUrl } = loadSecurity({
     NODE_ENV: "development",
-    FRONTEND_URL: "https://myth-mowing-reliant.ngrok-free.dev",
+    FRONTEND_URL: "https://app.example.com",
   });
 
   assert.equal(
@@ -77,18 +91,18 @@ test("OAuth callback URL follows the backend host that starts the flow", () => {
     getOAuthCallbackUrl(
       {
         protocol: "https",
-        get: (name) => (name === "host" ? "myth-mowing-reliant.ngrok-free.dev" : ""),
+        get: (name) => (name === "host" ? "api.example.com" : ""),
       },
       "facebook",
     ),
-    "https://myth-mowing-reliant.ngrok-free.dev/api/auth/facebook/callback",
+    "https://api.example.com/api/auth/facebook/callback",
   );
 });
 
 test("OAuth callback URL follows localhost when the initiating frontend origin is localhost", () => {
   const { getOAuthCallbackUrl } = loadSecurity({
     NODE_ENV: "development",
-    FRONTEND_URL: "https://myth-mowing-reliant.ngrok-free.dev",
+    FRONTEND_URL: "https://app.example.com",
   });
 
   assert.equal(
@@ -96,10 +110,53 @@ test("OAuth callback URL follows localhost when the initiating frontend origin i
       {
         protocol: "https",
         query: { frontendOrigin: "http://localhost:3000" },
-        get: (name) => (name === "host" ? "myth-mowing-reliant.ngrok-free.dev" : ""),
+        get: (name) => (name === "host" ? "api.example.com" : ""),
       },
       "google",
     ),
     "http://localhost:3001/api/auth/google/callback",
+  );
+});
+
+test("refresh cookie stays strict for same-site localhost development", () => {
+  const { getRefreshCookieOptions } = loadSessionService({
+    NODE_ENV: "development",
+    FRONTEND_URL: "http://localhost:3000",
+  });
+
+  assert.deepEqual(
+    getRefreshCookieOptions({
+      protocol: "http",
+      secure: false,
+      get: (name) => (name === "host" ? "localhost:3001" : ""),
+    }),
+    {
+      httpOnly: true,
+      path: "/",
+      sameSite: "strict",
+      secure: false,
+    },
+  );
+});
+
+test("refresh cookie uses SameSite=None for cross-site HTTPS deployments", () => {
+  const { getRefreshCookieOptions } = loadSessionService({
+    NODE_ENV: "production",
+    FRONTEND_URL: "https://app.example.com",
+    JWT_SECRET: "0123456789abcdef0123456789abcdef",
+  });
+
+  assert.deepEqual(
+    getRefreshCookieOptions({
+      protocol: "https",
+      secure: true,
+      get: (name) => (name === "host" ? "api.example.net" : ""),
+    }),
+    {
+      httpOnly: true,
+      path: "/",
+      sameSite: "none",
+      secure: true,
+    },
   );
 });

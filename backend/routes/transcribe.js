@@ -17,9 +17,12 @@ const {
   validateBeforeTranscription,
 } = require("../services/quotaService");
 const {
+  ACTIVE_JOB_STATUSES,
   cancelTranscriptionJobForUser,
   enqueueTranscriptionJob,
   getTranscriptionJobForUser,
+  normalizeTranscriptionStatus,
+  retryTranscriptionJobForUser,
 } = require("../services/transcriptionQueue");
 const {
   getUserSettings,
@@ -51,6 +54,70 @@ const {
 const { writeSecurityAudit } = require("../services/securityAuditService");
 
 const router = express.Router();
+const MAX_TRANSCRIPT_VERSIONS = 50;
+
+function normalizeTranscriptWordsForEditor(words) {
+  if (words === undefined) return null;
+  if (!Array.isArray(words) || words.length > 100_000) {
+    const error = new Error("Danh sách timestamp không hợp lệ");
+    error.statusCode = 400;
+    throw error;
+  }
+  return words.map((word) => {
+    const wordText = String(word?.text || "").trim();
+    const start = Number(word?.start);
+    const end = Number(word?.end);
+    if (
+      !wordText ||
+      wordText.length > 500 ||
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      start < 0 ||
+      end < start
+    ) {
+      const error = new Error("Một timestamp trong transcript không hợp lệ");
+      error.statusCode = 400;
+      throw error;
+    }
+    return {
+      text: wordText,
+      start,
+      end,
+      speaker:
+        word.speaker === null || word.speaker === undefined
+          ? null
+          : String(word.speaker).slice(0, 100),
+      confidence: Number.isFinite(Number(word.confidence))
+        ? Number(word.confidence)
+        : null,
+    };
+  });
+}
+
+async function insertTranscriptVersion(client, transcript, label = "Auto-save") {
+  await client.query(
+    `INSERT INTO transcription_versions (transcription_id, user_id, text, words, label)
+     VALUES ($1, $2, $3, $4::jsonb, $5)`,
+    [
+      transcript.id,
+      transcript.user_id,
+      String(transcript.text || ""),
+      JSON.stringify(Array.isArray(transcript.words) ? transcript.words : []),
+      label,
+    ],
+  );
+  await client.query(
+    `DELETE FROM transcription_versions
+     WHERE id IN (
+       SELECT id
+       FROM transcription_versions
+       WHERE transcription_id = $1
+       ORDER BY created_at DESC, id DESC
+       OFFSET $2
+     )`,
+    [transcript.id, MAX_TRANSCRIPT_VERSIONS],
+  );
+}
 
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
@@ -190,6 +257,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       speakerLabels:
         req.body.speakerLabels === "true" || req.body.speakerLabels === true,
       expectedDurationSeconds,
+      uploadFingerprint: req.body.uploadFingerprint,
     });
     const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
     const quota = await getQuotaStatus(req.user.id);
@@ -218,6 +286,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       fileSize: importedFile.size,
       createdAt: job.transcription.created_at,
       message: "Video YouTube đã được đưa vào hàng đợi chuyển đổi.",
+      reused: Boolean(job.reused),
       quota,
     });
   } catch (error) {
@@ -296,8 +365,8 @@ router.get("/provider-files/:jobId", async (req, res) => {
       `SELECT transcript.audio_filename
        FROM transcription_jobs job
        JOIN transcriptions transcript ON transcript.id = job.transcription_id
-       WHERE job.id = $1 AND job.status IN ('queued', 'processing')`,
-      [jobId],
+       WHERE job.id = $1 AND job.status = ANY($2::text[])`,
+      [jobId, ACTIVE_JOB_STATUSES],
     );
     if (!rows[0]?.audio_filename) {
       return res.status(404).json({ error: "Không tìm thấy file cho job" });
@@ -366,6 +435,7 @@ router.post(
         speakerLabels:
           req.body.speakerLabels === "true" || req.body.speakerLabels === true,
         expectedDurationSeconds,
+        uploadFingerprint: req.body.uploadFingerprint,
       });
       const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
       const quota = await getQuotaStatus(req.user.id);
@@ -387,8 +457,10 @@ router.post(
           jobState?.estimated_remaining_seconds || null,
         expectedDurationSeconds: job.expectedDurationSeconds,
         filename: job.transcription.filename,
+        fileSize: job.transcription.file_size,
         createdAt: job.transcription.created_at,
         message: "File da duoc xep hang xu ly. Ban co the chuyen sang trang khac.",
+        reused: Boolean(job.reused),
         quota,
       });
     } catch (err) {
@@ -440,6 +512,30 @@ router.delete("/jobs/:jobId", requireAuth, async (req, res) => {
     return res
       .status(error.statusCode || 500)
       .json({ error: error.message || "Không hủy được job" });
+  }
+});
+
+router.post("/jobs/:jobId/retry", requireAuth, async (req, res) => {
+  const jobId = Number.parseInt(req.params.jobId, 10);
+  if (!Number.isFinite(jobId)) {
+    return res.status(400).json({ error: "Job ID không hợp lệ" });
+  }
+  try {
+    const job = await retryTranscriptionJobForUser(jobId, req.user.id);
+    const quota = await getQuotaStatus(req.user.id);
+    await writeSecurityAudit({
+      event: "transcription.job_retry",
+      outcome: "accepted",
+      req,
+      userId: req.user.id,
+      metadata: { jobId },
+    });
+    return res.status(202).json({ job, quota });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.message || "Không thử lại được job",
+      quota: error.details?.quota,
+    });
   }
 });
 
@@ -503,10 +599,11 @@ router.get("/history", requireAuth, async (req, res) => {
         const normalizedItem = {
           ...item,
           filename: normalizeFilename(item.filename),
+          status: normalizeTranscriptionStatus(item.status),
           duration: toFiniteNumberOrNull(item.duration),
           processing_seconds: toFiniteNumberOrNull(item.processing_seconds),
         };
-        if (!item.job_id || !["queued", "processing"].includes(item.status)) {
+        if (!item.job_id || !["queued", "processing"].includes(normalizedItem.status)) {
           return normalizedItem;
         }
         const job = await getTranscriptionJobForUser(item.job_id, req.user.id);
@@ -574,6 +671,7 @@ router.get("/history/:id", requireAuth, async (req, res) => {
     return res.json({
       ...rows[0],
       filename: normalizeFilename(rows[0].filename),
+      status: normalizeTranscriptionStatus(rows[0].status),
       text: String(rows[0].text || ""),
       words: Array.isArray(rows[0].words) ? rows[0].words : [],
     });
@@ -1046,71 +1144,145 @@ router.get("/:id/audio", requireAuth, async (req, res) => {
   }
 });
 
+router.get("/:id/versions", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
+  try {
+    const { rows } = await pool.query(
+      `SELECT version.id, version.label, version.created_at,
+              LENGTH(version.text)::integer AS text_length,
+              COALESCE(jsonb_array_length(version.words), 0)::integer AS word_count
+       FROM transcription_versions version
+       JOIN transcriptions transcript ON transcript.id = version.transcription_id
+       WHERE version.transcription_id = $1 AND transcript.user_id = $2
+       ORDER BY version.created_at DESC, version.id DESC
+       LIMIT 50`,
+      [id, req.user.id],
+    );
+    return res.json({ versions: rows });
+  } catch (error) {
+    console.error("List transcript versions error:", error.message);
+    return res.status(500).json({ error: "Không tải được lịch sử phiên bản" });
+  }
+});
+
+router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const versionId = parseInt(req.params.versionId, 10);
+  if (isNaN(id) || isNaN(versionId)) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT id, user_id, text, words
+       FROM transcriptions
+       WHERE id = $1 AND user_id = $2
+       FOR UPDATE`,
+      [id, req.user.id],
+    );
+    const transcript = current.rows[0];
+    if (!transcript) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Không tìm thấy bản ghi" });
+    }
+    const version = await client.query(
+      `SELECT id, text, words
+       FROM transcription_versions
+       WHERE id = $1 AND transcription_id = $2 AND user_id = $3`,
+      [versionId, id, req.user.id],
+    );
+    if (!version.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Không tìm thấy phiên bản" });
+    }
+    await insertTranscriptVersion(client, transcript, "Trước khi khôi phục");
+    const restored = await client.query(
+      `UPDATE transcriptions
+       SET text = $1,
+           words = $4::jsonb
+       WHERE id = $2 AND user_id = $3
+       RETURNING id, text, words`,
+      [
+        String(version.rows[0].text || ""),
+        id,
+        req.user.id,
+        JSON.stringify(Array.isArray(version.rows[0].words) ? version.rows[0].words : []),
+      ],
+    );
+    await client.query("COMMIT");
+    return res.json(restored.rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Restore transcript version error:", error.message);
+    return res.status(500).json({ error: "Không khôi phục được phiên bản" });
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/transcribe/:id — cập nhật nội dung và timestamp đã chỉnh sửa.
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
   const { text, words } = req.body;
-  if (typeof text !== "string" || text.length > 2_000_000)
+  if (typeof text !== "string" || text.length > 2_000_000) {
     return res.status(400).json({ error: "Thiếu trường text" });
-  let normalizedWords = null;
-  if (words !== undefined) {
-    if (!Array.isArray(words) || words.length > 100_000) {
-      return res.status(400).json({ error: "Danh sách timestamp không hợp lệ" });
-    }
-    normalizedWords = [];
-    for (const word of words) {
-      const wordText = String(word?.text || "").trim();
-      const start = Number(word?.start);
-      const end = Number(word?.end);
-      if (
-        !wordText ||
-        wordText.length > 500 ||
-        !Number.isFinite(start) ||
-        !Number.isFinite(end) ||
-        start < 0 ||
-        end < start
-      ) {
-        return res
-          .status(400)
-          .json({ error: "Một timestamp trong transcript không hợp lệ" });
-      }
-      normalizedWords.push({
-        text: wordText,
-        start,
-        end,
-        speaker:
-          word.speaker === null || word.speaker === undefined
-            ? null
-            : String(word.speaker).slice(0, 100),
-        confidence: Number.isFinite(Number(word.confidence))
-          ? Number(word.confidence)
-          : null,
-      });
-    }
   }
+
+  let normalizedWords = null;
   try {
-    const { rowCount, rows } = await pool.query(
+    normalizedWords = normalizeTranscriptWordsForEditor(words);
+  } catch (error) {
+    return res
+      .status(error.statusCode || 400)
+      .json({ error: error.message || "Timestamp không hợp lệ" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT id, user_id, text, words
+       FROM transcriptions
+       WHERE id = $1 AND user_id = $2
+       FOR UPDATE`,
+      [id, req.user.id],
+    );
+    const transcript = current.rows[0];
+    if (!transcript) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Không tìm thấy bản ghi" });
+    }
+    const nextWords = normalizedWords === null
+      ? Array.isArray(transcript.words)
+        ? transcript.words
+        : []
+      : normalizedWords;
+    const currentWords = Array.isArray(transcript.words) ? transcript.words : [];
+    const changed =
+      String(transcript.text || "") !== text ||
+      JSON.stringify(currentWords) !== JSON.stringify(nextWords);
+    if (changed) {
+      await insertTranscriptVersion(client, transcript, "Auto-save");
+    }
+    const { rows } = await client.query(
       `UPDATE transcriptions
        SET text = $1,
-           words = CASE
-             WHEN $4::jsonb IS NULL THEN words
-             ELSE $4::jsonb
-           END
+           words = $4::jsonb
        WHERE id = $2 AND user_id = $3
        RETURNING id, text, words`,
-      [
-        text,
-        id,
-        req.user.id,
-        normalizedWords === null ? null : JSON.stringify(normalizedWords),
-      ],
+      [text, id, req.user.id, JSON.stringify(nextWords)],
     );
-    if (rowCount === 0)
-      return res.status(404).json({ error: "Không tìm thấy bản ghi" });
+    await client.query("COMMIT");
     return res.json(rows[0]);
-  } catch {
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Update transcript error:", error.message);
     return res.status(500).json({ error: "Lỗi server" });
+  } finally {
+    client.release();
   }
 });
 
@@ -1124,9 +1296,9 @@ router.delete("/:id", requireAuth, async (req, res) => {
        FROM transcription_jobs job
        JOIN transcriptions transcript ON transcript.id = job.transcription_id
        WHERE transcript.id = $1 AND transcript.user_id = $2
-         AND job.status IN ('queued', 'processing')
+         AND job.status = ANY($3::text[])
        LIMIT 1`,
-      [id, req.user.id],
+      [id, req.user.id, ACTIVE_JOB_STATUSES],
     );
     if (active.rows[0]) {
       return res.status(409).json({

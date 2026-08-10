@@ -26,7 +26,7 @@ async function authenticate(req, res, next, optional) {
     const { rows } = await pool.query(
       `SELECT account.id, account.first_name, account.last_name, account.email,
               account.avatar, account.plan, account.role, account.account_status,
-              account.status, account.auth_version
+              account.status, account.auth_version, account.email_verified
        FROM users account
        JOIN auth_refresh_tokens session
          ON session.id = $2 AND session.user_id = account.id

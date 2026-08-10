@@ -27,7 +27,10 @@ const supportRoutes = require("./routes/support");
 const adminRoutes = require("./routes/admin");
 const referralRoutes = require("./routes/referrals");
 const initDatabase = require("./initDb");
-const { getTranscriptionProvider } = require("./services/transcriptionService");
+const {
+  assertTranscriptionProviderReady,
+  getTranscriptionProviderStatus,
+} = require("./services/transcriptionService");
 const { startTranscriptionWorker } = require("./services/transcriptionQueue");
 const { cleanupExpiredStagingFiles } = require("./services/uploadStorage");
 const { startQuotaAlertDispatcher } = require("./services/quotaAlertService");
@@ -86,12 +89,21 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/api/health", async (_req, res) => {
+  const transcriptionProvider = getTranscriptionProviderStatus();
+  let providerReady = false;
+  let providerError = null;
+  try {
+    await assertTranscriptionProviderReady();
+    providerReady = true;
+  } catch (error) {
+    providerError = error.message || "Provider chưa sẵn sàng";
+  }
+
   res.json({
-    status: "ok",
+    status: providerReady ? "ok" : "degraded",
     message: "Backend đang chạy",
-    ...(IS_PRODUCTION
-      ? {}
-      : { transcriptionProvider: await getTranscriptionProvider() }),
+    provider_ready: providerReady,
+    ...(IS_PRODUCTION ? {} : { transcriptionProvider, providerError }),
   });
 });
 

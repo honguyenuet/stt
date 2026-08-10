@@ -30,7 +30,6 @@ export const Route = createFileRoute("/admin/jobs")({
 
 const statuses: Array<JobStatus | "all"> = [
   "all",
-  "uploaded",
   "queued",
   "processing",
   "completed",
@@ -172,6 +171,8 @@ function AdminJobsPage() {
                     "Ngôn ngữ",
                     "Thời lượng",
                     "Trạng thái",
+                    "Attempt",
+                    "Tiến độ",
                     "Xử lý",
                     "Ngày tạo",
                     "Hoàn tất",
@@ -197,6 +198,17 @@ function AdminJobsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={job.status} />
+                      {job.dead_lettered && (
+                        <span className="mt-1 block rounded-md bg-red-50 px-2 py-1 text-xs font-black text-red-700">
+                          DLQ
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {job.max_attempts ? `${job.attempts || 0}/${job.max_attempts}` : "-"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {typeof job.progress === "number" ? `${job.progress}%` : "-"}
                     </td>
                     <td className="px-4 py-3">
                       {formatDuration(job.processing_time)}
@@ -259,6 +271,44 @@ function AdminJobsPage() {
                   <b>Lỗi:</b> {selected.error_message}
                 </p>
               )}
+              {selected.dead_lettered && (
+                <p className="rounded-md bg-red-50 p-3 text-red-800">
+                  <b>Dead-letter:</b>{" "}
+                  {selected.dead_letter_reason || "Job đã hết lượt retry tự động."}
+                </p>
+              )}
+              <div className="grid gap-2 rounded-md bg-[#fbf8ef] p-3 text-xs text-[#756894] sm:grid-cols-2">
+                <span>
+                  <b>Queue ID:</b> {selected.queue_job_id || "-"}
+                </span>
+                <span>
+                  <b>Stage:</b> {selected.progress_stage || "-"}
+                </span>
+                <span>
+                  <b>Attempt:</b>{" "}
+                  {selected.max_attempts
+                    ? `${selected.attempts || 0}/${selected.max_attempts}`
+                    : "-"}
+                </span>
+                <span>
+                  <b>Retry kế tiếp:</b>{" "}
+                  {selected.next_retry_at
+                    ? formatDateTime(selected.next_retry_at)
+                    : "-"}
+                </span>
+                <span>
+                  <b>Timeout:</b>{" "}
+                  {selected.timeout_seconds
+                    ? formatDuration(selected.timeout_seconds)
+                    : "-"}
+                </span>
+                <span>
+                  <b>Recovered:</b>{" "}
+                  {selected.recovered_at
+                    ? formatDateTime(selected.recovered_at)
+                    : "-"}
+                </span>
+              </div>
               <pre className="max-h-64 overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
                 {selected.transcript || "Chưa có kết quả transcript."}
               </pre>

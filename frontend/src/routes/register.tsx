@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { redirectAfterAuth } from "@/lib/auth-redirect";
 import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
-import { Zap, Languages, CheckCircle2, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { Zap, Languages, CheckCircle2, ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
 const API_URL = getApiBaseUrl();
@@ -30,6 +30,27 @@ const FEATURES = [
   { icon: Languages,   text: "Hỗ trợ 50+ ngôn ngữ" },
   { icon: Zap,         text: "Xử lý chỉ trong ~3 giây" },
 ];
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function getPasswordChecks(password: string, email: string) {
+  const categories = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ].filter(Boolean).length;
+  const compact = password.toLowerCase().replace(/\s+/g, "");
+  const emailLocal = normalizeEmail(email).split("@")[0] || "";
+  return [
+    { label: "Ít nhất 12 ký tự", ok: password.length >= 12 },
+    { label: "Có ít nhất 3 nhóm ký tự", ok: categories >= 3 },
+    { label: "Không chứa chuỗi dễ đoán", ok: !/012345|123456|234567|abcdef|qwerty|password/i.test(password) },
+    { label: "Không chứa phần trước @ của email", ok: !emailLocal || emailLocal.length < 3 || !compact.includes(emailLocal) },
+  ];
+}
 
 export const Route = createFileRoute("/register")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -68,6 +89,9 @@ function RegisterPage() {
   const [showPassword, setShowPassword]       = useState(false);
   const [showConfirm, setShowConfirm]         = useState(false);
   const [error, setError]                     = useState("");
+  const [message, setMessage]                 = useState("");
+  const [website, setWebsite]                 = useState("");
+  const [registerStartedAt]                   = useState(() => Date.now());
   const [isSubmitting, setIsSubmitting]       = useState(false);
 
   useEffect(() => {
@@ -77,13 +101,18 @@ function RegisterPage() {
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
     setError("");
+    setMessage("");
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
+    setMessage("");
+    const cleanEmail = normalizeEmail(form.email);
+    const passwordChecks = getPasswordChecks(form.password, cleanEmail);
+    const failedPasswordCheck = passwordChecks.find((check) => !check.ok);
     if (form.password !== form.confirmPassword) { setError("Mật khẩu xác nhận không khớp"); return; }
-    if (form.password.length < 12) { setError("Mật khẩu phải có ít nhất 12 ký tự"); return; }
+    if (failedPasswordCheck) { setError(failedPasswordCheck.label); return; }
 
     setIsSubmitting(true);
     try {
@@ -93,15 +122,29 @@ function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           firstName: form.firstName, lastName: form.lastName,
-          email: form.email,        password: form.password,
+          email: cleanEmail,        password: form.password,
           referralCode: ref,
           oauthToken,
+          website,
+          registerStartedAt,
         }),
       });
-      const data = (await res.json()) as { token?: string; error?: string };
+      const data = (await res.json()) as {
+        token?: string;
+        expiresIn?: number;
+        user?: Parameters<typeof setToken>[1];
+        error?: string;
+        message?: string;
+        requiresEmailVerification?: boolean;
+      };
       if (!res.ok) { setError(data.error ?? "Đăng ký thất bại"); return; }
+      if (data.requiresEmailVerification) {
+        setMessage(data.message || "Tài khoản đã được tạo. Vui lòng kiểm tra email để xác thực.");
+        setForm((previous) => ({ ...previous, password: "", confirmPassword: "" }));
+        return;
+      }
       if (data.token) {
-        setToken(data.token);
+        setToken(data.token, data.user, data.expiresIn);
         redirectAfterAuth(from);
       }
     } catch {
@@ -126,6 +169,8 @@ function RegisterPage() {
     apple_not_configured: "Sign in with Apple chưa được cấu hình trên máy chủ.",
     account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
   };
+  const passwordChecks = getPasswordChecks(form.password, form.email);
+  const passwordScore = passwordChecks.filter((check) => check.ok).length;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
@@ -247,8 +292,23 @@ function RegisterPage() {
                 {error}
               </div>
             )}
+            {message && (
+              <div className="mb-5 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">
+                {message}
+              </div>
+            )}
 
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+              <input
+                type="text"
+                name="website"
+                value={website}
+                onChange={(event) => setWebsite(event.target.value)}
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="hidden"
+              />
 
               {/* First + Last name */}
               <div className="grid grid-cols-2 gap-3">
@@ -281,6 +341,7 @@ function RegisterPage() {
                 </label>
                 <input
                   name="email" type="email" value={form.email} onChange={handleChange} required maxLength={254}
+                  autoComplete="email"
                   placeholder="ban@example.com"
                   className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/25 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition"
                 />
@@ -296,6 +357,7 @@ function RegisterPage() {
                     name="password" type={showPassword ? "text" : "password"}
                     value={form.password} onChange={handleChange} required
                     minLength={12} maxLength={128}
+                    autoComplete="new-password"
                     placeholder="Ít nhất 12 ký tự"
                     className="w-full rounded-xl border border-border bg-background px-3 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground/25 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition"
                   />
@@ -304,6 +366,24 @@ function RegisterPage() {
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
+                </div>
+                <div className="mt-2 space-y-2">
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0, 1, 2, 3].map((index) => (
+                      <span
+                        key={index}
+                        className={`h-1.5 rounded-full ${index < passwordScore ? "bg-[#ffcb05]" : "bg-border"}`}
+                      />
+                    ))}
+                  </div>
+                  <ul className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                    {passwordChecks.map((check) => (
+                      <li key={check.label} className="flex items-center gap-1.5">
+                        <ShieldCheck className={`h-3.5 w-3.5 ${check.ok ? "text-green-600" : "text-muted-foreground/50"}`} />
+                        {check.label}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
 
@@ -317,6 +397,7 @@ function RegisterPage() {
                     name="confirmPassword" type={showConfirm ? "text" : "password"}
                     value={form.confirmPassword} onChange={handleChange} required
                     minLength={12} maxLength={128}
+                    autoComplete="new-password"
                     placeholder="Nhập lại mật khẩu"
                     className="w-full rounded-xl border border-border bg-background px-3 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground/25 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition"
                   />

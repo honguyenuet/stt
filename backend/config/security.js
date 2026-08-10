@@ -231,6 +231,7 @@ module.exports = {
   ACCESS_TOKEN_TTL_SECONDS,
   FRONTEND_URL,
   getOAuthCallbackUrl,
+  getRequestBackendUrl,
   getRequestFrontendUrl,
   IS_PRODUCTION,
   JWT_AUDIENCE,

@@ -58,6 +58,19 @@ export function replaceTimedWordInText(
   wordIndex: number,
   replacement: string,
 ) {
+  const range = findTimedWordTextRange(transcriptText, words, wordIndex);
+  if (!range) return null;
+
+  return `${String(transcriptText || "").slice(0, range.start)}${replacement}${String(
+    transcriptText || "",
+  ).slice(range.end)}`;
+}
+
+export function findTimedWordTextRange(
+  transcriptText: string,
+  words: EditableTimedWord[],
+  wordIndex: number,
+) {
   if (
     wordIndex < 0 ||
     wordIndex >= words.length ||
@@ -77,9 +90,7 @@ export function replaceTimedWordInText(
     );
     if (foundAt < 0) return null;
     if (index === wordIndex) {
-      return `${source.slice(0, foundAt)}${replacement}${source.slice(
-        foundAt + wordText.length,
-      )}`;
+      return { start: foundAt, end: foundAt + wordText.length };
     }
     cursor = foundAt + wordText.length;
   }

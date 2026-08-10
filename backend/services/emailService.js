@@ -62,6 +62,63 @@ async function sendPasswordResetEmail({ to, firstName, resetUrl, expiresMinutes 
   return true;
 }
 
+async function sendEmailVerificationEmail({ to, firstName, verificationUrl, expiresHours }) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+
+  const safeName = escapeHtml(firstName || "bạn");
+  const safeUrl = escapeHtml(verificationUrl);
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: "Xác thực email Vbee AIVoice",
+    text: `Xin chào ${firstName || "bạn"},\n\nMở liên kết sau để xác thực email Vbee AIVoice: ${verificationUrl}\n\nLiên kết hết hạn sau ${expiresHours} giờ. Nếu bạn không tạo tài khoản, hãy bỏ qua email này.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#21104a;line-height:1.6">
+        <h2>Xác thực email Vbee AIVoice</h2>
+        <p>Xin chào <strong>${safeName}</strong>,</p>
+        <p>Nhấn nút bên dưới để hoàn tất đăng ký tài khoản:</p>
+        <p style="margin:28px 0">
+          <a href="${safeUrl}" style="background:#ffcb05;color:#21104a;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:700">Xác thực email</a>
+        </p>
+        <p>Liên kết hết hạn sau ${expiresHours} giờ và chỉ sử dụng được một lần.</p>
+        <p style="color:#756894;font-size:13px">Nếu bạn không tạo tài khoản Vbee, hãy bỏ qua email này.</p>
+      </div>
+    `,
+  });
+  return true;
+}
+
+async function sendLoginAlertEmail({ to, firstName, session, loginTime }) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+
+  const safeName = escapeHtml(firstName || "bạn");
+  const safeDevice = escapeHtml(session.deviceName || "Thiết bị mới");
+  const safeBrowser = escapeHtml(session.browserName || "Trình duyệt không xác định");
+  const safeTime = escapeHtml(loginTime || new Date().toLocaleString("vi-VN"));
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: "Cảnh báo đăng nhập mới vào Vbee AIVoice",
+    text: `Xin chào ${firstName || "bạn"},\n\nVbee phát hiện một lần đăng nhập mới vào tài khoản của bạn.\nThiết bị: ${session.deviceName || "Thiết bị mới"}\nTrình duyệt: ${session.browserName || "Không xác định"}\nThời gian: ${loginTime || new Date().toLocaleString("vi-VN")}\n\nNếu đây không phải bạn, hãy đổi mật khẩu và thu hồi các phiên đăng nhập khác ngay trong Dashboard.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#21104a;line-height:1.6">
+        <h2>Cảnh báo đăng nhập mới</h2>
+        <p>Xin chào <strong>${safeName}</strong>,</p>
+        <p>Vbee phát hiện một lần đăng nhập mới vào tài khoản của bạn.</p>
+        <div style="border:1px solid #e5deef;border-radius:12px;padding:16px;margin:20px 0;background:#fffdf2">
+          <p><strong>Thiết bị:</strong> ${safeDevice}</p>
+          <p><strong>Trình duyệt:</strong> ${safeBrowser}</p>
+          <p><strong>Thời gian:</strong> ${safeTime}</p>
+        </div>
+        <p style="color:#756894;font-size:13px">Nếu đây không phải bạn, hãy đổi mật khẩu và thu hồi các phiên đăng nhập khác trong Dashboard.</p>
+      </div>
+    `,
+  });
+  return true;
+}
+
 function formatDuration(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const hours = Math.floor(total / 3600);
@@ -111,6 +168,8 @@ async function sendQuotaAdminAlertEmail({ recipients, alert }) {
 
 module.exports = {
   hasSmtpConfig,
+  sendLoginAlertEmail,
+  sendEmailVerificationEmail,
   sendPasswordResetEmail,
   sendQuotaAdminAlertEmail,
 };
