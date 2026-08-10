@@ -622,7 +622,7 @@ function DashboardPage() {
       <AuthenticatedHeader onEditProfile={openEdit} />
 
       {/* ── Main ─────────────────────────────────────────────────────── */}
-      <main className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 md:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 md:px-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
         <section className="min-w-0">
           <div className="mb-6">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -837,7 +837,7 @@ function DashboardPage() {
           </div>
         </section>
 
-        <aside className="space-y-5 lg:pt-28">
+        <aside className="self-start space-y-5 lg:pt-[100px]">
           <VbeeAccountUsageCard
             firstName={user.firstName}
             showReferral={false}

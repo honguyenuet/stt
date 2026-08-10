@@ -1203,7 +1203,7 @@ function UploadPage() {
         }}
       />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
         <section className="min-w-0">
           <div className="mb-5">
             <div className="mb-4 flex items-center gap-3">

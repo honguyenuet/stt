@@ -68,7 +68,7 @@ export function VbeePreferencesSidebar({
   onQuotaChange?: (quota: QuotaStatus) => void;
 }) {
   return (
-    <aside className="space-y-4 lg:pt-16">
+    <aside className="self-start space-y-4 lg:pt-[52px]">
       <VbeeAccountUsageCard
         firstName={firstName}
         refreshKey={refreshKey}

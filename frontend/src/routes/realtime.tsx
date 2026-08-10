@@ -425,7 +425,7 @@ function RealtimePage() {
           </Link>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <section className="rounded-lg border border-border bg-white p-4 shadow-soft">
             <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -573,7 +573,7 @@ function RealtimePage() {
             </div>
           </section>
 
-          <aside className="space-y-4">
+          <aside className="self-start space-y-4">
             <VbeeAccountUsageCard
               firstName={user.firstName}
               refreshKey={quotaRefreshKey}

@@ -1258,7 +1258,7 @@ function TranscriptEditorPage() {
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px] lg:items-start">
           <section className="overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="inline-flex w-fit rounded-md bg-[#f3f0f7] p-1">
@@ -1406,7 +1406,7 @@ function TranscriptEditorPage() {
             )}
           </section>
 
-          <aside className="space-y-4 print:hidden">
+          <aside className="self-start space-y-4 print:hidden">
             <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
               <h2 className="flex items-center gap-2 text-sm font-black">
                 <FileText className="h-4 w-4 text-[#8067aa]" /> Thông tin

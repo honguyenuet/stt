@@ -164,7 +164,7 @@ function TranscriptionSettingsPage() {
     <div className="min-h-screen bg-background text-foreground">
       <AuthenticatedHeader />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
         <section className="min-w-0">
           <div className="mb-5 border-b-2 border-[#ffcb05] pb-4">
             <h1 className="text-2xl font-light tracking-tight md:text-3xl">

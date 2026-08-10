@@ -755,7 +755,7 @@ function RecordPage() {
 
       <main className="mx-auto max-w-[1500px] px-4 py-6 md:px-6 md:py-8">
         <section className="mx-auto">
-          <div className="grid gap-5 xl:grid-cols-[minmax(280px,0.9fr)_minmax(540px,1.6fr)_minmax(300px,0.95fr)] xl:items-center">
+          <div className="grid gap-5 xl:grid-cols-[minmax(280px,0.9fr)_minmax(540px,1.6fr)_minmax(300px,0.95fr)] xl:items-start">
             <aside className="order-2 min-w-0 xl:order-1 xl:max-w-[330px] xl:justify-self-start">
               <RecorderReadinessPanel
                 micStatus={micStatus}
@@ -799,7 +799,7 @@ function RecordPage() {
               )}
             </div>
 
-            <aside className="order-3 min-w-0 xl:order-3 xl:max-w-[360px] xl:-translate-y-4 xl:justify-self-end">
+            <aside className="order-3 min-w-0 xl:order-3 xl:max-w-[360px] xl:justify-self-end">
               <VbeeAccountUsageCard
                 firstName={user.firstName}
                 showAlert={false}
