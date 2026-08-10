@@ -237,7 +237,16 @@ function ReferralPage() {
             ) : (
               <Link
                 to="/register"
-                search={{ error: undefined, from: undefined, ref: undefined }}
+                search={{
+                  error: undefined,
+                  from: undefined,
+                  ref: undefined,
+                  provider: undefined,
+                  email: undefined,
+                  firstName: undefined,
+                  lastName: undefined,
+                  oauthToken: undefined,
+                }}
                 className="mt-7 inline-flex items-center gap-2 rounded-full bg-[#ffcb05] px-5 py-3 text-sm font-black text-[#21104a] shadow-[0_14px_35px_rgba(255,203,5,.3)] transition hover:bg-[#ffdc45]"
               >
                 Tạo liên kết giới thiệu <ArrowRight className="h-4 w-4" />
@@ -431,7 +440,16 @@ function ReferralPage() {
           ) : (
             <Link
               to="/register"
-              search={{ error: undefined, from: undefined, ref: undefined }}
+              search={{
+                error: undefined,
+                from: undefined,
+                ref: undefined,
+                provider: undefined,
+                email: undefined,
+                firstName: undefined,
+                lastName: undefined,
+                oauthToken: undefined,
+              }}
               className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[#21104a] px-5 py-3 text-sm font-black text-white transition hover:bg-[#32166f]"
             >
               Đăng ký miễn phí <ArrowRight className="h-4 w-4" />

@@ -207,26 +207,26 @@ export const Route = createFileRoute("/transcript/$id")({
 
 function normalizeWords(value: unknown): TranscriptWord[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const word = item as Partial<TranscriptWord>;
-      const text = String(word.text || "").trim();
-      const start = Number(word.start);
-      const end = Number(word.end);
-      if (!text || !Number.isFinite(start)) return null;
-      return {
-        text,
-        start: Math.max(0, start),
-        end: Number.isFinite(end) ? Math.max(start, end) : start,
-        speaker: word.speaker ?? null,
-        confidence:
-          word.confidence == null || !Number.isFinite(Number(word.confidence))
-            ? null
-            : Number(word.confidence),
-      };
-    })
-    .filter((word): word is TranscriptWord => Boolean(word));
+  const words: TranscriptWord[] = [];
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const word = item as Partial<TranscriptWord>;
+    const text = String(word.text || "").trim();
+    const start = Number(word.start);
+    const end = Number(word.end);
+    if (!text || !Number.isFinite(start)) return;
+    words.push({
+      text,
+      start: Math.max(0, start),
+      end: Number.isFinite(end) ? Math.max(start, end) : start,
+      speaker: word.speaker ?? null,
+      confidence:
+        word.confidence == null || !Number.isFinite(Number(word.confidence))
+          ? null
+          : Number(word.confidence),
+    });
+  });
+  return words;
 }
 
 function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
@@ -251,8 +251,9 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
       segments.push(current);
     }
 
-    current.words.push({ ...word, index });
-    current.end = Math.max(current.end, word.end);
+    const segment = current!;
+    segment.words.push({ ...word, index });
+    segment.end = Math.max(segment.end, word.end);
   });
 
   return segments;

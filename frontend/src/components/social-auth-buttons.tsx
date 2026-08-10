@@ -14,6 +14,7 @@ type ProviderAvailability = Partial<Record<SocialProvider, boolean>>;
 interface SocialAuthButtonsProps {
   mode: "login" | "register";
   referralCode?: string;
+  from?: string;
 }
 
 const PROVIDERS: Array<{
@@ -29,6 +30,7 @@ const PROVIDERS: Array<{
 export function SocialAuthButtons({
   mode,
   referralCode,
+  from,
 }: SocialAuthButtonsProps) {
   const [redirecting, setRedirecting] = useState<SocialProvider | null>(null);
   const [availability, setAvailability] = useState<ProviderAvailability>({});
@@ -53,9 +55,10 @@ export function SocialAuthButtons({
   function startOAuth(provider: SocialProvider) {
     if (availability[provider] === false) return;
     setRedirecting(provider);
-    const query = referralCode
-      ? `?ref=${encodeURIComponent(referralCode)}`
-      : "";
+    const params = new URLSearchParams();
+    if (referralCode) params.set("ref", referralCode);
+    if (from) params.set("from", from);
+    const query = params.toString() ? `?${params.toString()}` : "";
     window.location.href = `${API_URL}/api/auth/${provider}${query}`;
   }
 

@@ -32,16 +32,21 @@ async function fetchWithTimeout(
   }
 }
 
-interface User {
+export interface User {
   id: number;
   firstName: string;
   lastName: string;
   email: string;
   avatar: string | null;
   plan?: PlanCode;
-  role?: "user" | "support" | "admin";
-  accountStatus?: "active" | "suspended" | "deleted";
+  role?: "user" | "support" | "finance" | "admin" | "super_admin";
+  accountStatus?: "active" | "blocked" | "suspended" | "deleted";
   emailVerified?: boolean;
+  organization?: string;
+  jobRole?: string;
+  usagePurpose?: string;
+  preferredLanguage?: string;
+  onboardingCompleted?: boolean;
 }
 
 interface AuthContextType {

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   ArrowRight,
@@ -451,18 +451,18 @@ function UploadPage() {
     activeIdxRef.current = newIdx;
   }
 
-  function rememberActiveJob(jobId: number, filename: string) {
+  const rememberActiveJob = useCallback((jobId: number, filename: string) => {
     window.localStorage.setItem(
       ACTIVE_UPLOAD_JOB_KEY,
       JSON.stringify({ jobId, filename, savedAt: Date.now() }),
     );
-  }
+  }, []);
 
-  function clearRememberedJob() {
+  const clearRememberedJob = useCallback(() => {
     window.localStorage.removeItem(ACTIVE_UPLOAD_JOB_KEY);
-  }
+  }, []);
 
-  function applyJobState(job: TranscriptionJobState) {
+  const applyJobState = useCallback((job: TranscriptionJobState) => {
     const normalizedStatus = job.status;
     setQueuedJob({
       id: job.id,
@@ -532,9 +532,15 @@ function UploadPage() {
       setUploadStatus("queued");
       rememberActiveJob(job.id, job.filename);
     }
-  }
+  }, [
+    audioUrl,
+    clearRememberedJob,
+    rememberActiveJob,
+    translateTo,
+    uploadFile,
+  ]);
 
-  async function fetchJobState(jobId: number) {
+  const fetchJobState = useCallback(async (jobId: number) => {
     if (!token) return null;
     const response = await fetch(`${API_URL}/api/transcribe/jobs/${jobId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -547,7 +553,7 @@ function UploadPage() {
       throw new Error("error" in data ? data.error : "Không tải được tiến độ job");
     }
     return data;
-  }
+  }, [token]);
 
   function uploadFileWithProgress(formData: FormData) {
     return new Promise<UploadQueueResponse>((resolve, reject) => {
@@ -603,7 +609,7 @@ function UploadPage() {
     } catch {
       clearRememberedJob();
     }
-  }, [queuedJob?.id, token]);
+  }, [clearRememberedJob, queuedJob?.id, token]);
 
   useEffect(() => {
     if (!token || !queuedJob?.id) return;
@@ -629,7 +635,7 @@ function UploadPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", poll);
     };
-  }, [queuedJob?.id, queuedJob?.status, token]);
+  }, [applyJobState, fetchJobState, queuedJob?.id, queuedJob?.status, token]);
 
   async function handleFileSelect(file: File) {
     if (!/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name)) {
