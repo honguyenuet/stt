@@ -5,6 +5,8 @@ const {
   createHttpError,
   getPurchasedQuotaSeconds,
   getQuotaStatus,
+  getRuntimePlanConfig,
+  getRuntimePurchasedQuotaSeconds,
   normalizeBillingCycle,
   normalizePlan,
 } = require("./quotaService");
@@ -112,10 +114,17 @@ const TOP_UP_PRODUCTS = {
   },
 };
 
-function getPlanPrice(plan, billingCycle) {
+async function getPlanPrice(plan, billingCycle, db = pool) {
   const planName = normalizePlan(plan);
   const cycle = normalizeBillingCycle(billingCycle);
-  return PLAN_PRICES[planName]?.[cycle] ?? null;
+  const config = await getRuntimePlanConfig(planName, db);
+  if (!config.enabled) return null;
+  const monthlyPrice =
+    Number.isSafeInteger(config.priceVnd) && config.priceVnd > 0
+      ? config.priceVnd
+      : PLAN_PRICES[planName]?.monthly;
+  if (!Number.isSafeInteger(monthlyPrice) || monthlyPrice <= 0) return null;
+  return cycle === "yearly" ? monthlyPrice * 11 : monthlyPrice;
 }
 
 function serializeOrder(row) {
@@ -125,16 +134,19 @@ function serializeOrder(row) {
   const planName = normalizePlan(row.plan);
   const cycle = normalizeBillingCycle(row.billing_cycle);
   const config = PLAN_CONFIG[planName] || PLAN_CONFIG.free;
+  const snapshot = row.raw_request?.planSnapshot || {};
   return {
     id: row.id,
     userId: row.user_id,
     plan: planName,
     productType,
     productCode: row.product_code || planName,
-    label: topUp?.label || config.label,
+    label: topUp?.label || snapshot.label || config.label,
     billingCycle: cycle,
     quotaSeconds:
-      topUp?.quotaSeconds || getPurchasedQuotaSeconds(planName, cycle),
+      topUp?.quotaSeconds ||
+      Number(snapshot.quotaSeconds) ||
+      getPurchasedQuotaSeconds(planName, cycle),
     validDays: topUp ? topUp.validDays : cycle === "yearly" ? 365 : 30,
     amount: Number(row.amount || 0),
     currency: row.currency || "VND",
@@ -189,31 +201,47 @@ function getCheckoutUrl(orderId, result) {
   return `${FRONTEND_URL}/checkout/${orderId}?payment=${result}`;
 }
 
-function getPaymentLabel({ plan, cycle, productType, productCode }) {
+function getPaymentLabel({
+  plan,
+  cycle,
+  productType,
+  productCode,
+  planLabel,
+}) {
   if (productType === "top_up") {
     return `${TOP_UP_PRODUCTS[productCode].label} Vbee`;
   }
-  const config = PLAN_CONFIG[plan];
   const cycleLabel = cycle === "yearly" ? "năm" : "tháng";
-  return `Gói ${config.label} Vbee ${cycleLabel}`;
+  return `Gói ${planLabel || PLAN_CONFIG[plan].label} Vbee ${cycleLabel}`;
 }
 
-function listPlans() {
-  return ["free", "standard", "special", "business"].map((planName) => {
-    const config = PLAN_CONFIG[planName];
+async function listPlans(db = pool) {
+  return Promise.all(
+    ["free", "standard", "special", "business"].map(async (planName) => {
+    const config = await getRuntimePlanConfig(planName, db);
+    const monthlyPrice =
+      planName === "free"
+        ? 0
+        : Number.isSafeInteger(config.priceVnd) && config.priceVnd > 0
+          ? config.priceVnd
+          : PLAN_PRICES[planName]?.monthly ?? null;
     return {
       code: planName,
       label: config.label,
+      enabled: config.enabled,
       monthly: {
-        price: PLAN_PRICES[planName]?.monthly ?? null,
+        price: monthlyPrice,
         quotaSeconds: config.quotaSeconds,
       },
       yearly: {
-        price: PLAN_PRICES[planName]?.yearly ?? null,
+        price:
+          planName === "free" || monthlyPrice === null
+            ? monthlyPrice
+            : monthlyPrice * 11,
         quotaSeconds:
           planName === "free"
             ? config.quotaSeconds
-            : config.yearlyQuotaSeconds || config.quotaSeconds * 12,
+            : config.quotaSeconds * 12,
       },
       limits: {
         maxUploadMb: config.maxUploadMb,
@@ -231,7 +259,8 @@ function listPlans() {
       rolloverLabel: config.rolloverLabel,
       supportLevel: config.supportLevel,
     };
-  });
+  }),
+  );
 }
 
 function listTopUps() {
@@ -246,6 +275,7 @@ async function createPendingOrder({
   billingCycle,
   amount,
   provider,
+  productSnapshot,
 }) {
   const id = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + ORDER_TTL_MINUTES * 60 * 1000);
@@ -282,6 +312,7 @@ async function createPendingOrder({
             provider,
             orderCode: String(orderCode),
             paymentCode,
+            ...(productSnapshot ? { planSnapshot: productSnapshot } : {}),
           }),
           expiresAt,
         ],
@@ -309,18 +340,26 @@ async function createCheckoutOrder({
   const cycle = normalizeBillingCycle(billingCycle);
   const topUp =
     normalizedProductType === "top_up" ? TOP_UP_PRODUCTS[productCode] : null;
+  const runtimePlan =
+    normalizedProductType === "subscription"
+      ? await getRuntimePlanConfig(planName)
+      : null;
   if (normalizedProductType === "top_up") {
     const currentPlan = await pool.query("SELECT plan FROM users WHERE id = $1", [userId]);
     if (!currentPlan.rows[0]) throw createHttpError(404, "Không tìm thấy người dùng");
     planName = normalizePlan(currentPlan.rows[0].plan);
   }
-  const amount = topUp?.price ?? getPlanPrice(planName, cycle);
+  const amount =
+    topUp?.price ?? (await getPlanPrice(planName, cycle));
 
   if (normalizedProductType === "top_up" && !topUp) {
     throw createHttpError(400, "Gói mua thêm không hợp lệ");
   }
   if (normalizedProductType === "subscription" && planName === "free") {
     throw createHttpError(400, "Gói Theo lượt không cần thanh toán thuê bao");
+  }
+  if (normalizedProductType === "subscription" && !runtimePlan?.enabled) {
+    throw createHttpError(400, "Gói cước này hiện không nhận đăng ký mới");
   }
   if (amount === null) {
     throw createHttpError(400, "Gói cước không hợp lệ");
@@ -338,6 +377,20 @@ async function createCheckoutOrder({
     billingCycle: cycle,
     amount,
     provider,
+    productSnapshot: runtimePlan
+      ? {
+          label: runtimePlan.label,
+          quotaSeconds:
+            cycle === "yearly"
+              ? runtimePlan.quotaSeconds * 12
+              : runtimePlan.quotaSeconds,
+          maxUploadMb: runtimePlan.maxUploadMb,
+          maxFileSeconds: runtimePlan.maxFileSeconds,
+          billingCycle: cycle,
+          priceVnd: amount,
+          enabled: runtimePlan.enabled,
+        }
+      : null,
   });
 
   if (provider === "demo") {
@@ -359,6 +412,7 @@ async function createCheckoutOrder({
         cycle,
         productType: normalizedProductType,
         productCode: topUp?.code || planName,
+        planLabel: runtimePlan?.label,
       }),
       cancelUrl: `${checkoutFrontendUrl}/checkout/${order.id}?payment=cancel`,
       returnUrl: `${checkoutFrontendUrl}/checkout/${order.id}?payment=return`,
@@ -754,7 +808,13 @@ async function completePaidOrder({
         ],
       );
     } else {
-      const quotaSeconds = getPurchasedQuotaSeconds(planName, cycle);
+      const snapshotQuotaSeconds = Number(
+        order.raw_request?.planSnapshot?.quotaSeconds,
+      );
+      const quotaSeconds =
+        Number.isSafeInteger(snapshotQuotaSeconds) && snapshotQuotaSeconds > 0
+          ? snapshotQuotaSeconds
+          : await getRuntimePurchasedQuotaSeconds(planName, cycle, client);
       const planExpiresAt = new Date(
         Date.now() + (cycle === "yearly" ? 365 : 30) * 24 * 60 * 60 * 1000,
       );

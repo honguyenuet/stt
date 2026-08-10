@@ -34,7 +34,19 @@ export interface QuotaStatus {
     retentionDays?: number;
     webhookAccess?: boolean;
     apiAccess?: boolean;
+    supportedFormats?: string[];
   };
+}
+
+const PLAN_LABELS: Record<PlanCode, string> = {
+  free: "Miễn phí",
+  standard: "Tiêu chuẩn",
+  special: "Đặc biệt",
+  business: "Chuyên nghiệp",
+};
+
+export function formatPlanLabel(plan: PlanCode) {
+  return PLAN_LABELS[plan];
 }
 
 export function formatQuotaTime(seconds?: number | null) {

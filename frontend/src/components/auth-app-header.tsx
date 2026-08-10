@@ -14,6 +14,7 @@ import {
   Upload,
   User,
 } from "lucide-react";
+import { AppIcon } from "@/components/ui/app-icon";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
 import { useAuth } from "@/context/AuthContext";
 import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const NAV_ITEMS = [
-  { to: "/upload", label: "Tải file lên", icon: Upload },
+  { to: "/upload", label: "Tải tệp lên", icon: Upload },
   { to: "/record", label: "Ghi âm", icon: Mic },
   { to: "/realtime", label: "Realtime", icon: Radio },
   { to: "/history", label: "Lịch sử", icon: History },
@@ -101,7 +102,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                     : "text-[#65587c] hover:bg-[#fbf8ef] hover:text-[#21104a]"
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <AppIcon icon={Icon} size="sm" />
                 {item.label}
               </Link>
             );
@@ -126,7 +127,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                 <span className="hidden max-w-[120px] truncate text-sm font-bold text-[#21104a] sm:block">
                   {user.firstName} {user.lastName}
                 </span>
-                <User className="h-3.5 w-3.5 text-[#756894]" />
+                <AppIcon icon={User} size="sm" className="text-[#756894]" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -144,14 +145,14 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 cursor-pointer">
                 <Link to="/dashboard">
-                  <LayoutDashboard className="h-4 w-4 text-[#21104a]" />
+                  <AppIcon icon={LayoutDashboard} size="sm" className="text-[#21104a]" />
                   Không gian làm việc
                 </Link>
               </DropdownMenuItem>
               {canAccessCms && (
                 <DropdownMenuItem asChild className="gap-2 cursor-pointer">
                   <Link to="/admin">
-                    <ShieldCheck className="h-4 w-4 text-[#21104a]" />
+                    <AppIcon icon={ShieldCheck} size="sm" className="text-[#21104a]" />
                     Trung tâm quản trị
                   </Link>
                 </DropdownMenuItem>
@@ -163,7 +164,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                     className="gap-2 cursor-pointer"
                     onSelect={onEditProfile}
                   >
-                    <Pencil className="h-4 w-4 text-[#21104a]" />
+                    <AppIcon icon={Pencil} size="sm" className="text-[#21104a]" />
                     Chỉnh sửa thông tin
                   </DropdownMenuItem>
                 </>
@@ -173,7 +174,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                 className="gap-2 cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
                 onSelect={handleLogout}
               >
-                <LogOut className="h-4 w-4" />
+                <AppIcon icon={LogOut} size="sm" />
                 Đăng xuất
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -181,8 +182,11 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex h-10 w-10 items-center justify-center rounded-full border border-[#e8decc] bg-white text-[#21104a] transition hover:bg-[#fbf8ef] md:hidden">
-                <Menu className="h-5 w-5" />
+              <button
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#e8decc] bg-white text-[#21104a] transition hover:bg-[#fbf8ef] md:hidden"
+                aria-label="Mở menu điều hướng"
+              >
+                <AppIcon icon={Menu} size="md" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -198,7 +202,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                     className="gap-2 cursor-pointer"
                   >
                     <Link to={item.to}>
-                      <Icon className="h-4 w-4 text-[#21104a]" />
+                      <AppIcon icon={Icon} size="sm" className="text-[#21104a]" />
                       {item.label}
                     </Link>
                   </DropdownMenuItem>
@@ -221,7 +225,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                 active ? "bg-[#fbf8ef] text-[#21104a]" : "text-[#756894]"
               }`}
             >
-              <Icon className="h-4 w-4" />
+              <AppIcon icon={Icon} size="sm" />
               {item.label}
             </Link>
           );
@@ -237,7 +241,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
           }`}
         >
           <span className="inline-flex items-center gap-2">
-            <AlertTriangle className="h-3.5 w-3.5" />
+            <AppIcon icon={AlertTriangle} size="sm" />
             {quota.isLimitReached
               ? "Bạn đã hết thời lượng sử dụng."
               : `Bạn chỉ còn ${formatQuotaTime(quota.remainingSeconds)} xử lý.`}

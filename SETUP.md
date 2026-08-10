@@ -136,9 +136,15 @@ VBEE_API_KEY_SCHEME=
 VBEE_STT_API_BASE_URL=https://uat-api.vbeelabs.ai
 ```
 
-Giữ `VBEE_API_KEY_SCHEME` trống khi dùng header `X-API-Key`. Chế độ `auto`
-chọn provider đầu tiên đã có khóa hợp lệ và chuyển sang provider tiếp theo khi
-gặp lỗi hạ tầng, xác thực hoặc quota.
+Giữ `VBEE_API_KEY_SCHEME` trống khi dùng header `X-API-Key`. Chế độ `auto` xếp
+hạng các provider có khóa hợp lệ theo yêu cầu của file, năng lực và health;
+thứ tự chain dùng để phân xử khi bằng điểm. Khi chọn provider thủ công, provider
+đó luôn đứng đầu và các provider còn lại giữ nguyên thứ tự chain để failover.
+
+Chế độ **Multitrack** nhận từ 2 đến 5 file micro đồng bộ, nhận dạng từng track
+trong hàng đợi rồi ghép thành một transcript. Quota chỉ giữ và trừ theo track
+dài nhất; tên file được dùng làm tên người nói ban đầu. Có thể chỉnh thời gian
+ghép audio bằng `MULTITRACK_MIX_TIMEOUT_MS` (mặc định 20 phút).
 
 Trong `backend/.env`, đặt:
 
@@ -187,11 +193,17 @@ Demucs để tách stem vocal rồi mới gửi file vocal sang provider speech-
 Khi Demucs không chạy được, backend giữ nguyên file gốc thay vì áp bộ lọc có
 thể làm méo giọng hát.
 
-Backend kiểm tra độ tin cậy trung bình và lượng từ nhận được của transcript bài
-hát. Kết quả dưới ngưỡng sẽ bị từ chối để tránh lưu văn bản do mô hình suy đoán:
+Backend kiểm tra confidence trung bình trên mọi kết quả mà provider có trả điểm.
+Kết quả từ 90% trở lên tiếp tục được xuất; dưới 90% sẽ bị loại và thử provider
+dự phòng. Nếu tất cả provider đều dưới ngưỡng, API trả lỗi thay vì lưu văn bản
+sai. Provider không trả confidence không bị mặc định thành 0%.
+
+Với bài hát, backend vẫn ghi nhận lượng từ, độ phủ timeline, timestamp bất thường
+và cụm từ quảng cáo để chẩn đoán. Các chỉ số phụ này không chặn kết quả có
+confidence từ 90% trở lên; chỉ confidence dưới ngưỡng mới làm provider bị loại.
 
 ```env
-SONG_MIN_TRANSCRIPT_CONFIDENCE=0.7
+MIN_TRANSCRIPT_CONFIDENCE=0.9
 SONG_MIN_WORDS_PER_MINUTE=18
 ```
 
@@ -218,13 +230,15 @@ Trang Tải file hỗ trợ dán một link video YouTube, đọc metadata, ki�
 
 ```env
 YOUTUBE_IMPORT_ENABLED=true
+MEDIA_IMPORT_EGRESS_PROXY_URL=http://media-egress-proxy.internal:3128
 YT_DLP_PATH=
 YOUTUBE_COOKIES_FILE=
+YOUTUBE_FALLBACK_PLAYER_CLIENTS=android_vr
 YOUTUBE_METADATA_TIMEOUT_MS=45000
 YOUTUBE_DOWNLOAD_TIMEOUT_MS=600000
 ```
 
-`npm install` tự cài `yt-dlp`. Máy chủ dùng Node làm JavaScript runtime và `ffmpeg-static` để trích audio. Nếu YouTube yêu cầu xác minh máy chủ, hãy xuất `cookies.txt` từ một tài khoản dịch vụ riêng, lưu ngoài repository với quyền đọc giới hạn cho tiến trình backend, rồi đặt đường dẫn tuyệt đối vào `YOUTUBE_COOKIES_FILE`. Không dùng cookies trình duyệt cá nhân và không commit file này lên Git.
+`npm install` tự cài `yt-dlp`. Máy chủ dùng Node làm JavaScript runtime và `ffmpeg-static` để trích audio. Trong production, `MEDIA_IMPORT_EGRESS_PROXY_URL` là bắt buộc và phải trỏ tới proxy có thể chặn loopback, private/link-local, metadata service, DNS rebinding và redirect vào mạng nội bộ. Khi YouTube yêu cầu xác minh với client mặc định, backend tự thử lại bằng client công khai trong `YOUTUBE_FALLBACK_PLAYER_CLIENTS`. Nếu YouTube vẫn yêu cầu xác minh, hãy xuất `cookies.txt` từ một tài khoản dịch vụ riêng, lưu ngoài repository với quyền đọc giới hạn cho tiến trình backend, rồi đặt đường dẫn tuyệt đối vào `YOUTUBE_COOKIES_FILE`. Không dùng cookies trình duyệt cá nhân và không commit file này lên Git.
 
 ### Dịch transcript sang ngôn ngữ khác
 
@@ -329,14 +343,15 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | APPLE_KEY_ID | ID của Sign in with Apple key | ... |
 | APPLE_PRIVATE_KEY_PATH | Đường dẫn tuyệt đối đến khóa `.p8` | C:\secure\AuthKey_XXXXXXXXXX.p8 |
 | APPLE_CALLBACK_URL | Apple callback HTTPS | https://api.example.com/api/auth/apple/callback |
-| TRANSCRIPTION_PROVIDER | Provider speech-to-text hoặc chế độ tự chọn | auto, vbee, sonix, deepgram hoặc assemblyai |
-| TRANSCRIPTION_PROVIDER_CHAIN | Thứ tự API chính và dự phòng, phân cách bằng dấu phẩy | vbee,assemblyai,deepgram,sonix |
+| TRANSCRIPTION_PROVIDER | Provider speech-to-text thủ công hoặc chế độ `auto` xếp hạng theo file/năng lực/health | auto, vbee, sonix, deepgram hoặc assemblyai |
+| TRANSCRIPTION_PROVIDER_CHAIN | Chuỗi failover của chế độ thủ công; danh sách ứng viên và thứ tự phân xử của `auto` | vbee,assemblyai,deepgram,sonix |
 | PROVIDER_FAILOVER_ENABLED | Chuyển sang API kế tiếp khi API hiện tại lỗi hạ tầng, quota hoặc xác thực | true |
 | PROVIDER_RETRY_ATTEMPTS | Số lần thử tối đa trên cùng một API trước khi chuyển tiếp | 2 |
 | PROVIDER_CIRCUIT_FAILURE_THRESHOLD | Số yêu cầu lỗi liên tiếp trước khi tạm ngắt API | 3 |
 | PROVIDER_CIRCUIT_OPEN_SECONDS | Thời gian tạm ngắt lần đầu | 120 |
 | PROVIDER_CIRCUIT_MAX_OPEN_SECONDS | Thời gian tạm ngắt tối đa khi API tiếp tục lỗi | 1800 |
 | PROVIDER_CIRCUIT_PROBE_SECONDS | Thời gian khóa một job thăm dò ở trạng thái half-open | 90 |
+| MIN_TRANSCRIPT_CONFIDENCE | Ngưỡng confidence tối thiểu; kết quả có điểm dưới ngưỡng sẽ bị từ chối | 0.9 |
 | VBEE_API_KEY | API key Vbee, chỉ lưu ở backend | ... |
 | VBEE_API_KEY_HEADER | Tên header chứa API key | X-API-Key |
 | VBEE_API_KEY_SCHEME | Tiền tố key; để trống với X-API-Key |  |
@@ -360,7 +375,9 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | VBEE_RESULT_PATH_TEMPLATE | Path poll kết quả, dùng `{id}` cho job id | /v1/transcribe/{id} |
 | VBEE_TEXT_PATH | Dot path tới transcript nếu response Vbee không dùng `text`/`transcript` mặc định | data.text |
 | YOUTUBE_IMPORT_ENABLED | Bật nhập một video YouTube từ URL | true |
+| MEDIA_IMPORT_EGRESS_PROXY_URL | Proxy lọc SSRF bắt buộc cho nhập media ở production | http://media-egress-proxy.internal:3128 |
 | YOUTUBE_COOKIES_FILE | Đường dẫn tuyệt đối đến cookies.txt của tài khoản dịch vụ khi YouTube yêu cầu xác minh | C:\\secrets\\youtube-cookies.txt |
+| YOUTUBE_FALLBACK_PLAYER_CLIENTS | Client công khai thử lại khi YouTube chặn yêu cầu mặc định; để trống để tắt | android_vr |
 | DEEPGRAM_DETECT_LANGUAGE | Tự phát hiện ngôn ngữ thay vì dùng DEEPGRAM_LANGUAGE | false |
 | TRANSLATION_PROVIDER | Provider dịch transcript | auto, google, libretranslate hoặc mymemory |
 | GOOGLE_TRANSLATE_API_URL | Endpoint Google Cloud Translation | https://translation.googleapis.com/language/translate/v2 |

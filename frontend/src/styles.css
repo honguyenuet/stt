@@ -2,6 +2,12 @@
 @source "../src";
 @import "tw-animate-css";
 
+@layer components {
+  .onboarding-input {
+    @apply h-11 w-full rounded-md border border-[#e4ddcf] bg-white px-3 text-sm font-semibold text-[#21104a] outline-none transition placeholder:font-normal placeholder:text-[#9a8eac] focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -28,30 +34,31 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --font-display: "Be Vietnam Pro", system-ui, sans-serif;
-  --font-sans: "Be Vietnam Pro", system-ui, sans-serif;
+  --font-display: var(--vbee-font-display);
+  --font-content: var(--vbee-font-content);
+  --font-sans: var(--vbee-font-ui);
 
-  /* Vbee type scale: a touch larger, crisp, and still compact for app screens. */
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1.125rem;
-  --text-sm: 0.875rem;
-  --text-sm--line-height: 1.375rem;
-  --text-base: 0.9375rem;
-  --text-base--line-height: 1.5rem;
-  --text-lg: 1.0625rem;
-  --text-lg--line-height: 1.625rem;
-  --text-xl: 1.1875rem;
-  --text-xl--line-height: 1.75rem;
-  --text-2xl: 1.4375rem;
-  --text-2xl--line-height: 1.9375rem;
-  --text-3xl: 1.75rem;
-  --text-3xl--line-height: 2.25rem;
-  --text-4xl: 2.0625rem;
-  --text-4xl--line-height: 2.5rem;
-  --text-5xl: 2.5rem;
-  --text-5xl--line-height: 2.875rem;
-  --text-6xl: 2.875rem;
-  --text-6xl--line-height: 3.25rem;
+  /* Compact Vbee type scale: clear hierarchy without oversized dashboard copy. */
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.625rem;
+  --text-2xl: 1.3125rem;
+  --text-2xl--line-height: 1.75rem;
+  --text-3xl: 1.5625rem;
+  --text-3xl--line-height: 2rem;
+  --text-4xl: 1.875rem;
+  --text-4xl--line-height: 2.25rem;
+  --text-5xl: 2.25rem;
+  --text-5xl--line-height: 2.625rem;
+  --text-6xl: 2.625rem;
+  --text-6xl--line-height: 3rem;
   --font-weight-bold: 700;
   --font-weight-black: 800;
   --tracking-tight: 0em;
@@ -61,6 +68,21 @@
 
 :root {
   --radius: 0.5rem;
+  --vbee-font-ui: "Inter", "Plus Jakarta Sans", "Roboto", system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial,
+    sans-serif;
+  --vbee-font-content: "Be Vietnam Pro", "Lexend", "Inter",
+    "Plus Jakarta Sans", "Roboto", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --vbee-font-display: "Be Vietnam Pro", "Lexend", "Inter",
+    "Plus Jakarta Sans", "Roboto", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+
+  /* Icon tokens: 16px inline, 20px controls, 24px primary actions. */
+  --icon-size-sm: 1rem;
+  --icon-size-md: 1.25rem;
+  --icon-size-lg: 1.5rem;
+  --icon-stroke-width: 2;
 
   /* Vbee palette: deep purple for identity, clean white for work, yellow for action. */
   --background: #ffffff;
@@ -103,21 +125,41 @@
     min-width: 320px;
     background-color: var(--color-background);
     color: var(--color-foreground);
-    font-family: var(--font-sans);
-    font-size: 14px;
-    line-height: 1.6;
+    font-family: var(--vbee-font-ui);
+    font-size: 13px;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-synthesis: none;
-    font-optical-sizing: auto;
-    text-rendering: optimizeLegibility;
+    text-rendering: auto;
   }
 
+  nav,
+  button,
   input,
   textarea,
   select,
-  button {
-    font-family: inherit;
+  table,
+  [role="menu"],
+  [role="menubar"],
+  [role="dialog"] {
+    font-family: var(--vbee-font-ui);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--vbee-font-display);
+  }
+
+  article,
+  blockquote,
+  [contenteditable="true"],
+  [data-typography="content"] {
+    font-family: var(--vbee-font-content);
   }
 
   button,
@@ -188,7 +230,15 @@
   box-shadow: var(--shadow-soft);
 }
 @utility font-display {
-  font-family: var(--font-display);
+  font-family: var(--vbee-font-display);
+}
+
+@utility font-content {
+  font-family: var(--vbee-font-content);
+}
+
+@utility font-ui {
+  font-family: var(--vbee-font-ui);
 }
 
 @utility vbee-page-band {

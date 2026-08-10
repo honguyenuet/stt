@@ -17,6 +17,7 @@ import {
   formatFileSize,
 } from "@/lib/admin/formatters";
 import {
+  getFileMedia,
   getFileJobs,
   listFiles,
   markFileDeleted,
@@ -48,6 +49,9 @@ function AdminFilesPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ManagedFile | null>(null);
   const [relatedJobs, setRelatedJobs] = useState<TranscriptionJob[]>([]);
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaError, setMediaError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -65,7 +69,9 @@ function AdminFilesPage() {
       })
         .then(setRows)
         .catch((err) =>
-          setError(err instanceof Error ? err.message : "Không tải được files"),
+          setError(
+            err instanceof Error ? err.message : "Không tải được danh sách tệp",
+          ),
         )
         .finally(() => {
           if (showLoading) setLoading(false);
@@ -100,26 +106,68 @@ function AdminFilesPage() {
     }
   }, [rows, selected]);
 
+  useEffect(() => {
+    let objectUrl = "";
+    let cancelled = false;
+    setMediaUrl("");
+    setMediaError("");
+
+    if (!selected?.has_audio_track) {
+      setMediaLoading(false);
+      return undefined;
+    }
+
+    setMediaLoading(true);
+    void getFileMedia(selected.file_id)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setMediaUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMediaError(
+            err instanceof Error ? err.message : "Không tải được nội dung",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMediaLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [selected?.file_id, selected?.has_audio_track]);
+
   function openFile(file: ManagedFile) {
     setSelected(file);
-    void getFileJobs(file.file_id).then(setRelatedJobs);
+    setRelatedJobs([]);
+    void getFileJobs(file.file_id)
+      .then(setRelatedJobs)
+      .catch((err) =>
+        toast.error(
+          err instanceof Error ? err.message : "Không tải được tác vụ liên quan",
+        ),
+      );
   }
 
   async function deleteFile() {
     if (
       !selected ||
       !window.confirm(
-        "Xác nhận xóa file? V1 sẽ đánh dấu soft-delete nếu backend chưa hỗ trợ.",
+        "Xóa vĩnh viễn tệp, văn bản và tác vụ liên quan? Thời lượng đã sử dụng sẽ không được hoàn lại.",
       )
     )
       return;
     try {
       await markFileDeleted(selected.file_id);
       setSelected(null);
-      toast.success("Đã xóa file");
+      toast.success("Đã xóa tệp");
       load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không xóa được file");
+      toast.error(err instanceof Error ? err.message : "Không xóa được tệp");
     }
   }
 
@@ -130,7 +178,7 @@ function AdminFilesPage() {
       <AdminPanel>
         <AdminPanelHeader
           title="Quản lý tệp"
-          description="Quản lý metadata, xem trước media và các job liên quan."
+          description="Quản lý dữ liệu mô tả, xem trước nội dung và các tác vụ liên quan."
         />
         <div className="grid gap-3 p-4 md:grid-cols-5">
           <input
@@ -149,7 +197,7 @@ function AdminFilesPage() {
           >
             <option value="all">Tất cả loại tệp</option>
             <option value="audio">Âm thanh</option>
-            <option value="video">Video</option>
+            <option value="video">Hình ảnh động</option>
           </select>
           <select
             value={storageStatus}
@@ -171,7 +219,7 @@ function AdminFilesPage() {
             }
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
           >
-            <option value="all">Tất cả job</option>
+            <option value="all">Tất cả tác vụ</option>
             <option value="completed">Hoàn tất</option>
             <option value="failed">Thất bại</option>
             <option value="queued">Đang chờ</option>
@@ -272,16 +320,28 @@ function AdminFilesPage() {
           <div className="grid gap-5 p-4 xl:grid-cols-2">
             <div className="space-y-3">
               {selected.file_type === "video" ? (
-                <video controls className="w-full rounded-md border bg-black" />
+                <video
+                  controls
+                  src={mediaUrl || undefined}
+                  className="w-full rounded-md border bg-black"
+                />
               ) : (
-                <audio controls className="w-full" />
+                <audio controls src={mediaUrl || undefined} className="w-full" />
+              )}
+              {mediaLoading && (
+                <p className="text-sm text-[#756894]">Đang tải nội dung...</p>
+              )}
+              {mediaError && (
+                <p className="rounded-md bg-red-50 p-3 text-sm text-red-800">
+                  {mediaError}
+                </p>
               )}
               <pre className="overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
                 {JSON.stringify(selected.metadata, null, 2)}
               </pre>
               {!selected.has_audio_track && (
                 <p className="rounded-md bg-red-50 p-3 text-sm text-red-800">
-                  Tệp bị lỗi hoặc không có track âm thanh.
+                  Tệp bị lỗi hoặc không có rãnh âm thanh.
                 </p>
               )}
               <button
@@ -289,11 +349,13 @@ function AdminFilesPage() {
                 onClick={() => void deleteFile()}
                 className="rounded-md border border-red-200 px-3 py-2 text-sm font-black text-red-700 disabled:opacity-40"
               >
-                Xóa file
+                Xóa tệp
               </button>
             </div>
             <div>
-              <h3 className="mb-3 font-black">Job chuyển giọng nói liên quan</h3>
+              <h3 className="mb-3 font-black">
+                Tác vụ chuyển giọng nói liên quan
+              </h3>
               <div className="divide-y divide-[#efe7d8] rounded-md border border-[#e4ddcf]">
                 {relatedJobs.map((job) => (
                   <div

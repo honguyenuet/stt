@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -33,19 +34,12 @@ const healthStatusLabel: Record<string, string> = {
   unknown: "Chưa rõ",
 };
 
-function formatUsd(value: number, fractionDigits = 4) {
-  return `$${Number(value || 0).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: fractionDigits,
-  })}`;
-}
-
 function AdminProvidersPage() {
   const session = useAdminSession();
   const [providers, setProviders] = useState<SpeechProvider[]>([]);
   const [selected, setSelected] = useState<SpeechProvider | null>(null);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [failoverProviderDraft, setFailoverProviderDraft] = useState("");
+  const [routingRulesDraft, setRoutingRulesDraft] = useState("{}");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const canEdit = session ? canManageSettings(session.user.role) : false;
@@ -69,14 +63,21 @@ function AdminProvidersPage() {
   async function save() {
     if (!selected) return;
     try {
+      const routingRules = JSON.parse(routingRulesDraft || "{}");
+      if (
+        !routingRules ||
+        typeof routingRules !== "object" ||
+        Array.isArray(routingRules)
+      ) {
+        throw new Error("Quy tắc định tuyến phải là một JSON object");
+      }
       const updated = await saveSpeechProvider({
         ...selected,
-        failover_provider_id:
-          failoverProviderDraft.trim() || selected.failover_provider_id,
+        routing_rules: routingRules,
         api_key: apiKeyDraft.trim() || undefined,
       });
       setApiKeyDraft("");
-      setFailoverProviderDraft("");
+      setRoutingRulesDraft(JSON.stringify(updated.routing_rules, null, 2));
       setSelected(updated);
       toast.success("Đã lưu nhà cung cấp");
       load();
@@ -114,7 +115,7 @@ function AdminProvidersPage() {
             description="API endpoint, bật/tắt, mặc định, định tuyến, dự phòng, trạng thái hoạt động, hiệu năng và chi phí."
           />
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1160px] text-left text-sm">
+            <table className="w-full min-w-[1050px] text-left text-sm">
               <thead className="bg-[#fbf8ef] text-xs uppercase text-[#756894]">
                 <tr>
                   {[
@@ -126,8 +127,7 @@ function AdminProvidersPage() {
                     "Định tuyến",
                     "Hoạt động",
                     "Độ trễ",
-                    "Chi phí / phút",
-                    "Chi phí tháng",
+                    "Chi phí",
                     "",
                   ].map((h) => (
                     <th key={h} className="px-4 py-3">
@@ -167,21 +167,22 @@ function AdminProvidersPage() {
                     </td>
                     <td className="px-4 py-3">{provider.avg_latency_ms} ms</td>
                     <td className="px-4 py-3">
-                      {formatUsd(provider.cost_per_minute_usd)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {formatUsd(provider.monthly_cost_usd, 2)}
+                      ${provider.monthly_cost_usd.toFixed(2)}
                     </td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => {
                           setSelected(provider);
                           setApiKeyDraft("");
-                          setFailoverProviderDraft("");
+                          setRoutingRulesDraft(
+                            JSON.stringify(provider.routing_rules, null, 2),
+                          );
                         }}
-                        className="font-black underline"
+                        aria-label={`Chỉnh sửa ${provider.name}`}
+                        title={`Chỉnh sửa ${provider.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Sửa
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>
@@ -199,7 +200,7 @@ function AdminProvidersPage() {
                   onClick={() => {
                     setSelected(null);
                     setApiKeyDraft("");
-                    setFailoverProviderDraft("");
+                    setRoutingRulesDraft("{}");
                   }}
                   className="rounded-md border px-3 py-2 text-sm font-bold"
                 >
@@ -223,7 +224,7 @@ function AdminProvidersPage() {
                 }
               />
               <Input
-                label={selected.api_key_masked ? "Cập nhật API key mới" : "API key"}
+                label={selected.api_key_masked ? "API key mới" : "API key"}
                 type="password"
                 value={apiKeyDraft}
                 placeholder={
@@ -233,7 +234,6 @@ function AdminProvidersPage() {
                 }
                 disabled={!canEdit}
                 onChange={setApiKeyDraft}
-                autoComplete="new-password"
               />
               <label className="block text-sm font-bold">
                 Chế độ định tuyến
@@ -253,32 +253,38 @@ function AdminProvidersPage() {
                   <option value="rule_based">Theo quy tắc</option>
                 </select>
               </label>
-              <Input
-                label="ID nhà cung cấp dự phòng"
-                value={failoverProviderDraft}
-                placeholder={
-                  selected.failover_provider_id
-                    ? "Để trống nếu không đổi provider dự phòng"
-                    : "Nhập ID provider dự phòng nếu cần"
-                }
-                disabled={!canEdit}
-                onChange={setFailoverProviderDraft}
-                autoComplete="off"
-              />
+              <label className="block text-sm font-bold">
+                Nhà cung cấp dự phòng
+                <select
+                  disabled={!canEdit}
+                  value={selected.failover_provider_id || ""}
+                  onChange={(event) =>
+                    setSelected({
+                      ...selected,
+                      failover_provider_id: event.target.value || null,
+                    })
+                  }
+                  className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
+                >
+                  <option value="">Tự động chọn</option>
+                  {providers
+                    .filter(
+                      (provider) =>
+                        provider.id !== selected.id && provider.enabled,
+                    )
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <NumberInput
                 label="Chi phí / phút (USD)"
                 value={selected.cost_per_minute_usd}
                 disabled={!canEdit}
                 onChange={(value) =>
                   setSelected({ ...selected, cost_per_minute_usd: value })
-                }
-              />
-              <NumberInput
-                label="Chi phí tháng (USD)"
-                value={selected.monthly_cost_usd}
-                disabled={!canEdit}
-                onChange={(value) =>
-                  setSelected({ ...selected, monthly_cost_usd: value })
                 }
               />
               <label className="flex items-center gap-2 text-sm font-bold">
@@ -303,9 +309,23 @@ function AdminProvidersPage() {
                 />{" "}
                 Provider mặc định
               </label>
-              <pre className="md:col-span-2 overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
-                {JSON.stringify(selected.routing_rules, null, 2)}
-              </pre>
+              <label className="block text-sm font-bold md:col-span-2">
+                Quy tắc định tuyến JSON
+                <textarea
+                  disabled={!canEdit}
+                  value={routingRulesDraft}
+                  onChange={(event) =>
+                    setRoutingRulesDraft(event.target.value)
+                  }
+                  rows={6}
+                  spellCheck={false}
+                  className="mt-1 w-full rounded-md border border-[#e4ddcf] bg-[#fbf8ef] px-3 py-2 font-mono text-xs disabled:opacity-60"
+                />
+                <span className="mt-1 block text-xs font-normal text-[#756894]">
+                  Hỗ trợ: languages, audio_modes và priority. Ví dụ:{" "}
+                  {`{"languages":["vi"],"audio_modes":["speech"],"priority":200}`}
+                </span>
+              </label>
               <div className="flex gap-2 md:col-span-2">
                 <button
                   disabled={!canEdit}
@@ -337,7 +357,6 @@ function Input({
   disabled,
   type = "text",
   placeholder,
-  autoComplete,
 }: {
   label: string;
   value: string;
@@ -345,7 +364,6 @@ function Input({
   disabled: boolean;
   type?: "text" | "password";
   placeholder?: string;
-  autoComplete?: string;
 }) {
   return (
     <label className="block text-sm font-bold">
@@ -355,7 +373,6 @@ function Input({
         disabled={disabled}
         value={value}
         placeholder={placeholder}
-        autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
       />
@@ -380,10 +397,9 @@ function NumberInput({
       <input
         type="number"
         step="0.0001"
-        min="0"
         disabled={disabled}
         value={value}
-        onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))}
+        onChange={(e) => onChange(Number(e.target.value))}
         className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 disabled:opacity-60"
       />
     </label>

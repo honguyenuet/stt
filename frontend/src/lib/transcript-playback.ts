@@ -7,6 +7,36 @@ type EditableTimedWord = TimedWord & {
   text: string;
 };
 
+export type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
+
+export function confidenceLevel(value: number | null | undefined): ConfidenceLevel {
+  if (value === null || value === undefined) return "unknown";
+  const confidence = Number(value);
+  if (!Number.isFinite(confidence)) return "unknown";
+  if (confidence >= 0.85) return "high";
+  if (confidence >= 0.65) return "medium";
+  return "low";
+}
+
+export function summarizeConfidence(
+  words: Array<{ confidence?: number | null }>,
+) {
+  const values = words
+    .filter(
+      (word) => word.confidence !== null && word.confidence !== undefined,
+    )
+    .map((word) => Number(word.confidence))
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) {
+    return { average: null, lowCount: 0, reviewedCount: 0 };
+  }
+  return {
+    average: values.reduce((sum, value) => sum + value, 0) / values.length,
+    lowCount: values.filter((value) => value < 0.65).length,
+    reviewedCount: values.length,
+  };
+}
+
 export function findActiveWordIndex(
   words: TimedWord[],
   milliseconds: number,

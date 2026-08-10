@@ -97,15 +97,29 @@ CREATE TABLE IF NOT EXISTS oauth_login_states (
 CREATE INDEX IF NOT EXISTS idx_oauth_login_states_expiry
 ON oauth_login_states(expires_at, consumed_at);
 
+CREATE TABLE IF NOT EXISTS transcription_folders (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(160) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transcription_folders_user_name
+ON transcription_folders(user_id, LOWER(name));
+
 CREATE TABLE IF NOT EXISTS transcriptions (
   id             SERIAL PRIMARY KEY,
   user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  folder_id      BIGINT REFERENCES transcription_folders(id) ON DELETE SET NULL,
   filename       VARCHAR(255) NOT NULL,
   file_size      BIGINT,
   duration       NUMERIC,
   processing_seconds NUMERIC,
   text           TEXT NOT NULL,
   words          JSONB DEFAULT '[]'::jsonb,
+  segments       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  speaker_names  JSONB NOT NULL DEFAULT '{}'::jsonb,
   audio_filename VARCHAR(255),
   source_language VARCHAR(20),
   translated_text TEXT,
@@ -115,11 +129,35 @@ CREATE TABLE IF NOT EXISTS transcriptions (
   transcription_provider VARCHAR(40),
   provider_request_id VARCHAR(255),
   provider_attempts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status VARCHAR(20) NOT NULL DEFAULT 'completed',
+  error_message TEXT,
+  completed_at TIMESTAMP WITH TIME ZONE,
   created_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_transcriptions_user_created
 ON transcriptions(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_transcriptions_folder_created
+ON transcriptions(folder_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS transcription_batches (
+  id UUID PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  folder_id BIGINT REFERENCES transcription_folders(id) ON DELETE SET NULL,
+  kind VARCHAR(30) NOT NULL DEFAULT 'multitrack',
+  name VARCHAR(255) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'queued',
+  expected_tracks SMALLINT NOT NULL CHECK (expected_tracks BETWEEN 2 AND 5),
+  output_transcription_id INTEGER REFERENCES transcriptions(id) ON DELETE SET NULL,
+  error_message TEXT,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_batches_user_created
+ON transcription_batches(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS transcription_versions (
   id BIGSERIAL PRIMARY KEY,
@@ -127,6 +165,7 @@ CREATE TABLE IF NOT EXISTS transcription_versions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   text TEXT NOT NULL DEFAULT '',
   words JSONB NOT NULL DEFAULT '[]'::jsonb,
+  speaker_names JSONB NOT NULL DEFAULT '{}'::jsonb,
   label VARCHAR(120),
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

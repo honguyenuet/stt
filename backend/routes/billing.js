@@ -22,8 +22,9 @@ const {
 
 const router = express.Router();
 
-router.get("/plans", (_req, res) => {
-  res.json({ plans: listPlans(), topUps: listTopUps() });
+router.get("/plans", async (_req, res) => {
+  const plans = await listPlans();
+  res.json({ plans, topUps: listTopUps() });
 });
 
 // PayOS calls this endpoint directly. Do not require a user token here: the

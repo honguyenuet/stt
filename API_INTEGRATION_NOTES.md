@@ -71,9 +71,11 @@ VBEE_API_KEY_SCHEME=
 VBEE_STT_API_BASE_URL=https://uat-api.vbeelabs.ai
 ```
 
-Khi `TRANSCRIPTION_PROVIDER=auto`, Vbee được chọn nếu `VBEE_API_KEY` hợp lệ.
-Nếu key trống hoặc provider lỗi, hệ thống chuyển sang provider tiếp theo trong
-`TRANSCRIPTION_PROVIDER_CHAIN`.
+Khi `TRANSCRIPTION_PROVIDER=auto`, backend xếp hạng các provider có khóa hợp lệ
+theo ngôn ngữ, chế độ audio, diarization, dịch, kích thước/thời lượng và health.
+`TRANSCRIPTION_PROVIDER_CHAIN` là danh sách ứng viên và dùng để phân xử khi bằng
+điểm. Khi chọn thủ công, provider đã chọn luôn đứng đầu và các provider còn lại
+giữ nguyên thứ tự chain để failover.
 
 Muốn dùng Sonix:
 

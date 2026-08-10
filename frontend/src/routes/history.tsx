@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Clock,
   HardDrive,
+  Folder,
   Trash2,
   X,
   Search,
@@ -57,6 +58,8 @@ interface HistoryItem {
   progress: number;
   error_message: string | null;
   job_id: number | null;
+  folder_id?: number | null;
+  folder_name?: string | null;
   queue_position?: number;
   estimated_remaining_seconds?: number;
   created_at: string;
@@ -372,7 +375,7 @@ function HistoryPage() {
       signal: controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error("Không thể tải audio");
+        if (!response.ok) throw new Error("Không thể tải âm thanh");
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         if (controller.signal.aborted) {
@@ -386,10 +389,10 @@ function HistoryPage() {
         if (controller.signal.aborted && !timedOut) return;
         setAudioError(
           timedOut
-            ? "Audio tải quá lâu. Vui lòng đóng và mở lại bản ghi."
+            ? "Âm thanh tải quá lâu. Vui lòng đóng và mở lại bản ghi."
             : error instanceof Error
               ? error.message
-              : "Không thể tải audio.",
+              : "Không thể tải âm thanh.",
         );
       })
       .finally(() => {
@@ -511,7 +514,7 @@ function HistoryPage() {
     const baseName = item.filename.replace(/\.[^.]+$/, "");
     const lines = item.translated_text
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -543,7 +546,7 @@ function HistoryPage() {
     const baseName = item.filename.replace(/\.[^.]+$/, "");
     const content = item.translated_text
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           text,
           "",
@@ -606,7 +609,7 @@ function HistoryPage() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <input
               type="text"
-              placeholder="Tìm theo tên file hoặc nội dung..."
+              placeholder="Tìm theo tên tệp hoặc nội dung..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-full border border-border bg-white py-2.5 pl-10 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition"
@@ -643,7 +646,7 @@ function HistoryPage() {
             className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
           >
             <Upload className="h-4 w-4" />
-            TẢI FILE
+            TẢI TỆP
           </Link>
           <Link
             to="/record"
@@ -713,7 +716,7 @@ function HistoryPage() {
             <p className="text-muted-foreground text-sm">
               {search
                 ? `Không có bản ghi nào khớp với "${search}"`
-                : "Hãy thử tải file hoặc ghi âm để bắt đầu!"}
+                : "Hãy thử tải tệp hoặc ghi âm để bắt đầu!"}
             </p>
             {!search && (
               <div className="flex gap-3 mt-2">
@@ -721,7 +724,7 @@ function HistoryPage() {
                   to="/upload"
                   className="rounded-full border border-primary/40 bg-primary/10 px-5 py-2 text-sm font-medium text-primary hover:bg-primary/20 transition"
                 >
-                  Tải file lên
+                  Tải tệp lên
                 </Link>
                 <Link
                   to="/record"
@@ -791,6 +794,14 @@ function HistoryPage() {
                             <Clock className="h-3 w-3" />
                             {formatDate(item.created_at)}
                           </span>
+                          {item.folder_name && (
+                            <span className="flex min-w-0 items-center gap-1">
+                              <Folder className="h-3 w-3 shrink-0" />
+                              <span className="max-w-32 truncate">
+                                {item.folder_name}
+                              </span>
+                            </span>
+                          )}
                           {item.file_size > 0 && (
                             <span className="flex items-center gap-1">
                               <HardDrive className="h-3 w-3" />
@@ -816,7 +827,7 @@ function HistoryPage() {
                                 item.text ||
                                 "Không có văn bản"
                             : item.status === "failed"
-                              ? item.error_message || "Job xử lý thất bại"
+                              ? item.error_message || "Tác vụ xử lý thất bại"
                               : `${statusLabel}${item.progress ? ` ${item.progress}%` : ""}`}
                         </p>
                       )}
@@ -907,13 +918,13 @@ function HistoryPage() {
                         <p className="text-sm font-black text-foreground">
                           {isActive
                             ? `${statusLabel}. Bạn có thể rời trang, lịch sử sẽ tự cập nhật.`
-                            : "Job chưa hoàn tất."}
+                            : "Tác vụ chưa hoàn tất."}
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
                           {item.status === "failed"
-                            ? item.error_message || "Không thể xử lý file này."
+                            ? item.error_message || "Không thể xử lý tệp này."
                             : item.status === "cancelled"
-                              ? "Job đã được hủy và không trừ quota."
+                              ? "Tác vụ đã được hủy và không trừ thời lượng."
                               : item.status === "processing"
                                 ? `Tiến độ hiện tại: ${item.progress || 10}%. Dự kiến còn ${formatDuration(item.estimated_remaining_seconds)}.`
                                 : `Vị trí hàng đợi: ${item.queue_position || 1}. Dự kiến còn ${formatDuration(item.estimated_remaining_seconds)}.`}
@@ -948,7 +959,7 @@ function HistoryPage() {
                         <>
                           {fullItem.translation_error && (
                             <div className="rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm font-semibold leading-6 text-destructive">
-                              Transcript gốc đã hoàn thành nhưng bản dịch bị
+                              Văn bản gốc đã hoàn thành nhưng bản dịch bị
                               lỗi: {fullItem.translation_error}
                             </div>
                           )}
@@ -958,7 +969,7 @@ function HistoryPage() {
                               {audioLoading && !audioUrl ? (
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                   <span className="h-3.5 w-3.5 rounded-full border-2 border-primary/40 border-t-primary animate-spin" />
-                                  Đang tải audio...
+                                  Đang tải âm thanh...
                                 </div>
                               ) : audioUrl ? (
                                 <div className="flex flex-col gap-1.5">
@@ -986,6 +997,7 @@ function HistoryPage() {
                               Văn bản — có thể chỉnh sửa trực tiếp
                             </p>
                             <textarea
+                              data-typography="content"
                               value={editorText}
                               onChange={(event) => {
                                 const nextText = event.target.value;

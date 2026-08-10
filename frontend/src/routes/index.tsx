@@ -33,7 +33,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Workspace Vbee cho upload audio/video, ghi âm, realtime, quản lý transcript, dịch và gói cước.",
+          "Không gian Vbee để tải âm thanh hoặc nội dung nghe nhìn, ghi âm, dùng Realtime, quản lý văn bản, dịch và mua gói cước.",
       },
       {
         property: "og:title",
@@ -55,19 +55,19 @@ const homeNavigation = [
     label: "Sản phẩm",
     items: [
       {
-        title: "Tải file",
-        desc: "Audio/video thành văn bản có tính thời lượng.",
+        title: "Tải tệp",
+        desc: "Chuyển âm thanh hoặc nội dung nghe nhìn thành văn bản có tính thời lượng.",
         href: "/upload",
         icon: UploadCloud,
       },
       {
         title: "Ghi âm",
-        desc: "Thu âm trên trình duyệt và lưu transcript.",
+        desc: "Thu âm trên trình duyệt và lưu văn bản.",
         href: "/record",
         icon: Mic2,
       },
       {
-        title: "Nói realtime",
+        title: "Realtime",
         desc: "Ghi chú trực tiếp cho họp và trao đổi công việc.",
         href: "/realtime",
         icon: AudioLines,
@@ -102,19 +102,19 @@ const homeNavigation = [
     items: [
       {
         title: "Hướng dẫn sử dụng",
-        desc: "Cách tải tệp lên, ghi âm và nói realtime.",
+        desc: "Cách tải tệp lên, ghi âm và dùng Realtime.",
         href: "#features",
         icon: FileText,
       },
       {
-        title: "Lịch sử transcript",
+        title: "Lịch sử văn bản",
         desc: "Quản lý bản ghi đã chuyển đổi.",
         href: "/history",
         icon: History,
       },
       {
         title: "Xuất và dịch văn bản",
-        desc: "Copy, TXT, DOCX, SRT và dịch nội dung.",
+        desc: "Sao chép, tải TXT, DOCX, SRT và dịch nội dung.",
         href: "#workspace",
         icon: Languages,
       },
@@ -146,54 +146,54 @@ const homeNavigation = [
 ];
 
 const metrics = [
-  { value: "50h", label: "Gói dùng thử có quản lý quota" },
-  { value: "2GB", label: "Upload tối đa gói Chuyên nghiệp" },
-  { value: "3 cách", label: "Tải tệp, ghi âm, realtime" },
-  { value: "4 định dạng", label: "TXT, DOCX, SRT, copy" },
+  { value: "50 giờ", label: "Gói dùng thử có quản lý thời lượng" },
+  { value: "200 MB", label: "Giới hạn tệp tải lên" },
+  { value: "3 cách", label: "Tải tệp, ghi âm, Realtime" },
+  { value: "4 định dạng", label: "TXT, DOCX, SRT, sao chép" },
 ];
 
 const features = [
   {
     icon: UploadCloud,
-    title: "Tải audio/video",
+    title: "Tải âm thanh hoặc nội dung nghe nhìn",
     desc: "Nhận MP3, WAV, M4A, OGG, FLAC, AAC, MP4 và WebM; hiện thời lượng trước khi xử lý.",
   },
   {
     icon: Mic2,
     title: "Ghi âm trên trình duyệt",
-    desc: "Mở microphone, ghi âm, đếm giờ và chuyển thành transcript trong cùng workspace.",
+    desc: "Mở micrô, ghi âm, đếm giờ và chuyển thành văn bản trong cùng một phiên đăng nhập.",
   },
   {
     icon: AudioLines,
-    title: "Nói realtime",
+    title: "Realtime",
     desc: "Phù hợp ghi chú nhanh, họp trực tuyến và luồng nói trực tiếp.",
   },
   {
     icon: Languages,
     title: "Dịch và xuất văn bản",
-    desc: "Quản lý transcript, dịch sang ngôn ngữ khác và xuất tài liệu để chia sẻ.",
+    desc: "Quản lý văn bản, dịch sang ngôn ngữ khác và xuất tài liệu để chia sẻ.",
   },
 ];
 
 const workflow = [
   {
     title: "Đăng nhập",
-    desc: "Người dùng vào workspace và thấy ngay quota còn lại.",
+    desc: "Người dùng đăng nhập và thấy ngay thời lượng còn lại.",
     icon: ShieldCheck,
   },
   {
     title: "Chọn nguồn",
-    desc: "Tải file, ghi âm hoặc nói realtime theo nhu cầu.",
+    desc: "Tải tệp, ghi âm hoặc dùng Realtime theo nhu cầu.",
     icon: UploadCloud,
   },
   {
     title: "Xử lý AI",
-    desc: "Hệ thống kiểm tra giới hạn, ước tính thời gian và tạo transcript.",
+    desc: "Hệ thống kiểm tra giới hạn, ước tính thời gian và tạo văn bản.",
     icon: Zap,
   },
   {
     title: "Lưu và nâng cấp",
-    desc: "Lưu vào lịch sử, xuất file và mua gói khi gần hết quota.",
+    desc: "Lưu vào lịch sử, xuất tệp và mua gói khi gần hết thời lượng.",
     icon: BarChart3,
   },
 ];
@@ -203,30 +203,30 @@ const plans = [
     name: "Theo lượt",
     label: "Không thuê bao",
     price: "39.000đ · 1 giờ",
-    desc: "Mua đúng số giờ cần dùng, không có quota thuê bao cố định.",
-    points: ["Theo sử dụng", "Không phí duy trì", "Thanh toán qua PayOS"],
+    desc: "Mua đúng số giờ cần dùng, thời lượng không hết hạn.",
+    points: ["Từ 1 đến 100 giờ", "Không phí duy trì", "Thanh toán qua PayOS"],
   },
   {
     name: "Tiêu chuẩn",
     label: "Cá nhân",
     price: "149.000đ · 5 giờ",
-    desc: "Cho cá nhân dùng ít nhưng cần quota hằng tháng ổn định.",
-    points: ["Upload 300MB", "File tối đa 3 giờ", "API có giới hạn"],
+    desc: "Cho cá nhân, chuyên viên và công việc hằng tháng.",
+    points: ["Tệp tối đa 2 giờ", "API / Webhook", "Ưu tiên xử lý 2×"],
   },
   {
     name: "Đặc biệt",
-    label: "Creator",
-    price: "499.000đ · 20 giờ",
-    desc: "Cho freelancer, creator và người dùng thường xuyên.",
-    points: ["Upload 1GB", "File tối đa 4 giờ", "Webhook mở rộng"],
+    label: "Phổ biến",
+    price: "449.000đ · 20 giờ",
+    desc: "Cho người sáng tạo cần nhiều thời lượng và tốc độ hơn.",
+    points: ["Tệp tối đa 4 giờ", "Lưu dữ liệu 1 năm", "Ưu tiên xử lý 4×"],
     featured: true,
   },
   {
     name: "Chuyên nghiệp",
     label: "Nâng cao",
     price: "799.000đ · 40 giờ",
-    desc: "Cho nhóm nhỏ và chuyên gia cần API đầy đủ.",
-    points: ["Upload 2GB", "File tối đa 10 giờ", "Xử lý song song 10 file"],
+    desc: "Dành cho chuyên gia cần API và ưu tiên xử lý cao nhất.",
+    points: ["Tệp tối đa 8 giờ", "API / Webhook", "Ưu tiên xử lý 8×"],
   },
 ];
 
@@ -441,8 +441,8 @@ function Hero({ onStart }: { onStart: () => void }) {
           Chuyển giọng nói thành văn bản, gọn và chính xác
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-white/72">
-          Tải file, ghi âm, nói realtime, dịch và xuất transcript trong một
-          không gian làm việc thống nhất, bảo mật và dễ sử dụng.
+          Đăng nhập để tải tệp, ghi âm, dùng Realtime, dịch và xuất văn bản
+          trong một giao diện thống nhất, bảo mật và dễ sử dụng.
         </p>
 
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
@@ -450,7 +450,7 @@ function Hero({ onStart }: { onStart: () => void }) {
             onClick={onStart}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-[#ffcb05] px-6 py-3 text-sm font-black text-[#21104a] shadow-[0_14px_35px_rgba(255,203,5,.35)] transition hover:-translate-y-0.5 hover:bg-[#ffdc45]"
           >
-            Vào workspace <ArrowRight className="h-4 w-4" />
+            Đăng nhập <ArrowRight className="h-4 w-4" />
           </button>
           <Link
             to="/pricing"
@@ -471,18 +471,18 @@ function Hero({ onStart }: { onStart: () => void }) {
                   Bản ghi đang xử lý
                 </p>
                 <p className="text-xs font-semibold text-[#756894]">
-                  meeting-audio.mp3 · 18m 42s
+                  cuoc-hop.mp3 · 18 phút 42 giây
                 </p>
               </div>
             </div>
             <span className="rounded-full bg-[#fff2a3] px-4 py-2 text-xs font-black text-[#21104a] shadow-inner">
-              50h 0m còn lại
+              50 giờ còn lại
             </span>
           </div>
 
           <div className="grid md:grid-cols-[220px_1fr_220px]">
             <aside className="border-b border-[#eee8ff] bg-[#fbfaff] p-4 md:border-b-0 md:border-r">
-              {["Tải file", "Ghi âm", "Trực tiếp", "Lịch sử"].map(
+              {["Tải tệp", "Ghi âm", "Realtime", "Lịch sử"].map(
                 (item, index) => (
                   <div
                     key={item}
@@ -499,20 +499,8 @@ function Hero({ onStart }: { onStart: () => void }) {
               <div className="space-y-3">
                 {[
                   ["00:04", "Hôm nay chúng ta tổng hợp tính năng chuyển giọng nói thành văn bản của Vbee."],
-                  ["00:21", "Người dùng có thể tải file, ghi âm hoặc nói realtime."],
-                  ["01:08", "Sau khi xử lý, transcript được lưu vào lịch sử để xuất file."],
-                  [
-                    "00:04",
-                    "Hôm nay chúng ta tổng hợp tính năng Vbee Speech to Text.",
-                  ],
-                  [
-                    "00:21",
-                    "Người dùng có thể tải file, ghi âm hoặc nói realtime.",
-                  ],
-                  [
-                    "01:08",
-                    "Sau khi xử lý, transcript được lưu vào lịch sử để xuất file.",
-                  ],
+                  ["00:21", "Người dùng có thể tải tệp, ghi âm hoặc dùng Realtime."],
+                  ["01:08", "Sau khi xử lý, văn bản được lưu vào lịch sử để xuất tệp."],
                 ].map(([time, text]) => (
                   <p
                     key={time}
@@ -572,8 +560,8 @@ function Features({ onStart }: { onStart: () => void }) {
       <div className="mx-auto max-w-7xl">
         <SectionTitle
           eyebrow="Tính năng chính"
-          title="Một nền tảng cho toàn bộ quy trình speech-to-text"
-          desc="Từ nguồn âm thanh đến transcript, bản dịch và file xuất ra, mọi thao tác được gom trong cùng trải nghiệm Vbee."
+          title="Một nền tảng cho toàn bộ quy trình chuyển giọng nói thành văn bản"
+          desc="Từ nguồn âm thanh đến văn bản, bản dịch và tệp xuất ra, mọi thao tác được gom trong cùng trải nghiệm Vbee."
         />
         <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {features.map((item) => (
@@ -612,20 +600,20 @@ function WorkspacePreview({ onStart }: { onStart: () => void }) {
       <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-[#fff7c2] px-4 py-2 text-xs font-black uppercase tracking-wide text-[#725a00]">
-            <Sparkles className="h-4 w-4 text-[#ffcb05]" /> Vbee workspace
+            <Sparkles className="h-4 w-4 text-[#ffcb05]" /> Đăng nhập Vbee
           </div>
           <h2 className="mt-4 text-2xl font-black leading-tight text-[#21104a] md:text-3xl">
             Giao diện gọn, rõ và tập trung vào công việc
           </h2>
           <p className="mt-4 max-w-xl text-sm font-semibold leading-7 text-[#6a5a8f]">
-            Người dùng nhìn thấy ngay file đang xử lý, thời lượng còn lại,
-            transcript và các thao tác xuất file cần thiết.
+            Người dùng nhìn thấy ngay tệp đang xử lý, thời lượng còn lại,
+            văn bản và các thao tác xuất tệp cần thiết.
           </p>
           <div className="mt-6 grid gap-3">
             {[
-              "Tổng quan file, trạng thái và quota được đặt ngay trong tầm mắt.",
+              "Tổng quan tệp, trạng thái và thời lượng được đặt ngay trong tầm mắt.",
               "Nút hành động nổi bật giúp người dùng bắt đầu nhanh.",
-              "Các tác vụ dịch, xuất file và quản lý transcript luôn dễ tìm.",
+              "Các tác vụ dịch, xuất tệp và quản lý văn bản luôn dễ tìm.",
             ].map((point) => (
               <div
                 key={point}
@@ -642,9 +630,9 @@ function WorkspacePreview({ onStart }: { onStart: () => void }) {
           <div className="rounded-[1.5rem] bg-white p-5 shadow-[0_10px_40px_rgba(33,16,74,.05)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-black text-[#21104a]">Xử lý file</p>
+                <p className="text-sm font-black text-[#21104a]">Xử lý tệp</p>
                 <p className="mt-1 text-xs font-semibold text-[#756894]">
-                  meeting-audio.mp3 · 32m 16s
+                  cuoc-hop.mp3 · 32 phút 16 giây
                 </p>
               </div>
               <span className="rounded-full bg-[#e8fff2] px-3 py-1 text-xs font-black text-[#147a45]">
@@ -658,7 +646,7 @@ function WorkspacePreview({ onStart }: { onStart: () => void }) {
               {[
                 ["Ngôn ngữ", "Tiếng Việt"],
                 ["Thời gian", "~4 phút"],
-                ["Xuất file", "DOCX/SRT"],
+                ["Xuất tệp", "DOCX/SRT"],
               ].map(([label, value]) => (
                 <div
                   key={label}
@@ -678,7 +666,7 @@ function WorkspacePreview({ onStart }: { onStart: () => void }) {
             onClick={onStart}
             className="mt-4 w-full rounded-full bg-[#21104a] px-4 py-3 text-sm font-black text-white transition hover:bg-[#30116b]"
           >
-            Mở workspace
+            Đăng nhập
           </button>
         </div>
       </div>
@@ -693,8 +681,8 @@ function Workflow({ onStart }: { onStart: () => void }) {
         <SectionTitle
           dark
           eyebrow="Luồng khách hàng"
-          title="Đi từ đăng nhập đến transcript trong 4 bước"
-          desc="Luôn giữ người dùng biết mình đang ở đâu, còn bao nhiêu quota và bước tiếp theo là gì."
+          title="Đi từ đăng nhập đến văn bản trong 4 bước"
+          desc="Luôn giúp người dùng biết mình đang ở đâu, còn bao nhiêu thời lượng và bước tiếp theo là gì."
         />
         <div className="mt-10 grid gap-4 md:grid-cols-4">
           {workflow.map((step, index) => (
@@ -826,11 +814,11 @@ function FinalCta({ onStart }: { onStart: () => void }) {
               <Globe2 className="h-4 w-4" /> Bắt đầu sử dụng
             </div>
             <h2 className="mt-5 text-2xl font-black leading-tight md:text-3xl">
-              Vào workspace để thử upload, ghi âm và lịch sử transcript.
+              Đăng nhập để thử tải tệp, ghi âm và xem lịch sử văn bản.
             </h2>
             <p className="mt-4 max-w-2xl text-sm font-semibold leading-7 text-white/70">
-              Đăng nhập để tải file, ghi âm, nói realtime và quản lý mọi
-              transcript trong workspace Vbee.
+              Đăng nhập để tải tệp, ghi âm, dùng Realtime và quản lý mọi văn
+              bản sau khi đăng nhập.
             </p>
           </div>
         </div>
@@ -838,7 +826,7 @@ function FinalCta({ onStart }: { onStart: () => void }) {
           <div className="rounded-[1.5rem] border border-[#e5e0f0] bg-[#f7f5ff] p-5 md:p-6">
             <h3 className="text-xl font-black">Bắt đầu chuyển đổi</h3>
             <p className="mt-2 text-sm font-semibold leading-6 text-[#6a5a8f]">
-              Dùng tài khoản hiện tại hoặc đăng nhập để vào workspace.
+              Dùng tài khoản hiện tại hoặc đăng nhập để tiếp tục.
             </p>
             <button
               onClick={onStart}
@@ -864,20 +852,14 @@ function Footer() {
             className="h-14 w-auto rounded-xl bg-white p-2"
           />
           <p className="mt-4 max-w-sm text-sm font-semibold leading-7 text-white/65">
-            Vbee AI Speech Workspace tập trung vào chuyển giọng nói thành văn bản, realtime,
-            transcript, quota và gói cước trong một giao diện thống nhất.
+            Không gian giọng nói Vbee AI tập trung vào chuyển giọng nói thành văn
+            bản, Realtime, thời lượng và gói cước trong một giao diện thống nhất.
           </p>
         </div>
         {[
           ["Sản phẩm", ["Tải tệp lên", "Ghi âm", "Realtime", "Lịch sử"]],
-          ["Hệ thống", ["API", "Quota", "Thanh toán", "Hỗ trợ"]],
+          ["Hệ thống", ["API", "Thời lượng", "Thanh toán", "Hỗ trợ"]],
           ["Liên hệ", ["contact@vbee.ai", "(+84) 249 999 3399", "Hà Nội, Việt Nam"]],
-          ["Sản phẩm", ["Upload", "Ghi âm", "Realtime", "History"]],
-          ["Hệ thống", ["API", "Quota", "Billing", "Support"]],
-          [
-            "Liên hệ",
-            ["contact@vbee.ai", "(+84) 249 999 3399", "Hà Nội, Việt Nam"],
-          ],
         ].map(([title, links]) => (
           <div key={String(title)}>
             <h3 className="text-sm font-black text-[#ffcb05]">{title}</h3>
@@ -890,7 +872,7 @@ function Footer() {
         ))}
       </div>
       <div className="mx-auto mt-8 max-w-7xl border-t border-white/12 pt-5 text-sm font-semibold text-white/45">
-        © 2026 Vbee AI Speech Workspace. Điều khoản dịch vụ · Chính sách bảo
+        © 2026 Không gian giọng nói Vbee AI. Điều khoản dịch vụ · Chính sách bảo
         mật.
       </div>
     </footer>

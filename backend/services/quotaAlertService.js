@@ -3,6 +3,7 @@ const {
   hasSmtpConfig,
   sendQuotaAdminAlertEmail,
 } = require("./emailService");
+const { getAdminSettings } = require("./adminSettingsService");
 
 const ACTIVE_STATUSES = ["open", "acknowledged"];
 const LEVEL_CONFIG = {
@@ -268,6 +269,10 @@ async function claimNextEmailAlert() {
 }
 
 async function dispatchPendingQuotaAlertEmails({ limit = 10 } = {}) {
+  const settings = await getAdminSettings();
+  if (!settings.notification_config.usage_alert_email) {
+    return { sent: 0, skipped: true };
+  }
   const recipients = getAdminAlertRecipients();
   if (!hasSmtpConfig() || recipients.length === 0) {
     return { sent: 0, skipped: true };

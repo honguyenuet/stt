@@ -58,7 +58,7 @@ function AdminJobsPage() {
       void listTranscriptionJobs({ page, limit: 5, search, status, language })
         .then(setRows)
         .catch((err) =>
-          setError(err instanceof Error ? err.message : "Không tải được jobs"),
+          setError(err instanceof Error ? err.message : "Không tải được tác vụ"),
         )
         .finally(() => {
           if (showLoading) setLoading(false);
@@ -106,8 +106,8 @@ function AdminJobsPage() {
     <div className="space-y-5">
       <AdminPanel>
         <AdminPanelHeader
-          title="Job chuyển giọng nói"
-          description="Tìm theo job_id, tên tệp hoặc email người dùng."
+          title="Tác vụ chuyển giọng nói"
+          description="Tìm theo mã tác vụ, tên tệp hoặc thư điện tử người dùng."
         />
         <div className="grid gap-3 p-4 md:grid-cols-4">
           <input
@@ -116,7 +116,7 @@ function AdminJobsPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Tìm job, tệp hoặc email"
+            placeholder="Tìm tác vụ, tệp hoặc thư điện tử"
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
           />
           <select
@@ -165,7 +165,7 @@ function AdminJobsPage() {
               <thead className="bg-[#fbf8ef] text-xs uppercase text-[#756894]">
                 <tr>
                   {[
-                    "Job ID",
+                    "Mã tác vụ",
                     "Người dùng",
                     "Tệp",
                     "Ngôn ngữ",
@@ -245,7 +245,7 @@ function AdminJobsPage() {
       {selected && (
         <AdminPanel>
           <AdminPanelHeader
-            title={`Chi tiết job: ${selected.job_id}`}
+            title={`Chi tiết tác vụ: ${selected.job_id}`}
             action={
               <button
                 onClick={() => setSelected(null)}
@@ -258,7 +258,7 @@ function AdminJobsPage() {
           <div className="grid gap-5 p-4 xl:grid-cols-2">
             <div className="space-y-2 text-sm">
               <p>
-                <b>File:</b> {selected.file_name}
+                <b>Tệp:</b> {selected.file_name}
               </p>
               <p>
                 <b>Người dùng:</b> {selected.user_name} ({selected.user_email})
@@ -310,18 +310,18 @@ function AdminJobsPage() {
                 </span>
               </div>
               <pre className="max-h-64 overflow-auto rounded-md bg-[#fbf8ef] p-3 text-xs">
-                {selected.transcript || "Chưa có kết quả transcript."}
+                {selected.transcript || "Chưa có kết quả văn bản."}
               </pre>
             </div>
             <div className="space-y-3">
               <button
                 onClick={() => {
                   void navigator.clipboard?.writeText(selected.job_id);
-                  toast.success("Đã copy job ID");
+                  toast.success("Đã sao chép mã tác vụ");
                 }}
                 className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-bold"
               >
-                <Copy className="h-4 w-4" /> Sao chép job ID
+                <Copy className="h-4 w-4" /> Sao chép mã tác vụ
               </button>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -329,12 +329,12 @@ function AdminJobsPage() {
                   onClick={() =>
                     void mutate(
                       () => retryTranscriptionJob(selected.job_id),
-                      "Đã đưa job vào hàng chờ",
+                      "Đã đưa tác vụ vào hàng chờ",
                     )
                   }
                   className="rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
                 >
-                  Chạy lại job lỗi
+                  Chạy lại tác vụ lỗi
                 </button>
                 <button
                   disabled={
@@ -345,17 +345,17 @@ function AdminJobsPage() {
                   onClick={() =>
                     void mutate(
                       () => cancelTranscriptionJob(selected.job_id),
-                      "Đã hủy job",
+                      "Đã hủy tác vụ",
                     )
                   }
                   className="rounded-md border border-red-200 px-3 py-2 text-sm font-black text-red-700 disabled:opacity-40"
                 >
-                  Hủy job
+                  Hủy tác vụ
                 </button>
               </div>
               <p className="text-sm text-[#756894]">
-                Không cho chạy lại job đã hoàn tất. Chỉ có thể hủy job đang
-                chờ/đang xử lý nếu backend hỗ trợ.
+                Không cho chạy lại tác vụ đã hoàn tất. Chỉ có thể hủy tác vụ
+                đang chờ hoặc đang xử lý nếu máy chủ hỗ trợ.
               </p>
             </div>
           </div>

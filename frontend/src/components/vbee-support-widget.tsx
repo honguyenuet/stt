@@ -36,31 +36,31 @@ const HELP_QUESTIONS = [
   {
     title: "Không tải tệp lên được",
     answer:
-      "Kiểm tra định dạng file, dung lượng tối đa theo gói và thời lượng còn lại. Nếu file quá dài, hãy cắt file hoặc nâng cấp gói.",
+      "Kiểm tra định dạng tệp, dung lượng tối đa theo gói và thời lượng còn lại. Nếu tệp quá dài, hãy cắt tệp hoặc nâng cấp gói.",
     icon: UploadCloud,
   },
   {
     title: "Không ghi âm được",
     answer:
-      "Hãy cấp quyền microphone cho trình duyệt, đóng ứng dụng đang dùng mic và thử tải lại trang ghi âm.",
+      "Hãy cấp quyền micrô cho trình duyệt, đóng ứng dụng đang dùng micrô và thử tải lại trang ghi âm.",
     icon: Mic,
   },
   {
     title: "Lỗi API nhà cung cấp 401",
     answer:
-      "API key của nhà cung cấp không hợp lệ hoặc hết quyền. Kiểm tra file .env backend rồi khởi động lại server.",
+      "Khóa API của nhà cung cấp không hợp lệ hoặc hết quyền. Kiểm tra tệp .env của máy chủ rồi khởi động lại máy chủ.",
     icon: AlertTriangle,
   },
   {
     title: "Mua gói nhưng chưa được cộng thời gian",
     answer:
-      "Vào trang checkout kiểm tra trạng thái đơn hàng. Nếu đã thanh toán, gửi yêu cầu kèm email và mã đơn hàng.",
+      "Vào trang thanh toán để kiểm tra trạng thái đơn hàng. Nếu đã thanh toán, gửi yêu cầu kèm thư điện tử và mã đơn hàng.",
     icon: Wallet,
   },
   {
-    title: "Không xuất được transcript",
+    title: "Không xuất được văn bản",
     answer:
-      "Bạn cần xử lý xong transcript trước khi tải TXT/DOCX/SRT. Nếu transcript rỗng, hãy thử chuyển giọng nói lại cho tệp.",
+      "Bạn cần xử lý xong văn bản trước khi tải TXT/DOCX/SRT. Nếu văn bản rỗng, hãy thử chuyển giọng nói lại cho tệp.",
     icon: MessageCircle,
   },
 ];
@@ -68,8 +68,8 @@ const HELP_QUESTIONS = [
 const CATEGORY_OPTIONS = [
   { value: "upload", label: "Tải tệp lên" },
   { value: "record", label: "Ghi âm" },
-  { value: "realtime", label: "Nói realtime" },
-  { value: "quota", label: "Quota / gói cước" },
+  { value: "realtime", label: "Realtime" },
+  { value: "quota", label: "Thời lượng / gói cước" },
   { value: "payment", label: "Thanh toán" },
   { value: "api", label: "API nhà cung cấp" },
   { value: "general", label: "Khác" },
@@ -250,7 +250,7 @@ export function VbeeSupportWidget() {
       return;
     }
     if (!user && !email.trim()) {
-      setError("Vui lòng nhập email để Vbee liên hệ lại");
+      setError("Vui lòng nhập thư điện tử để Vbee liên hệ lại");
       return;
     }
 
@@ -504,7 +504,7 @@ function SupportHome({
         <div className="rounded-xl bg-[#21104a] p-4 text-white">
           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-[#ffcb05]">
             <Clock3 className="h-4 w-4" />
-            Quota hiện tại
+            Thời lượng hiện tại
           </div>
           {quota ? (
             <>
@@ -573,7 +573,7 @@ function SupportMessages({
             <Inbox className="h-10 w-10 text-[#756894]" />
             <h3 className="mt-5 text-xl font-black">Bạn chưa đăng nhập</h3>
             <p className="mt-2 text-sm font-semibold leading-6 text-[#756894]">
-              Bạn vẫn có thể gửi hỗ trợ bằng email, nhưng cần đăng nhập để xem
+              Bạn vẫn có thể gửi hỗ trợ bằng thư điện tử, nhưng cần đăng nhập để xem
               lại lịch sử yêu cầu.
             </p>
             <button
@@ -627,7 +627,7 @@ function SupportMessages({
                           {unreadCount > 99 ? "99+" : unreadCount}
                         </span>
                       )}
-                      <span className="rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
+                      <span className="inline-flex whitespace-nowrap rounded-full bg-[#fff8cf] px-3 py-1 text-xs font-black text-[#21104a]">
                         {statusLabel(ticket.status)}
                       </span>
                     </div>
@@ -797,13 +797,13 @@ function SupportChatView({
       <div className="space-y-4 px-4 py-4">
         <p className="text-sm font-semibold leading-6 text-[#62557b]">
           Mô tả vấn đề bạn đang gặp. Vbee sẽ lưu yêu cầu kèm trang hiện tại,
-          email và gói sử dụng để hỗ trợ nhanh hơn.
+          thư điện tử và gói sử dụng để hỗ trợ nhanh hơn.
         </p>
 
         {!userEmail && (
           <label className="block">
             <span className="text-xs font-black uppercase text-[#756894]">
-              Email liên hệ
+              Thư điện tử liên hệ
             </span>
             <input
               value={email}
@@ -885,7 +885,7 @@ function SupportHelp({
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Tìm lỗi tải tệp, quota, API..."
+            placeholder="Tìm lỗi tải tệp, thời lượng, API..."
             className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-[#9b94a8]"
           />
         </div>

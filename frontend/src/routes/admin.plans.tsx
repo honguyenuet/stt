@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -63,7 +64,7 @@ function AdminPlansPage() {
         <AdminPanel>
           <AdminPanelHeader
             title="Quản lý gói dịch vụ"
-            description="Cấu hình quota, giá, giới hạn upload và trạng thái gói."
+            description="Cấu hình thời lượng, giá, giới hạn tải lên và trạng thái gói."
           />
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">
@@ -72,7 +73,7 @@ function AdminPlansPage() {
                   {[
                     "Mã",
                     "Tên",
-                    "Quota",
+                    "Thời lượng",
                     "Giá",
                     "Tải lên",
                     "Thời lượng",
@@ -111,10 +112,13 @@ function AdminPlansPage() {
                     </td>
                     <td className="px-4 py-3">
                       <button
+                        type="button"
                         onClick={() => setSelected(plan)}
-                        className="font-black underline"
+                        aria-label={`Sửa gói ${plan.name}`}
+                        title={`Sửa gói ${plan.name}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[#21104a] transition hover:bg-[#f3ead5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Sửa
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>
@@ -144,7 +148,7 @@ function AdminPlansPage() {
                 disabled={!canEdit}
               />
               <NumberInput
-                label="Quota phút"
+                label="Thời lượng (phút)"
                 value={selected.quota_minutes}
                 onChange={(value) =>
                   setSelected({ ...selected, quota_minutes: value })

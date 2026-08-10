@@ -1,4 +1,5 @@
 import {
+  adminRequest,
   adminPublicRequest,
   clearAdminSession,
   getAdminSession,
@@ -18,13 +19,20 @@ export async function loginAdmin(email: string, password: string) {
   return session;
 }
 
-export async function exchangeCurrentSessionForAdmin(authToken: string) {
-  const session = await adminPublicRequest<AdminSession>("/api/admin/auth/sso", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
+export async function exchangeAdminSession(authToken: string) {
+  const session = await adminPublicRequest<AdminSession>(
+    "/api/admin/auth/exchange",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+    },
+  );
   saveAdminSession(session);
   return session;
+}
+
+export async function validateAdminSession() {
+  return adminRequest<{ user: AdminSession["user"] }>("/api/admin/auth/me");
 }
 
 export function logoutAdmin() {
@@ -36,17 +44,17 @@ export function readAdminSession() {
 }
 
 export function canMutate(role: AdminRole) {
-  return role === "admin";
+  return role === "admin" || role === "super_admin";
 }
 
 export function canManageSettings(role: AdminRole) {
-  return role === "admin";
+  return role === "super_admin";
 }
 
 export function canReplySupport(role: AdminRole) {
-  return role === "admin" || role === "support";
+  return role === "admin" || role === "super_admin" || role === "support";
 }
 
 export function canUpdateSupportStatus(role: AdminRole) {
-  return role === "admin";
+  return role === "admin" || role === "super_admin";
 }

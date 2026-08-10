@@ -1,7 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ShieldCheck } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
-import { loginAdmin, readAdminSession } from "@/lib/admin/admin-auth";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useAuth } from "@/context/AuthContext";
+import {
+  exchangeAdminSession,
+  loginAdmin,
+  readAdminSession,
+  validateAdminSession,
+} from "@/lib/admin/admin-auth";
 
 export const Route = createFileRoute("/admin/login")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -13,14 +19,53 @@ export const Route = createFileRoute("/admin/login")({
 function AdminLoginPage() {
   const navigate = useNavigate();
   const { from } = Route.useSearch();
+  const { user, token, isLoading: authLoading } = useAuth();
+  const exchangeAttempted = useRef("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
-    if (readAdminSession()) void navigate({ to: from || "/admin" });
-  }, [from, navigate]);
+    let active = true;
+    async function restoreSession() {
+      const current = readAdminSession();
+      if (current) {
+        try {
+          await validateAdminSession();
+          if (active) void navigate({ to: from || "/admin" });
+          return;
+        } catch {
+          // The API client clears an invalid or expired CMS session.
+        }
+      }
+      if (authLoading) return;
+      if (!token || exchangeAttempted.current === token) {
+        if (active) setCheckingSession(false);
+        return;
+      }
+      exchangeAttempted.current = token;
+      try {
+        await exchangeAdminSession(token);
+        if (active) void navigate({ to: from || "/admin" });
+      } catch (err) {
+        if (active && user) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Tài khoản chưa được cấp quyền truy cập CMS",
+          );
+        }
+      } finally {
+        if (active) setCheckingSession(false);
+      }
+    }
+    void restoreSession();
+    return () => {
+      active = false;
+    };
+  }, [authLoading, from, navigate, token, user]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -30,7 +75,9 @@ function AdminLoginPage() {
       await loginAdmin(email, password);
       void navigate({ to: from || "/admin" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Đăng nhập admin thất bại");
+      setError(
+        err instanceof Error ? err.message : "Đăng nhập quản trị thất bại",
+      );
     } finally {
       setLoading(false);
     }
@@ -55,7 +102,7 @@ function AdminLoginPage() {
           className="space-y-4"
         >
           <label className="block text-sm font-bold">
-            Email
+              Thư điện tử
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -81,13 +128,24 @@ function AdminLoginPage() {
             disabled={loading}
             className="w-full rounded-md bg-[#21104a] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
           >
-            {loading ? "Đang đăng nhập..." : "Đăng nhập admin"}
+            {loading ? "Đang đăng nhập..." : "Đăng nhập quản trị"}
           </button>
         </form>
         <div className="mt-5 rounded-md bg-[#fbf8ef] p-3 text-xs leading-5 text-[#756894]">
-          Sử dụng tài khoản đã được cấp quyền quản trị. Hệ thống không tạo
-          email hoặc mật khẩu admin mặc định.
+          {checkingSession
+            ? "Đang kiểm tra phiên đăng nhập Vbee..."
+            : user
+              ? `Đang đăng nhập Vbee bằng ${user.email}. CMS chỉ mở khi tài khoản này đã được cấp quyền quản trị.`
+              : "Dùng tài khoản Vbee đã được cấp quyền quản trị. Bạn cũng có thể đăng nhập Vbee trước rồi mở lại CMS."}
         </div>
+        {!authLoading && !user && (
+          <a
+            href={`/login?from=${encodeURIComponent(from || "/admin")}`}
+            className="mt-3 inline-flex text-sm font-bold text-[#21104a] underline underline-offset-4"
+          >
+            Đăng nhập tài khoản Vbee
+          </a>
+        )}
       </div>
     </div>
   );

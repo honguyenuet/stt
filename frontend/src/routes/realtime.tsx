@@ -179,7 +179,7 @@ function RealtimePage() {
     setTranslationError("");
 
     if (quota?.isLimitReached) {
-      setError("Bạn đã hết quota. Hãy nâng cấp gói để dùng realtime tiếp.");
+      setError("Bạn đã hết thời lượng. Hãy nâng cấp gói để tiếp tục dùng Realtime.");
       return;
     }
     if (!token) {
@@ -190,7 +190,7 @@ function RealtimePage() {
     const SpeechRecognitionApi = getSpeechRecognition();
     if (!SpeechRecognitionApi) {
       setError(
-        "Trình duyệt này chưa hỗ trợ nói realtime. Hãy dùng Chrome hoặc Edge mới nhất.",
+        "Trình duyệt này chưa hỗ trợ Realtime. Hãy dùng Chrome hoặc Edge mới nhất.",
       );
       return;
     }
@@ -314,7 +314,7 @@ function RealtimePage() {
   function downloadTxt() {
     const content = translation?.text
       ? [
-          "Transcript gốc",
+          "Văn bản gốc",
           "",
           transcript,
           "",
@@ -335,7 +335,7 @@ function RealtimePage() {
   async function saveTranscript() {
     const text = transcript.trim();
     if (!text || !token) {
-      setError("Chưa có transcript để lưu.");
+      setError("Chưa có văn bản để lưu.");
       return;
     }
     if (!realtimeSessionRef.current) {
@@ -370,7 +370,7 @@ function RealtimePage() {
       };
       if (!res.ok) {
         if (data.quota) setQuota(data.quota);
-        setError(data.error ?? "Không lưu được realtime transcript.");
+        setError(data.error ?? "Không lưu được văn bản Realtime.");
         return;
       }
       setSavedId(data.id ?? null);
@@ -380,7 +380,7 @@ function RealtimePage() {
       if (data.quota) setQuota(data.quota);
       setQuotaRefreshKey((value) => value + 1);
     } catch {
-      setError("Không kết nối được backend để lưu transcript realtime.");
+      setError("Không kết nối được máy chủ để lưu văn bản Realtime.");
     } finally {
       setSaving(false);
     }
@@ -406,14 +406,14 @@ function RealtimePage() {
           <div>
             <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-primary">
               <Radio className="h-3.5 w-3.5" />
-              V2 realtime
+              Realtime phiên bản 2
             </div>
             <h1 className="text-2xl font-black tracking-tight md:text-3xl">
-              Nói realtime
+              Realtime
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Nói vào microphone, chữ sẽ hiện gần realtime. Khi hoàn tất, bấm
-              lưu để đưa transcript vào lịch sử và trừ quota theo thời gian nói.
+              Nói vào micrô, chữ sẽ hiện gần như tức thì. Khi hoàn tất, bấm lưu
+              để đưa văn bản vào lịch sử và trừ thời lượng theo thời gian nói.
             </p>
           </div>
           <Link
@@ -425,7 +425,7 @@ function RealtimePage() {
           </Link>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <section className="rounded-lg border border-border bg-white p-4 shadow-soft">
             <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -489,7 +489,10 @@ function RealtimePage() {
 
             <div className="mt-4 min-h-[260px] rounded-lg border border-border bg-[#fbf8ef] p-4">
               {liveText ? (
-                <p className="whitespace-pre-wrap text-base leading-8">
+                <p
+                  data-typography="content"
+                  className="whitespace-pre-wrap text-base leading-8"
+                >
                   {transcript}
                   {interim && (
                     <span className="text-muted-foreground"> {interim}</span>
@@ -499,11 +502,11 @@ function RealtimePage() {
                 <div className="flex min-h-[220px] flex-col items-center justify-center text-center">
                   <Sparkles className="h-12 w-12 text-primary/60" />
                   <h2 className="mt-4 text-xl font-black">
-                    Bấm “Bắt đầu nói” để tạo transcript realtime
+                    Bấm “Bắt đầu nói” để tạo văn bản Realtime
                   </h2>
                   <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                    Trình duyệt sẽ xin quyền microphone. Nếu không thấy chữ,
-                    hãy kiểm tra quyền microphone hoặc đổi sang Chrome/Edge.
+                    Trình duyệt sẽ xin quyền micrô. Nếu không thấy chữ, hãy kiểm
+                    tra quyền micrô hoặc đổi sang Chrome/Edge.
                   </p>
                 </div>
               )}
@@ -522,7 +525,7 @@ function RealtimePage() {
 
             {translationError && (
               <div className="mt-5 rounded-xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
-                Transcript đã lưu, nhưng chưa dịch được: {translationError}
+                Văn bản đã lưu, nhưng chưa dịch được: {translationError}
               </div>
             )}
 
@@ -545,7 +548,7 @@ function RealtimePage() {
                 className="inline-flex items-center justify-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm font-black transition hover:border-primary/50 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                {copied ? "Đã copy" : "Copy"}
+                {copied ? "Đã sao chép" : "Sao chép"}
               </button>
               <button
                 onClick={downloadTxt}
@@ -570,7 +573,7 @@ function RealtimePage() {
             </div>
           </section>
 
-          <aside className="space-y-4">
+          <aside className="self-start space-y-4">
             <VbeeAccountUsageCard
               firstName={user.firstName}
               refreshKey={quotaRefreshKey}
@@ -621,7 +624,7 @@ function RealtimePage() {
                 Giới hạn phiên
               </p>
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                Realtime dùng quota theo số giây bạn nói. Còn lại:{" "}
+                Realtime dùng thời lượng theo số giây bạn nói. Còn lại:{" "}
                 <span className="font-black text-foreground">
                   {formatQuotaTime(quota?.remainingSeconds ?? 0)}
                 </span>
@@ -629,7 +632,7 @@ function RealtimePage() {
               </p>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 Lưu ý: bản realtime dùng Web Speech API của trình duyệt ở V2
-                local. Khi production nên nâng cấp thành backend WebSocket proxy
+                cục bộ. Khi vận hành thật nên nâng cấp thành máy chủ trung gian WebSocket
                 tới Deepgram Streaming.
               </p>
             </div>

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { RefreshCw, Send } from "lucide-react";
+import { Eye, RefreshCw, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -286,9 +286,11 @@ function AdminSupportPage() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => openTicket(ticket)}
-                        className="font-black text-[#21104a] underline"
+                        aria-label={`Mở yêu cầu hỗ trợ: ${ticket.subject}`}
+                        title="Mở yêu cầu hỗ trợ"
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Mở
+                        <Eye className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>
@@ -433,7 +435,7 @@ function AdminSupportPage() {
 function SupportStatusBadge({ status }: { status: SupportTicketStatus }) {
   return (
     <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${supportStatusTone[status]}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-black leading-none ${supportStatusTone[status]}`}
     >
       {supportStatusLabel[status]}
     </span>

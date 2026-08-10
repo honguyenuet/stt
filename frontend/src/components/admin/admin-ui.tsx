@@ -18,13 +18,13 @@ import { Toaster } from "@/components/ui/sonner";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
 import { useAuth } from "@/context/AuthContext";
 import {
-  exchangeCurrentSessionForAdmin,
+  exchangeAdminSession,
   logoutAdmin,
   readAdminSession,
+  validateAdminSession,
 } from "@/lib/admin/admin-auth";
 import {
   jobStatusLabel,
-  roleLabel,
   storageStatusLabel,
   userStatusLabel,
 } from "@/lib/admin/formatters";
@@ -38,26 +38,32 @@ import type {
   UserStatus,
 } from "@/lib/admin/types";
 
-type CmsAccessRole = Extract<AdminRole, "admin" | "support">;
+type CmsNavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  roles: readonly string[];
+};
 
-const navItems = [
-  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard, roles: ["admin"] },
-  { to: "/admin/users", label: "Người dùng", icon: Users, roles: ["admin"] },
-  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity, roles: ["admin"] },
-  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio, roles: ["admin"] },
-  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal, roles: ["admin"] },
-  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield, roles: ["admin"] },
-  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge, roles: ["admin"] },
-  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, roles: ["admin"] },
+const adminRoles = ["admin", "super_admin"] as const;
+const navItems: readonly CmsNavItem[] = [
+  { to: "/admin", label: "Tổng quan", icon: LayoutDashboard, roles: adminRoles },
+  { to: "/admin/users", label: "Người dùng", icon: Users, roles: adminRoles },
+  { to: "/admin/jobs", label: "Job chuyển giọng nói", icon: Activity, roles: adminRoles },
+  { to: "/admin/files", label: "Tệp âm thanh", icon: FileAudio, roles: adminRoles },
+  { to: "/admin/plans", label: "Gói dịch vụ", icon: SlidersHorizontal, roles: adminRoles },
+  { to: "/admin/providers", label: "Nhà cung cấp API", icon: Shield, roles: adminRoles },
+  { to: "/admin/usage", label: "Sử dụng & quota", icon: Gauge, roles: adminRoles },
+  { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, roles: adminRoles },
   {
     to: "/admin/support",
     label: "Phản hồi hỗ trợ",
     icon: MessageSquare,
-    roles: ["admin", "support"],
+    roles: ["admin", "super_admin", "support"],
   },
-  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList, roles: ["admin"] },
-  { to: "/admin/settings", label: "Cài đặt", icon: Settings, roles: ["admin"] },
-] as const;
+  { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: ClipboardList, roles: adminRoles },
+  { to: "/admin/settings", label: "Cài đặt", icon: Settings, roles: adminRoles },
+];
 
 export function AdminRouteShell() {
   const location = useLocation();
@@ -78,55 +84,48 @@ function AdminGuard({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AdminSession | null>(() =>
     readAdminSession(),
   );
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-
+    let active = true;
     async function ensureAdminSession() {
       const current = readAdminSession();
-      if (current?.user.role === "user") {
-        logoutAdmin();
-        setSession(null);
-        void navigate({
-          to: "/admin/login",
-          search: { from: window.location.pathname },
-        });
-        return;
-      }
-      if (current) {
-        setSession(current);
-        return;
-      }
-      if (isLoading) return;
-      if (!token) {
-        void navigate({
-          to: "/admin/login",
-          search: { from: window.location.pathname },
-        });
-        return;
-      }
-
       try {
-        const nextSession = await exchangeCurrentSessionForAdmin(token);
-        if (!cancelled) setSession(nextSession);
+        if (current) {
+          const { user } = await validateAdminSession();
+          if (active) setSession({ ...current, user });
+          return;
+        }
+        if (isLoading) return;
+        if (!token) {
+          void navigate({
+            to: "/admin/login",
+            search: { from: window.location.pathname },
+          });
+          return;
+        }
+        const nextSession = await exchangeAdminSession(token);
+        if (active) setSession(nextSession);
       } catch {
-        if (cancelled) return;
+        if (!active) return;
         logoutAdmin();
         setSession(null);
         void navigate({
           to: "/admin/login",
           search: { from: window.location.pathname },
         });
+      } finally {
+        if (active && !isLoading) setChecking(false);
       }
     }
 
     void ensureAdminSession();
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, [isLoading, navigate, token]);
 
-  if (!session) {
+  if (checking || !session) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#f7f4ec] text-[#21104a]">
         <div className="h-9 w-9 animate-spin rounded-full border-2 border-[#ffcb05] border-t-transparent" />
@@ -144,7 +143,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
   const visibleNavItems = useMemo(
     () =>
       navItems.filter((item) =>
-        item.roles.includes((session?.user.role || "support") as CmsAccessRole),
+        item.roles.includes((session?.user.role || "support") as AdminRole),
       ),
     [session?.user.role],
   );
@@ -250,7 +249,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
               <div className="rounded-md border border-[#e4ddcf] bg-[#fbf8ef] px-3 py-2 text-sm">
                 <span className="font-bold">{session?.user.name}</span>
                 <span className="ml-2 text-xs uppercase text-[#756894]">
-                  {session?.user.role ? roleLabel[session.user.role] : ""}
+                  {session?.user.role}
                 </span>
               </div>
               <button
@@ -274,11 +273,6 @@ function AdminLayout({ children }: { children: ReactNode }) {
                 }`}
               >
                 {item.label}
-                {item.to === "/admin/support" && openSupportCount > 0 && (
-                  <span className="ml-2 inline-grid min-h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-black leading-none text-white">
-                    {openSupportCount > 99 ? "99+" : openSupportCount}
-                  </span>
-                )}
               </Link>
             ))}
           </div>
@@ -403,7 +397,7 @@ export function StatusBadge({
         : storageStatusLabel[status as StorageStatus];
   return (
     <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${tone}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-black leading-none ${tone}`}
     >
       {label}
     </span>

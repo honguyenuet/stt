@@ -3,8 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
 const { normalizeFilename } = require("./filenameEncoding");
+const {
+  DEFAULT_SUPPORTED_MEDIA_FORMATS,
+  SAFE_MEDIA_FORMATS,
+} = require("./adminSettingsService");
 
-const MEDIA_EXTENSIONS = /\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i;
+const DEFAULT_MEDIA_FORMATS = DEFAULT_SUPPORTED_MEDIA_FORMATS;
 const STAGING_DIR = path.resolve(
   process.env.UPLOAD_STAGING_DIR || path.join(__dirname, "..", "upload-staging"),
 );
@@ -32,12 +36,25 @@ const storage = multer.diskStorage({
   },
 });
 
-function createMediaUpload(maxSizeMb) {
+function normalizeAllowedFormats(formats) {
+  const values = Array.isArray(formats) ? formats : DEFAULT_MEDIA_FORMATS;
+  const safe = [
+    ...new Set(
+      values
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => SAFE_MEDIA_FORMATS.has(value)),
+    ),
+  ];
+  return new Set(safe.length > 0 ? safe : DEFAULT_MEDIA_FORMATS);
+}
+
+function createMediaUpload(maxSizeMb, maxFiles = 1, supportedFormats = null) {
+  const allowedFormats = normalizeAllowedFormats(supportedFormats);
   return multer({
     storage,
     limits: {
       fileSize: maxSizeMb * 1024 * 1024,
-      files: 1,
+      files: maxFiles,
       fields: 30,
       parts: 40,
       fieldNameSize: 100,
@@ -45,19 +62,40 @@ function createMediaUpload(maxSizeMb) {
     },
     fileFilter: (_req, file, callback) => {
       file.originalname = normalizeFilename(file.originalname);
-      if (MEDIA_EXTENSIONS.test(file.originalname || "")) {
+      const extension = path
+        .extname(file.originalname || "")
+        .slice(1)
+        .toLowerCase();
+      if (allowedFormats.has(extension)) {
         return callback(null, true);
       }
-      return callback(new Error("Định dạng file không được hỗ trợ"));
+      return callback(
+        new Error(
+          `Định dạng file không được hỗ trợ. Cho phép: ${[
+            ...allowedFormats,
+          ].join(", ")}`,
+        ),
+      );
     },
   });
 }
 
-function createPlanAwareMediaUpload(resolveMaxSizeMb, fieldName = "audio") {
+function createPlanAwareMediaUpload(
+  resolveMaxSizeMb,
+  fieldName = "audio",
+  { maxFiles = 1 } = {},
+) {
   return async (req, res, next) => {
     let maxSizeMb;
+    let supportedFormats;
     try {
-      maxSizeMb = Number(await resolveMaxSizeMb(req));
+      const resolved = await resolveMaxSizeMb(req);
+      const uploadPolicy =
+        resolved && typeof resolved === "object"
+          ? resolved
+          : { maxSizeMb: resolved };
+      maxSizeMb = Number(uploadPolicy.maxSizeMb);
+      supportedFormats = uploadPolicy.supportedFormats;
       if (!Number.isFinite(maxSizeMb) || maxSizeMb <= 0) {
         throw new Error("Giới hạn tải file không hợp lệ");
       }
@@ -66,11 +104,25 @@ function createPlanAwareMediaUpload(resolveMaxSizeMb, fieldName = "audio") {
     }
 
     req.mediaUploadLimitMb = maxSizeMb;
-    return createMediaUpload(maxSizeMb).single(fieldName)(req, res, (error) => {
+    const mediaUpload = createMediaUpload(
+      maxSizeMb,
+      maxFiles,
+      supportedFormats,
+    );
+    const middleware =
+      maxFiles > 1
+        ? mediaUpload.array(fieldName, maxFiles)
+        : mediaUpload.single(fieldName);
+    return middleware(req, res, (error) => {
       if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
         return res
           .status(413)
           .json({ error: `File quá lớn (tối đa ${maxSizeMb}MB)` });
+      }
+      if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_COUNT") {
+        return res
+          .status(400)
+          .json({ error: `Chỉ được tải tối đa ${maxFiles} file mỗi lần` });
       }
       if (error) return res.status(400).json({ error: error.message });
       return next();
@@ -82,6 +134,10 @@ async function cleanupStagedFile(file) {
   if (!isInsideStaging(file?.path)) return;
   await fs.promises.unlink(file.path).catch(() => {});
   file.path = null;
+}
+
+async function cleanupStagedFiles(files) {
+  await Promise.all((Array.isArray(files) ? files : []).map(cleanupStagedFile));
 }
 
 async function materializeFileBuffer(file, maxSizeMb) {
@@ -131,8 +187,10 @@ module.exports = {
   STAGING_DIR,
   cleanupExpiredStagingFiles,
   cleanupStagedFile,
+  cleanupStagedFiles,
   createMediaUpload,
   createPlanAwareMediaUpload,
   isInsideStaging,
   materializeFileBuffer,
+  normalizeAllowedFormats,
 };

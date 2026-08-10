@@ -25,26 +25,26 @@ const NAVIGATION = [
     label: "Sản phẩm",
     items: [
       {
-        title: "Tải file",
-        desc: "Audio/video thành văn bản.",
+        title: "Tải tệp",
+        desc: "Âm thanh và nội dung nghe nhìn thành văn bản.",
         href: "/upload",
         icon: UploadCloud,
       },
       {
         title: "Ghi âm",
-        desc: "Thu âm và lưu transcript.",
+        desc: "Thu âm và lưu văn bản.",
         href: "/record",
         icon: Mic2,
       },
       {
-        title: "Nói realtime",
+        title: "Realtime",
         desc: "Chuyển lời nói trực tiếp thành văn bản.",
         href: "/realtime",
         icon: Zap,
       },
       {
         title: "Vbee API",
-        desc: "Tích hợp speech-to-text.",
+        desc: "Tích hợp chuyển giọng nói thành văn bản.",
         href: "/api",
         icon: PlugZap,
       },
@@ -78,18 +78,18 @@ const NAVIGATION = [
     items: [
       {
         title: "Hướng dẫn sử dụng",
-        desc: "Bắt đầu với workspace.",
+        desc: "Bắt đầu bằng cách đăng nhập.",
         href: "/#workflow",
         icon: BookOpen,
       },
       {
         title: "Câu hỏi thường gặp",
-        desc: "Giải đáp về gói cước và quota.",
+        desc: "Giải đáp về gói cước và thời lượng.",
         href: "/pricing#faq",
         icon: CircleHelp,
       },
       {
-        title: "Quản lý transcript",
+        title: "Quản lý văn bản",
         desc: "Lưu trữ và xuất văn bản.",
         href: "/history",
         icon: FileText,
@@ -107,13 +107,13 @@ const NAVIGATION = [
       },
       {
         title: "Đối tác API",
-        desc: "Tích hợp Speech-to-Text vào sản phẩm riêng.",
+        desc: "Tích hợp chuyển giọng nói thành văn bản vào sản phẩm riêng.",
         href: "/api",
         icon: PlugZap,
       },
       {
         title: "Nâng cấp gói",
-        desc: "Chọn quota phù hợp nhu cầu sử dụng.",
+        desc: "Chọn thời lượng phù hợp nhu cầu sử dụng.",
         href: "/pricing",
         icon: CircleDollarSign,
       },
@@ -223,7 +223,7 @@ export function VbeePublicHeader() {
             href={workspaceHref}
             className="rounded-full px-4 py-2 text-[13px] font-black text-[#21104a] transition hover:bg-[#f1eef7]"
           >
-            {user ? "Workspace" : "Đăng nhập"}
+            Đăng nhập
           </a>
           <a
             href={workspaceHref}
@@ -283,7 +283,7 @@ export function VbeePublicHeader() {
               href={workspaceHref}
               className="block rounded-xl bg-[#ffcb05] px-5 py-3 text-center font-black text-[#21104a]"
             >
-              {user ? "Mở workspace" : "Bắt đầu miễn phí"}
+              {user ? "Đăng nhập" : "Bắt đầu miễn phí"}
             </a>
           </div>
         </div>
@@ -296,9 +296,9 @@ const FOOTER_COLUMNS = [
   {
     title: "Sản phẩm",
     links: [
-      ["Tải file lên", "/upload"],
+      ["Tải tệp lên", "/upload"],
       ["Ghi âm", "/record"],
-      ["Nói realtime", "/realtime"],
+      ["Realtime", "/realtime"],
       ["Vbee API", "/api"],
     ],
   },
@@ -328,7 +328,7 @@ export function VbeePublicFooter() {
         <div>
           <VbeeBrandLogo size="compact" className="rounded-lg bg-white p-1.5" />
           <p className="mt-4 max-w-sm text-[13px] font-semibold leading-6 text-white/68">
-            Vbee Speech Workspace giúp đội ngũ biến âm thanh, cuộc họp và video
+            Không gian giọng nói Vbee giúp đội ngũ biến âm thanh, cuộc họp và nội dung nghe nhìn
             thành dữ liệu văn bản có thể tìm kiếm, dịch và chia sẻ.
           </p>
         </div>
@@ -352,7 +352,7 @@ export function VbeePublicFooter() {
         ))}
       </div>
       <div className="mx-auto mt-8 flex max-w-7xl flex-col gap-2 border-t border-white/12 pt-5 text-xs font-semibold text-white/45 md:flex-row md:items-center md:justify-between">
-        <p>© 2026 Vbee Speech Workspace. Bảo lưu mọi quyền.</p>
+        <p>© 2026 Không gian giọng nói Vbee. Bảo lưu mọi quyền.</p>
         <div className="flex gap-4">
           <a href="/" className="transition hover:text-white">
             Điều khoản dịch vụ

@@ -21,7 +21,6 @@ const pool = new Pool({
   port: parseInt(process.env.DB_PORT) || 5432,
   database: process.env.DB_NAME || 'golden_voice',
   user: process.env.DB_USER || 'postgres',
-  password: String(process.env.DB_PASSWORD || ''),
   password: process.env.DB_PASSWORD || '',
   ssl: getSslConfig(),
   max: positiveInt(process.env.DB_POOL_MAX, IS_PRODUCTION ? 20 : 10),

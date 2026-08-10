@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Eye } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -15,21 +16,17 @@ import {
   formatMinutes,
   roleLabel,
   userStatusLabel,
-  validateQuotaMinutes,
+  validateQuotaAdjustment,
 } from "@/lib/admin/formatters";
 import {
   adjustUserQuota,
-  deleteUserAccount,
   listUsers,
-  updateUserPlan,
   updateUserRole,
   updateUserStatus,
 } from "@/lib/admin/users-service";
 import type {
-  AdminRole,
   AdminUser,
-  BillingCycle,
-  ManagedUserPlan,
+  AssignableAdminRole,
   PaginatedResponse,
   UserStatus,
 } from "@/lib/admin/types";
@@ -38,37 +35,32 @@ export const Route = createFileRoute("/admin/users")({
   component: AdminUsersPage,
 });
 
-const roles: Array<AdminRole | "all"> = ["all", "admin", "support", "user"];
+const roles: Array<AssignableAdminRole | "all"> = [
+  "all",
+  "super_admin",
+  "admin",
+  "support",
+  "viewer",
+];
 const statuses: Array<UserStatus | "all"> = [
   "all",
   "active",
   "suspended",
   "deleted",
 ];
-const planOptions: Array<{ value: ManagedUserPlan; label: string }> = [
-  { value: "free", label: "Theo lượt" },
-  { value: "standard", label: "Tiêu chuẩn" },
-  { value: "special", label: "Đặc biệt" },
-  { value: "business", label: "Chuyên nghiệp" },
-];
-const billingCycles: Array<{ value: BillingCycle; label: string }> = [
-  { value: "monthly", label: "Tháng" },
-  { value: "yearly", label: "Năm" },
-];
 
 function AdminUsersPage() {
   const session = useAdminSession();
   const [rows, setRows] = useState<PaginatedResponse<AdminUser> | null>(null);
   const [search, setSearch] = useState("");
-  const [role, setRole] = useState<AdminRole | "all">("all");
+  const [role, setRole] = useState<AssignableAdminRole | "all">("all");
   const [status, setStatus] = useState<UserStatus | "all">("all");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AdminUser | null>(null);
-  const [quotaMinutes, setQuotaMinutes] = useState(0);
+  const [quotaDelta, setQuotaDelta] = useState(30);
   const [quotaReason, setQuotaReason] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<ManagedUserPlan>("free");
-  const [billingCycle, setBillingCycle] = useState<BillingCycle>("monthly");
   const [loading, setLoading] = useState(true);
+  const [savingAction, setSavingAction] = useState("");
   const [error, setError] = useState("");
 
   function load() {
@@ -84,14 +76,12 @@ function AdminUsersPage() {
 
   useEffect(load, [page, search, role, status]);
 
-  useEffect(() => {
-    if (!selected) return;
-    setQuotaMinutes(selected.quota_minutes);
-    setSelectedPlan(selected.plan);
-    setBillingCycle("monthly");
-  }, [selected]);
-
-  async function mutate(action: () => Promise<AdminUser>, success: string) {
+  async function mutate(
+    actionKey: string,
+    action: () => Promise<AdminUser>,
+    success: string,
+  ) {
+    setSavingAction(actionKey);
     try {
       const user = await action();
       setSelected(user);
@@ -99,34 +89,28 @@ function AdminUsersPage() {
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Thao tác thất bại");
-    }
-  }
-
-  async function handleDeleteUser() {
-    if (!selected) return;
-    const confirmed = window.confirm(
-      `Xóa tài khoản ${selected.email}? Tài khoản sẽ bị chuyển sang trạng thái đã xóa.`,
-    );
-    if (!confirmed) return;
-    try {
-      await deleteUserAccount(selected.id);
-      setSelected(null);
-      toast.success("Đã xóa tài khoản");
-      load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không xóa được user");
+    } finally {
+      setSavingAction("");
     }
   }
 
   const mayMutate = session ? canMutate(session.user.role) : false;
   const mayChangeRole = session ? canManageSettings(session.user.role) : false;
+  const quotaError = selected
+    ? validateQuotaAdjustment(selected.quota_minutes, quotaDelta)
+    : "";
+  const canSaveQuota =
+    mayMutate &&
+    !savingAction &&
+    !quotaError &&
+    Boolean(quotaReason.trim());
 
   return (
     <div className="space-y-5">
       <AdminPanel>
         <AdminPanelHeader
           title="Quản lý người dùng"
-          description="Tìm kiếm, lọc, phân trang và quản trị quota/vai trò người dùng."
+          description="Tìm kiếm, lọc, phân trang và quản trị thời lượng/vai trò người dùng."
         />
         <div className="grid gap-3 p-4 md:grid-cols-4">
           <input
@@ -135,13 +119,13 @@ function AdminUsersPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Tìm tên hoặc email"
+            placeholder="Tìm tên hoặc thư điện tử"
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
           />
           <select
             value={role}
             onChange={(e) => {
-              setRole(e.target.value as AdminRole | "all");
+              setRole(e.target.value as AssignableAdminRole | "all");
               setPage(1);
             }}
             className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
@@ -185,11 +169,10 @@ function AdminUsersPage() {
                 <tr>
                   {[
                     "Tên",
-                    "Email",
+                    "Thư điện tử",
                     "Vai trò",
-                    "Gói",
                     "Trạng thái",
-                    "Quota",
+                    "Thời lượng",
                     "Đã dùng",
                     "Ngày tạo",
                     "Đăng nhập gần nhất",
@@ -208,10 +191,6 @@ function AdminUsersPage() {
                     <td className="px-4 py-3">{user.email}</td>
                     <td className="px-4 py-3">{roleLabel[user.role]}</td>
                     <td className="px-4 py-3">
-                      {planOptions.find((item) => item.value === user.plan)
-                        ?.label ?? user.plan}
-                    </td>
-                    <td className="px-4 py-3">
                       <StatusBadge status={user.status} />
                     </td>
                     <td className="px-4 py-3">
@@ -229,9 +208,11 @@ function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => setSelected(user)}
-                        className="font-black text-[#21104a] underline"
+                        aria-label={`Xem chi tiết ${user.name}`}
+                        title={`Xem chi tiết ${user.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
                       >
-                        Chi tiết
+                        <Eye className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </td>
                   </tr>
@@ -265,28 +246,20 @@ function AdminUsersPage() {
           <div className="grid gap-5 p-4 xl:grid-cols-3">
             <div className="space-y-2 text-sm">
               <p>
-                <b>Email:</b> {selected.email}
+                <b>Thư điện tử:</b> {selected.email}
               </p>
               <p>
                 <b>Trạng thái:</b> <StatusBadge status={selected.status} />
               </p>
               <p>
-                <b>Gói:</b>{" "}
-                {planOptions.find((item) => item.value === selected.plan)
-                  ?.label ?? selected.plan}
-              </p>
-              <p>
-                <b>Hết hạn gói:</b> {formatDateTime(selected.plan_expires_at)}
-              </p>
-              <p>
-                <b>Quota:</b> {formatMinutes(selected.quota_minutes)}
+                <b>Thời lượng:</b> {formatMinutes(selected.quota_minutes)}
               </p>
               <p>
                 <b>Đã dùng:</b> {formatMinutes(selected.used_minutes)}
               </p>
               <p className="text-[#756894]">
-                Tệp và job chuyển giọng nói của người dùng được tổng hợp từ
-                backend admin API.
+                Tệp và tác vụ chuyển giọng nói của người dùng được tổng hợp từ
+                API quản trị máy chủ.
               </p>
             </div>
             <div className="space-y-3">
@@ -294,8 +267,14 @@ function AdminUsersPage() {
               <div className="flex gap-2">
                 <button
                   disabled={!mayMutate || selected.status === "active"}
+                  title={
+                    selected.status === "active"
+                      ? "Tài khoản đang hoạt động"
+                      : "Mở lại quyền truy cập của tài khoản"
+                  }
                   onClick={() =>
                     void mutate(
+                      "status",
                       () => updateUserStatus(selected.id, "active"),
                       "Đã mở khóa user",
                     )
@@ -306,8 +285,14 @@ function AdminUsersPage() {
                 </button>
                 <button
                   disabled={!mayMutate || selected.status === "suspended"}
+                  title={
+                    selected.status === "suspended"
+                      ? "Tài khoản đã bị khóa"
+                      : "Khóa quyền truy cập của tài khoản"
+                  }
                   onClick={() =>
                     void mutate(
+                      "status",
                       () => updateUserStatus(selected.id, "suspended"),
                       "Đã khóa user",
                     )
@@ -319,80 +304,36 @@ function AdminUsersPage() {
               </div>
               <h3 className="font-black">Vai trò</h3>
               <select
-                disabled={!mayChangeRole}
+                disabled={!mayChangeRole || Boolean(savingAction)}
                 value={selected.role}
                 onChange={(e) =>
                   void mutate(
+                    "role",
                     () =>
-                      updateUserRole(selected.id, e.target.value as AdminRole),
+                      updateUserRole(
+                        selected.id,
+                        e.target.value as AssignableAdminRole,
+                      ),
                     "Đã cập nhật role",
                   )
                 }
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
               >
-                <option value="admin">Quản trị viên</option>
+                <option value="viewer">Chỉ xem</option>
                 <option value="support">Hỗ trợ viên</option>
-                <option value="user">Người dùng</option>
+                <option value="admin">Quản trị viên</option>
+                <option value="super_admin">Quản trị cao nhất</option>
               </select>
-              <button
-                disabled={!mayMutate || selected.status === "deleted"}
-                onClick={() => void handleDeleteUser()}
-                className="w-full rounded-md border border-red-200 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-40"
-              >
-                Xóa tài khoản
-              </button>
+              <p className="text-xs text-[#756894]">
+                Vai trò được lưu ngay sau khi bạn chọn.
+              </p>
             </div>
             <div className="space-y-3">
-              <h3 className="font-black">Gói người dùng</h3>
-              <select
-                value={selectedPlan}
-                onChange={(e) =>
-                  setSelectedPlan(e.target.value as ManagedUserPlan)
-                }
-                className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
-              >
-                {planOptions.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                disabled={selectedPlan === "free"}
-                value={billingCycle}
-                onChange={(e) => setBillingCycle(e.target.value as BillingCycle)}
-                className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
-              >
-                {billingCycles.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={!mayMutate}
-                onClick={() =>
-                  void mutate(
-                    () =>
-                      updateUserPlan(
-                        selected.id,
-                        selectedPlan,
-                        selectedPlan === "free" ? "monthly" : billingCycle,
-                      ),
-                    "Đã cập nhật gói",
-                  )
-                }
-                className="w-full rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
-              >
-                Lưu gói
-              </button>
-
-              <h3 className="pt-2 font-black">Đặt quota</h3>
+              <h3 className="font-black">Điều chỉnh thời lượng</h3>
               <input
                 type="number"
-                min={0}
-                value={quotaMinutes}
-                onChange={(e) => setQuotaMinutes(Number(e.target.value))}
+                value={quotaDelta}
+                onChange={(e) => setQuotaDelta(Number(e.target.value))}
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
               <input
@@ -401,23 +342,28 @@ function AdminUsersPage() {
                 placeholder="Lý do điều chỉnh"
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
-              {validateQuotaMinutes(quotaMinutes) && (
+              {quotaError && (
                 <p className="text-sm text-red-700">
-                  {validateQuotaMinutes(quotaMinutes)}
+                  {quotaError}
+                </p>
+              )}
+              {!quotaReason.trim() && (
+                <p className="text-xs text-[#756894]">
+                  Nhập lý do điều chỉnh để bật nút lưu thời lượng.
                 </p>
               )}
               <button
-                disabled={!mayMutate}
+                disabled={!canSaveQuota}
                 onClick={() =>
                   void mutate(
-                    () =>
-                      adjustUserQuota(selected.id, quotaMinutes, quotaReason),
-                    "Đã đặt lại quota",
+                    "quota",
+                    () => adjustUserQuota(selected.id, quotaDelta, quotaReason),
+                    "Đã điều chỉnh thời lượng",
                   )
                 }
                 className="w-full rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
               >
-                Lưu quota
+                {savingAction === "quota" ? "Đang lưu..." : "Lưu thời lượng"}
               </button>
             </div>
           </div>
