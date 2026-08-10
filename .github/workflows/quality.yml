@@ -94,5 +94,8 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Initialize database schema
+        run: npm run db:init
+
       - name: Test
         run: npm test
