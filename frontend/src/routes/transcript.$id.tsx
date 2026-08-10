@@ -1,12 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -184,26 +177,25 @@ export const Route = createFileRoute("/transcript/$id")({
 
 function normalizeWords(value: unknown): TranscriptWord[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const word = item as Partial<TranscriptWord>;
-      const text = String(word.text || "").trim();
-      const start = Number(word.start);
-      const end = Number(word.end);
-      if (!text || !Number.isFinite(start)) return null;
-      return {
-        text,
-        start: Math.max(0, start),
-        end: Number.isFinite(end) ? Math.max(start, end) : start,
-        speaker: word.speaker ?? null,
-        confidence:
-          word.confidence == null || !Number.isFinite(Number(word.confidence))
-            ? null
-            : Number(word.confidence),
-      };
-    })
-    .filter((word): word is TranscriptWord => Boolean(word));
+  return value.reduce<TranscriptWord[]>((words, item) => {
+    if (!item || typeof item !== "object") return words;
+    const word = item as Partial<TranscriptWord>;
+    const text = String(word.text || "").trim();
+    const start = Number(word.start);
+    const end = Number(word.end);
+    if (!text || !Number.isFinite(start)) return words;
+    words.push({
+      text,
+      start: Math.max(0, start),
+      end: Number.isFinite(end) ? Math.max(start, end) : start,
+      speaker: word.speaker ?? null,
+      confidence:
+        word.confidence == null || !Number.isFinite(Number(word.confidence))
+          ? null
+          : Number(word.confidence),
+    });
+    return words;
+  }, []);
 }
 
 function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
@@ -228,8 +220,10 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
       segments.push(current);
     }
 
-    current.words.push({ ...word, index });
-    current.end = Math.max(current.end, word.end);
+    const segment = current;
+    if (!segment) return;
+    segment.words.push({ ...word, index });
+    segment.end = Math.max(segment.end, word.end);
   });
 
   return segments;
@@ -370,10 +364,7 @@ function TranscriptEditorPage() {
       ),
     [words],
   );
-  const confidenceSummary = useMemo(
-    () => summarizeConfidence(words),
-    [words],
-  );
+  const confidenceSummary = useMemo(() => summarizeConfidence(words), [words]);
 
   const resizeEditorTextarea = useCallback(() => {
     const textarea = editorTextareaRef.current;
@@ -448,9 +439,7 @@ function TranscriptEditorPage() {
         | { error?: string };
       if (!response.ok) {
         throw new Error(
-          "error" in body && body.error
-            ? body.error
-            : "Không thể tải văn bản",
+          "error" in body && body.error ? body.error : "Không thể tải văn bản",
         );
       }
       const detail = body as TranscriptDetail;
@@ -524,38 +513,43 @@ function TranscriptEditorPage() {
     }
   }, [activeWordIndex, editorMode]);
 
-  const loadAudio = useCallback(async (playWhenReady = false) => {
-    if (!token || !transcript?.audio_filename || audioLoading) return;
-    playWhenReadyRef.current = playWhenReady;
-    setAudioLoading(true);
-    setAudioError("");
-    try {
-      const response = await fetch(
-        `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        url?: string;
-        error?: string;
-      };
-      if (!response.ok || !body.url) {
-        throw new Error(body.error || "Không tạo được đường dẫn âm thanh");
+  const loadAudio = useCallback(
+    async (playWhenReady = false) => {
+      if (!token || !transcript?.audio_filename || audioLoading) return;
+      playWhenReadyRef.current = playWhenReady;
+      setAudioLoading(true);
+      setAudioError("");
+      try {
+        const response = await fetch(
+          `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          url?: string;
+          error?: string;
+        };
+        if (!response.ok || !body.url) {
+          throw new Error(body.error || "Không tạo được đường dẫn âm thanh");
+        }
+        setAudioUrl(
+          body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
+        );
+      } catch (error) {
+        playWhenReadyRef.current = false;
+        setAudioError(
+          error instanceof Error
+            ? error.message
+            : "Không tải được âm thanh gốc",
+        );
+      } finally {
+        setAudioLoading(false);
       }
-      setAudioUrl(
-        body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
-      );
-    } catch (error) {
-      playWhenReadyRef.current = false;
-      setAudioError(
-        error instanceof Error ? error.message : "Không tải được âm thanh gốc",
-      );
-    } finally {
-      setAudioLoading(false);
-    }
-  }, [audioLoading, token, transcript?.audio_filename, transcript?.id]);
+    },
+    [audioLoading, token, transcript?.audio_filename, transcript?.id],
+  );
 
   const commitTimedWord = useCallback(
     (wordIndex: number, nextText: string) => {
@@ -572,8 +566,7 @@ function TranscriptEditorPage() {
           currentWords,
           wordIndex,
           nextText,
-        ) ??
-        buildTextFromTimedWords(nextWords, transcript?.speaker_names);
+        ) ?? buildTextFromTimedWords(nextWords, transcript?.speaker_names);
 
       wordsRef.current = nextWords;
       setTranscript((current) =>
@@ -739,9 +732,7 @@ function TranscriptEditorPage() {
     } catch (error) {
       setSaveStatus("error");
       setSaveError(
-        error instanceof Error
-          ? error.message
-          : "Không thể cập nhật người nói",
+        error instanceof Error ? error.message : "Không thể cập nhật người nói",
       );
     }
   }
@@ -850,11 +841,7 @@ function TranscriptEditorPage() {
       Number.isFinite(audio.duration) && audio.duration > 0
         ? audio.duration
         : audioDurationSeconds;
-    const nextTime = clampSeekTime(
-      audio.currentTime,
-      deltaSeconds,
-      duration,
-    );
+    const nextTime = clampSeekTime(audio.currentTime, deltaSeconds, duration);
     audio.currentTime = nextTime;
     setPlaybackSeconds(nextTime);
     setActiveWordIndex(findActiveWordIndex(words, nextTime * 1000));
@@ -930,8 +917,7 @@ function TranscriptEditorPage() {
               ...current,
               translated_text: body.translation!.text,
               translation_target_language:
-                body.translation!.targetLanguage ||
-                translationTarget,
+                body.translation!.targetLanguage || translationTarget,
               translation_provider:
                 body.translation!.provider || current.translation_provider,
               translation_error: null,
@@ -940,9 +926,7 @@ function TranscriptEditorPage() {
       );
     } catch (error) {
       setTranslationRetryError(
-        error instanceof Error
-          ? error.message
-          : "Không tạo được bản dịch mới.",
+        error instanceof Error ? error.message : "Không tạo được bản dịch mới.",
       );
     } finally {
       setTranslationRetrying(false);
@@ -1343,11 +1327,11 @@ function TranscriptEditorPage() {
                         {segment.words.map((word) => (
                           <EditableTimedWord
                             key={`${word.start}-${word.index}`}
-                           word={word}
-                           active={activeWordIndex === word.index}
-                           showConfidence={showConfidence}
-                           onCommit={commitTimedWord}
-                           onSeek={seekTo}
+                            word={word}
+                            active={activeWordIndex === word.index}
+                            showConfidence={showConfidence}
+                            onCommit={commitTimedWord}
+                            onSeek={seekTo}
                           />
                         ))}
                       </p>
@@ -1415,10 +1399,7 @@ function TranscriptEditorPage() {
                 <div>
                   <dt className="text-[#8a7da1]">Thời lượng</dt>
                   <dd className="mt-1 font-bold">
-                    {formatMediaDuration(
-                      transcript.duration,
-                      "Chưa xác định",
-                    )}
+                    {formatMediaDuration(transcript.duration, "Chưa xác định")}
                   </dd>
                 </div>
                 <div>
@@ -1456,7 +1437,8 @@ function TranscriptEditorPage() {
             {confidenceSummary.reviewedCount > 0 && (
               <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
                 <h2 className="flex items-center gap-2 text-sm font-black">
-                  <Eye className="h-4 w-4 text-[#8067aa]" /> Chất lượng nhận dạng
+                  <Eye className="h-4 w-4 text-[#8067aa]" /> Chất lượng nhận
+                  dạng
                 </h2>
                 <div className="mt-3 flex items-end justify-between gap-3">
                   <div>
@@ -1604,7 +1586,11 @@ function TranscriptEditorPage() {
                               .filter((target) => target !== speaker)
                               .map((target) => (
                                 <option key={target} value={target}>
-                                  Gộp vào {speakerLabel(target, transcript.speaker_names)}
+                                  Gộp vào{" "}
+                                  {speakerLabel(
+                                    target,
+                                    transcript.speaker_names,
+                                  )}
                                 </option>
                               ))}
                             <option value="__clear">Xóa nhãn người nói</option>
@@ -1688,15 +1674,13 @@ function TranscriptEditorPage() {
                       Dịch lại chưa thành công. Vui lòng thử lại sau.
                     </p>
                   )}
-                  {(translationRetryError ||
-                    transcript.translation_error) && (
+                  {(translationRetryError || transcript.translation_error) && (
                     <details className="mt-3 text-[11px] text-[#8a7da1]">
                       <summary className="cursor-pointer font-bold text-[#5f4c82]">
                         Chi tiết kỹ thuật
                       </summary>
                       <p className="mt-2 break-words leading-5">
-                        {translationRetryError ||
-                          transcript.translation_error}
+                        {translationRetryError || transcript.translation_error}
                       </p>
                     </details>
                   )}

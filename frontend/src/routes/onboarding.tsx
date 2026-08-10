@@ -8,15 +8,10 @@ import {
   UserRound,
   UsersRound,
 } from "lucide-react";
-import {
-  useEffect,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
 import { useAuth, type User } from "@/context/AuthContext";
-import { getSafeAuthRedirect } from "@/lib/auth-redirect";
+import { redirectAfterAuth } from "@/lib/auth-redirect";
 
 const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ??
@@ -33,7 +28,10 @@ const JOB_ROLES = [
 
 const USAGE_PURPOSES = [
   { value: "meeting", label: "Cuộc họp và hội thảo" },
-  { value: "content", label: "Nội dung nghe nhìn, chương trình âm thanh và nội dung khác" },
+  {
+    value: "content",
+    label: "Nội dung nghe nhìn, chương trình âm thanh và nội dung khác",
+  },
   { value: "interview", label: "Phỏng vấn và nghiên cứu" },
   { value: "education", label: "Bài giảng và học tập" },
   { value: "subtitles", label: "Phụ đề và bản dịch" },
@@ -73,7 +71,7 @@ function OnboardingPage() {
       return;
     }
     if (user.onboardingCompleted) {
-      void navigate({ to: getSafeAuthRedirect(from), replace: true });
+      redirectAfterAuth(from);
       return;
     }
     setForm((current) => ({
@@ -119,7 +117,7 @@ function OnboardingPage() {
         throw new Error(data.error || "Không lưu được thông tin thiết lập.");
       }
       updateUser(data);
-      await navigate({ to: getSafeAuthRedirect(from), replace: true });
+      redirectAfterAuth(from);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -155,8 +153,8 @@ function OnboardingPage() {
               Chuẩn bị thông tin đăng nhập của bạn
             </h1>
             <p className="mt-4 text-sm leading-7 text-white/75">
-              Vbee dùng thông tin này để gợi ý luồng chuyển đổi, ngôn ngữ và
-              trợ giúp phù hợp. Bạn chỉ cần hoàn tất một lần.
+              Vbee dùng thông tin này để gợi ý luồng chuyển đổi, ngôn ngữ và trợ
+              giúp phù hợp. Bạn chỉ cần hoàn tất một lần.
             </p>
             <ul className="mt-8 space-y-4 text-sm font-bold">
               {[

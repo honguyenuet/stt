@@ -325,3 +325,22 @@ Moi tac vu speech-to-text nen di theo flow:
 - Table nen chuyen sang card list.
 - Text dai phai wrap, khong cat noi dung quan trong.
 - CTA chinh dat trong tam voi nguoi dung, khong nam qua xa ket qua transcript.
+
+### Icon System
+
+He icon chinh gom hai nguon:
+- `lucide-react`: hanh dong, dieu huong, trang thai va cong cu trong san pham.
+- `simple-icons`: logo cua ben thu ba nhu Google, Facebook va Apple.
+- Logo Vbee la tai san thuong hieu rieng, khong thay bang icon chung.
+
+Quy tac ky thuat:
+- Dung `AppIcon` va `BrandIcon` trong `frontend/src/components/ui/app-icon.tsx` cho code moi.
+- Chi dung ba co: `sm` = 16px, `md` = 20px, `lg` = 24px.
+- Lucide dung `strokeWidth=2`; khong tron icon net 1.5, 2 va 2.5 trong cung mot control.
+- SVG dung `currentColor`; mau duoc truyen tu text/design token cua component cha.
+- Simple Icons co the dung `tone="brand"` khi can mau thuong hieu chinh thuc.
+- Icon nam canh text la trang tri va phai `aria-hidden`.
+- Icon truyen dat thong tin doc lap phai co `label`.
+- Nut chi co icon phai co `aria-label` tren `button` hoac `Link`; tooltip chi bo sung, khong thay the ten truy cap.
+- Vung bam tren mobile toi thieu 44x44px, ke ca khi icon chi co 16px hoac 20px.
+- Khong viet SVG thu cong neu Lucide hoac Simple Icons da co bieu tuong phu hop.

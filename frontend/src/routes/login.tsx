@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Eye, EyeOff, LogIn, Mail, LockKeyhole } from "lucide-react";
 import { useAuth, type User } from "@/context/AuthContext";
-import { getSafeAuthRedirect } from "@/lib/auth-redirect";
+import { redirectAfterAuth } from "@/lib/auth-redirect";
 import { SocialAuthButtons } from "@/components/social-auth-buttons";
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -45,7 +45,7 @@ function LoginPage() {
       if (user.onboardingCompleted === false) {
         void navigate({ to: "/onboarding", search: { from } });
       } else {
-        void navigate({ to: getSafeAuthRedirect(from) });
+        redirectAfterAuth(from);
       }
     }
   }, [user, isLoading, from, navigate]);
@@ -70,7 +70,10 @@ function LoginPage() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: form.email.trim(), password: form.password }),
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+        }),
       });
       const data = (await res.json()) as {
         token?: string;
@@ -85,7 +88,9 @@ function LoginPage() {
 
       await setToken(data.token, data.user);
     } catch {
-      setFormError("Không kết nối được máy chủ. Hãy kiểm tra http://localhost:3001");
+      setFormError(
+        "Không kết nối được máy chủ. Hãy kiểm tra http://localhost:3001",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -93,17 +98,25 @@ function LoginPage() {
 
   const errorMessages: Record<string, string> = {
     google_failed: "Đăng nhập Google thất bại. Vui lòng thử lại.",
-    google_email_exists: "Thư điện tử này đã đăng ký bằng mật khẩu. Hãy đăng nhập bằng thư điện tử để bảo vệ tài khoản.",
-    google_not_configured: "Google OAuth chưa được cấu hình. Hãy dùng thư điện tử và mật khẩu hoặc điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET.",
+    google_email_exists:
+      "Thư điện tử này đã đăng ký bằng mật khẩu. Hãy đăng nhập bằng thư điện tử để bảo vệ tài khoản.",
+    google_not_configured:
+      "Google OAuth chưa được cấu hình. Hãy dùng thư điện tử và mật khẩu hoặc điền GOOGLE_CLIENT_ID và GOOGLE_CLIENT_SECRET.",
     google_email_required: "Google chưa cung cấp thư điện tử đã xác minh.",
     facebook_failed: "Đăng nhập Facebook thất bại hoặc đã bị hủy.",
-    facebook_email_exists: "Thư điện tử Facebook đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    facebook_email_required: "Facebook chưa cung cấp thư điện tử. Hãy kiểm tra quyền thư điện tử của ứng dụng Facebook.",
-    facebook_not_configured: "Đăng nhập Facebook chưa được cấu hình trên máy chủ.",
+    facebook_email_exists:
+      "Thư điện tử Facebook đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    facebook_email_required:
+      "Facebook chưa cung cấp thư điện tử. Hãy kiểm tra quyền thư điện tử của ứng dụng Facebook.",
+    facebook_not_configured:
+      "Đăng nhập Facebook chưa được cấu hình trên máy chủ.",
     apple_failed: "Đăng nhập Apple thất bại hoặc đã bị hủy.",
-    apple_email_exists: "Thư điện tử Apple đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
-    apple_email_required: "Apple chưa cung cấp thư điện tử đã xác minh cho tài khoản này.",
-    apple_not_configured: "Đăng nhập bằng Apple chưa được cấu hình trên máy chủ.",
+    apple_email_exists:
+      "Thư điện tử Apple đã thuộc một tài khoản Vbee. Hãy đăng nhập bằng phương thức đã dùng trước đó.",
+    apple_email_required:
+      "Apple chưa cung cấp thư điện tử đã xác minh cho tài khoản này.",
+    apple_not_configured:
+      "Đăng nhập bằng Apple chưa được cấu hình trên máy chủ.",
     account_blocked: "Tài khoản đã bị khóa. Vui lòng liên hệ bộ phận hỗ trợ.",
     server_error: "Có lỗi xảy ra. Vui lòng thử lại sau.",
   };
@@ -115,13 +128,21 @@ function LoginPage() {
       <div className="absolute bottom-[10%] right-[8%] h-44 w-44 rounded-full bg-[#21104a]/8 blur-3xl pointer-events-none" />
 
       {SPARKLES.map((s, i) => (
-        <span key={i} className={`absolute ${s.size} hidden rounded-full bg-primary animate-twinkle pointer-events-none`} style={{ top: s.top, left: s.left, animationDelay: `${s.delay}s` }} />
+        <span
+          key={i}
+          className={`absolute ${s.size} hidden rounded-full bg-primary animate-twinkle pointer-events-none`}
+          style={{ top: s.top, left: s.left, animationDelay: `${s.delay}s` }}
+        />
       ))}
 
       <div className="relative z-10 grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
           <div className="relative mb-5 flex h-28 w-44 items-center justify-center">
-            <img src={vbeeLogo} alt="Vbee" className="relative h-24 w-auto object-contain" />
+            <img
+              src={vbeeLogo}
+              alt="Vbee"
+              className="relative h-24 w-auto object-contain"
+            />
           </div>
 
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#e8decc] bg-white px-4 py-1.5 text-xs font-bold text-[#725a00]">
@@ -129,7 +150,8 @@ function LoginPage() {
             Chào mừng quay trở lại
           </div>
           <h1 className="text-2xl font-black leading-tight text-foreground md:text-3xl">
-            Đăng nhập vào <span className="mt-1 block text-[#21104a]">Vbee AIVoice</span>
+            Đăng nhập vào{" "}
+            <span className="mt-1 block text-[#21104a]">Vbee AIVoice</span>
           </h1>
           <p className="mt-4 text-sm text-muted-foreground max-w-sm">
             Đăng nhập bằng thư điện tử, Google, Facebook hoặc Apple để tiếp tục.
@@ -155,7 +177,9 @@ function LoginPage() {
           <div className="rounded-lg border border-border bg-white p-5 shadow-soft md:p-6">
             <div className="mb-5">
               <h2 className="text-2xl font-bold text-foreground">Đăng nhập</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Nhập tài khoản đã đăng ký để tiếp tục</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Nhập tài khoản đã đăng ký để tiếp tục
+              </p>
             </div>
 
             {urlError && errorMessages[urlError] && (
@@ -171,7 +195,9 @@ function LoginPage() {
 
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Thư điện tử</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+                  Thư điện tử
+                </label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
@@ -189,7 +215,9 @@ function LoginPage() {
 
               <div>
                 <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <label className="block text-xs font-medium text-muted-foreground">Mật khẩu</label>
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    Mật khẩu
+                  </label>
                   <Link
                     to="/forgot-password"
                     className="text-xs font-bold text-[#725a00] transition hover:text-[#21104a] hover:underline"
@@ -215,7 +243,11 @@ function LoginPage() {
                     className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-foreground"
                     aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </div>
@@ -225,7 +257,11 @@ function LoginPage() {
                 disabled={isSubmitting}
                 className="group w-full flex items-center justify-center gap-2 rounded-full bg-gradient-primary py-3 text-sm font-black text-[#21104a] shadow-glow hover:opacity-90 transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isSubmitting ? <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" /> : <LogIn className="h-4 w-4" />}
+                {isSubmitting ? (
+                  <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4" />
+                )}
                 {isSubmitting ? "Đang đăng nhập..." : "Đăng nhập"}
               </button>
             </form>
@@ -237,19 +273,26 @@ function LoginPage() {
             </div>
 
             <div className="mt-5">
-              <SocialAuthButtons mode="login" from={from} />
+              <SocialAuthButtons mode="login" />
             </div>
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Chưa có tài khoản?{" "}
-              <Link to="/register" search={{ from, ref: undefined }} className="text-primary font-semibold hover:underline">
+              <Link
+                to="/register"
+                search={{ error: undefined, from, ref: undefined }}
+                className="text-primary font-semibold hover:underline"
+              >
                 Tạo tài khoản mới
               </Link>
             </p>
           </div>
 
           <div className="mt-5 text-center">
-            <Link to="/" className="text-sm text-muted-foreground hover:text-foreground transition">
+            <Link
+              to="/"
+              className="text-sm text-muted-foreground hover:text-foreground transition"
+            >
               ← Quay về trang chủ
             </Link>
           </div>

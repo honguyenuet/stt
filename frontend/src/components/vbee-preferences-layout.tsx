@@ -8,6 +8,7 @@ type AccountUsageCardProps = {
   firstName: string;
   refreshKey?: number;
   onQuotaChange?: (quota: QuotaStatus) => void;
+  showAlert?: boolean;
   showReferral?: boolean;
   compact?: boolean;
 };
@@ -16,16 +17,25 @@ export function VbeeAccountUsageCard({
   firstName,
   refreshKey,
   onQuotaChange,
+  showAlert = true,
   showReferral = true,
   compact = false,
 }: AccountUsageCardProps) {
   return (
-    <div className={`rounded-xl border border-[#e5dfef] bg-white shadow-[0_8px_24px_rgba(33,16,74,0.06)] ${compact ? "p-3.5" : "p-5"}`}>
-      <div className={`flex items-center ${compact ? "mb-3.5 gap-3" : "mb-5 gap-4"}`}>
-        <div className={`flex shrink-0 items-center justify-center rounded-full bg-[#ffdc45] font-black text-[#21104a] ${compact ? "h-11 w-11 text-base" : "h-14 w-14 text-lg"}`}>
+    <div
+      className={`rounded-xl border border-[#e5dfef] bg-white shadow-[0_8px_24px_rgba(33,16,74,0.06)] ${compact ? "p-3.5" : "p-5"}`}
+    >
+      <div
+        className={`flex items-center ${compact ? "mb-3.5 gap-3" : "mb-5 gap-4"}`}
+      >
+        <div
+          className={`flex shrink-0 items-center justify-center rounded-full bg-[#ffdc45] font-black text-[#21104a] ${compact ? "h-11 w-11 text-base" : "h-14 w-14 text-lg"}`}
+        >
           {firstName.slice(0, 2).toUpperCase()}
         </div>
-        <h2 className={`font-black leading-tight text-[#21104a] ${compact ? "text-xl" : "text-2xl"}`}>
+        <h2
+          className={`font-black leading-tight text-[#21104a] ${compact ? "text-xl" : "text-2xl"}`}
+        >
           Xin chào,
           <br />
           {firstName}
@@ -38,6 +48,7 @@ export function VbeeAccountUsageCard({
           variant="account"
           refreshKey={refreshKey}
           onQuotaChange={onQuotaChange}
+          showAlert={showAlert}
         />
       </div>
 
@@ -46,8 +57,12 @@ export function VbeeAccountUsageCard({
           to="/referral"
           className={`flex items-center rounded-xl border border-[#e5dfef] bg-[#fbf8ef] transition hover:border-[#ffcb05] ${compact ? "gap-2.5 px-3 py-3.5" : "gap-3 px-4 py-5"}`}
         >
-          <Gift className={`text-[#21104a] ${compact ? "h-5 w-5" : "h-7 w-7"}`} />
-          <p className={`font-black text-[#21104a] ${compact ? "text-xs leading-4" : "text-sm leading-5"}`}>
+          <Gift
+            className={`text-[#21104a] ${compact ? "h-5 w-5" : "h-7 w-7"}`}
+          />
+          <p
+            className={`font-black text-[#21104a] ${compact ? "text-xs leading-4" : "text-sm leading-5"}`}
+          >
             GIỚI THIỆU BẠN BÈ
             <br />
             NHẬN 100 PHÚT MIỄN PHÍ
@@ -85,17 +100,22 @@ export function VbeePreferencesFooter() {
     <footer className="border-t border-border px-4 py-8 text-center text-sm text-muted-foreground">
       <p>© 2026 Vbee AIVoice. Đã đăng ký bản quyền.</p>
       <div className="mt-2 flex flex-wrap justify-center gap-4">
-        {["Vbee.ai", "Bảng giá", "Giới thiệu", "Bảo mật", "Điều khoản", "Hỗ trợ"].map(
-          (item) => (
-            <Link
-              key={item}
-              to="/"
-              className="font-semibold text-primary hover:underline"
-            >
-              {item}
-            </Link>
-          ),
-        )}
+        {[
+          "Vbee.ai",
+          "Bảng giá",
+          "Giới thiệu",
+          "Bảo mật",
+          "Điều khoản",
+          "Hỗ trợ",
+        ].map((item) => (
+          <Link
+            key={item}
+            to="/"
+            className="font-semibold text-primary hover:underline"
+          >
+            {item}
+          </Link>
+        ))}
       </div>
       <p className="mt-5">
         Được phát triển cho trải nghiệm chuyển giọng nói thành văn bản rõ ràng.

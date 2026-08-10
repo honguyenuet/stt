@@ -12,7 +12,14 @@ function requestId(req, res, next) {
 }
 
 const securityHeaders = helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+  },
   crossOriginResourcePolicy: { policy: "cross-origin" },
   hsts: IS_PRODUCTION
     ? { maxAge: 31536000, includeSubDomains: true, preload: true }

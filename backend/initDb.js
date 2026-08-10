@@ -1137,7 +1137,7 @@ async function initDatabase() {
         Number.parseInt(process.env.FREE_MAX_FILE_SECONDS || "1800", 10) / 60,
       ),
       Number.parseInt(process.env.STANDARD_MONTHLY_SECONDS || "18000", 10),
-      Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "39000", 10),
+      Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "149000", 10),
       Number.parseInt(process.env.STANDARD_MAX_UPLOAD_MB || "200", 10),
       Number.parseInt(process.env.STANDARD_MAX_FILE_SECONDS || "7200", 10),
       Number.parseInt(process.env.SPECIAL_MONTHLY_SECONDS || "72000", 10),
@@ -1162,7 +1162,7 @@ async function initDatabase() {
      WHERE code IN ('standard', 'special', 'business')
        AND price_vnd <= 0`,
     [
-      Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "150000", 10),
+      Number.parseInt(process.env.STANDARD_MONTHLY_PRICE_VND || "149000", 10),
       Number.parseInt(process.env.SPECIAL_MONTHLY_PRICE_VND || "449000", 10),
       Number.parseInt(process.env.BUSINESS_MONTHLY_PRICE_VND || "799000", 10),
     ],

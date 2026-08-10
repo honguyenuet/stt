@@ -209,7 +209,7 @@ const plans = [
   {
     name: "Tiêu chuẩn",
     label: "Cá nhân",
-    price: "150.000đ · 5 giờ",
+    price: "149.000đ · 5 giờ",
     desc: "Cho cá nhân, chuyên viên và công việc hằng tháng.",
     points: ["Tệp tối đa 2 giờ", "API / Webhook", "Ưu tiên xử lý 2×"],
   },

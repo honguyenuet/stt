@@ -78,6 +78,12 @@
     "Plus Jakarta Sans", "Roboto", system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 
+  /* Icon tokens: 16px inline, 20px controls, 24px primary actions. */
+  --icon-size-sm: 1rem;
+  --icon-size-md: 1.25rem;
+  --icon-size-lg: 1.5rem;
+  --icon-stroke-width: 2;
+
   /* Vbee palette: deep purple for identity, clean white for work, yellow for action. */
   --background: #ffffff;
   --foreground: #21104a;

@@ -121,7 +121,7 @@ const monthlyPlans: Plan[] = [
     name: "Tiêu chuẩn",
     label: "Cá nhân",
     desc: "Dành cho học tập, ghi chú, phỏng vấn và nhu cầu cá nhân hằng tháng.",
-    price: "150.000đ",
+    price: "149.000đ",
     unit: "/tháng",
     minutes: "5 giờ",
     cta: "Chọn gói Tiêu chuẩn",

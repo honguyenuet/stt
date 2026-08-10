@@ -118,19 +118,20 @@ describe("admin utilities", () => {
   });
 
   it("exchanges an authenticated Vbee session for a CMS session", async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        jsonResponse({
-          token: "cms-token",
-          expiresAt: Date.now() + 60_000,
-          user: {
-            id: "5",
-            name: "Vbee Admin",
-            email: "admin@example.com",
-            role: "super_admin",
-          },
-        }),
-      ),
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(
+          jsonResponse({
+            token: "cms-token",
+            expiresAt: Date.now() + 60_000,
+            user: {
+              id: "5",
+              name: "Vbee Admin",
+              email: "admin@example.com",
+              role: "super_admin",
+            },
+          }),
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -143,17 +144,18 @@ describe("admin utilities", () => {
 
   it("validates an existing CMS session before opening admin routes", async () => {
     seedSession();
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        jsonResponse({
-          user: {
-            id: "admin_test",
-            name: "Test Admin",
-            email: "admin@test.local",
-            role: "super_admin",
-          },
-        }),
-      ),
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(
+          jsonResponse({
+            user: {
+              id: "admin_test",
+              name: "Test Admin",
+              email: "admin@test.local",
+              role: "super_admin",
+            },
+          }),
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -260,7 +262,11 @@ describe("admin services", () => {
       "fetch",
       vi.fn(() =>
         Promise.resolve(
-          jsonResponse({ error: "Bạn không có quyền thực hiện thao tác này" }, false, 403),
+          jsonResponse(
+            { error: "Bạn không có quyền thực hiện thao tác này" },
+            false,
+            403,
+          ),
         ),
       ),
     );

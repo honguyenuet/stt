@@ -81,7 +81,11 @@ function normalizeSupportedFormats(formats?: string[]) {
   const normalized = [
     ...new Set(
       (Array.isArray(formats) ? formats : [])
-        .map((format) => String(format || "").trim().toLowerCase())
+        .map((format) =>
+          String(format || "")
+            .trim()
+            .toLowerCase(),
+        )
         .filter((format) => /^[a-z0-9]{2,5}$/.test(format)),
     ),
   ];
@@ -161,6 +165,17 @@ type ActionDialogState = {
   to?: string;
 };
 type ActiveJobStatus = "queued" | "processing";
+type AcceptedJob = {
+  id: number;
+  jobId: number;
+  status: ActiveJobStatus;
+  progress: number;
+  expectedDurationSeconds?: number;
+  filename: string;
+  createdAt?: string;
+  folderId?: number;
+  folderName?: string;
+};
 type JobStatusResponse = {
   status: ActiveJobStatus | "completed" | "failed" | "cancelled";
   progress?: number | null;
@@ -319,7 +334,9 @@ function UploadPage() {
         }
         if (!active) return;
         setFolders(body.folders);
-        setActiveFolderId((current) => current ?? body.folders?.[0]?.id ?? null);
+        setActiveFolderId(
+          (current) => current ?? body.folders?.[0]?.id ?? null,
+        );
         setFolderError("");
       })
       .catch((error) => {
@@ -342,10 +359,13 @@ function UploadPage() {
         const folderQuery = activeFolderId
           ? `?folderId=${encodeURIComponent(activeFolderId)}`
           : "";
-        const response = await fetch(`${API_URL}/api/transcribe/history${folderQuery}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
+        const response = await fetch(
+          `${API_URL}/api/transcribe/history${folderQuery}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
         const body = (await response.json().catch(() => [])) as
           | HistoryItem[]
           | { error?: string };
@@ -410,16 +430,19 @@ function UploadPage() {
           | JobStatusResponse
           | { error?: string };
         if (!response.ok || !("status" in data)) {
-          throw new Error(data.error || "Không cập nhật được trạng thái tác vụ");
+          throw new Error(
+            data.error || "Không cập nhật được trạng thái tác vụ",
+          );
         }
         if (!active) return;
 
         if (data.status === "queued" || data.status === "processing") {
+          const activeStatus: ActiveJobStatus = data.status;
           setQueuedJob((current) => {
             if (!current || current.id !== queuedJobId) return current;
             return {
               ...current,
-              status: data.status,
+              status: activeStatus,
               progress: Math.max(0, Math.min(99, Number(data.progress || 0))),
               queuePosition: Math.max(
                 1,
@@ -436,7 +459,7 @@ function UploadPage() {
               item.job_id === queuedJobId
                 ? {
                     ...item,
-                    status: data.status,
+                    status: activeStatus,
                     progress: Number(data.progress || 0),
                   }
                 : item,
@@ -645,17 +668,15 @@ function UploadPage() {
   const selectedFilename =
     uploadFiles.length > 1
       ? `${uploadFiles.length} tệp: ${uploadFiles.map((file) => file.name).join(", ")}`
-      : uploadFiles[0]?.name ?? remoteMetadata?.filename ?? "van-ban";
+      : (uploadFiles[0]?.name ?? remoteMetadata?.filename ?? "van-ban");
   const selectedFileSize =
     uploadFiles.length > 0
       ? uploadFiles.reduce((total, file) => total + file.size, 0)
-      : remoteMetadata?.approximateBytes ?? undefined;
+      : (remoteMetadata?.approximateBytes ?? undefined);
 
   const normalizedExpectedDuration = normalizeMediaDuration(expectedDuration);
   const pendingUploadSeconds =
-    hasSelectedSource &&
-    uploadStatus !== "done" &&
-    normalizedExpectedDuration
+    hasSelectedSource && uploadStatus !== "done" && normalizedExpectedDuration
       ? normalizedExpectedDuration
       : 0;
   const projectedRemainingSeconds = quota
@@ -699,18 +720,14 @@ function UploadPage() {
           ? selected.slice(0, 5)
           : selected.slice(0, 1);
     if (!files.length) return;
-    if (
-      files.some((file) => !isSupportedMediaFile(file, supportedFormats))
-    ) {
+    if (files.some((file) => !isSupportedMediaFile(file, supportedFormats))) {
       setUploadError(
         `Định dạng không hỗ trợ. Dùng ${supportedFormats.map((format) => format.toUpperCase()).join(", ")}.`,
       );
       return;
     }
     const maxMb = quota?.limits.maxUploadMb ?? MAX_MB;
-    const oversized = files.find(
-      (file) => file.size > maxMb * 1024 * 1024,
-    );
+    const oversized = files.find((file) => file.size > maxMb * 1024 * 1024);
     if (oversized) {
       setUploadError(
         `${oversized.name} quá lớn cho gói hiện tại (tối đa ${maxMb} MB/tệp)`,
@@ -734,7 +751,7 @@ function UploadPage() {
         );
         return;
       }
-      const totalSeconds = durations.reduce(
+      const totalSeconds = durations.reduce<number>(
         (total, value) => total + (value || 0),
         0,
       );
@@ -748,7 +765,8 @@ function UploadPage() {
     setUploadFiles(files);
     setRemoteMetadata(null);
     setExpectedDuration(
-      durations.reduce((total, value) => total + (value || 0), 0) || null,
+      durations.reduce<number>((total, value) => total + (value || 0), 0) ||
+        null,
     );
     setUploadStatus("idle");
     setUploadError("");
@@ -903,7 +921,7 @@ function UploadPage() {
       }
       setQuotaRefreshKey((key) => key + 1);
       if (data.quota) setQuota(data.quota);
-      const acceptedJobs = data.jobs?.length
+      const acceptedJobs: AcceptedJob[] = data.jobs?.length
         ? data.jobs
         : data.id
           ? [
@@ -915,14 +933,12 @@ function UploadPage() {
                 expectedDurationSeconds: data.expectedDurationSeconds,
                 filename: data.filename ?? selectedFilename,
                 createdAt: data.createdAt ?? new Date().toISOString(),
+                folderId: activeFolderId ?? undefined,
+                folderName: activeFolderName ?? undefined,
               },
             ]
           : [];
-      if (
-        uploadMode === "multitrack" &&
-        acceptedJobs[0] &&
-        !data.jobId
-      ) {
+      if (uploadMode === "multitrack" && acceptedJobs[0] && !data.jobId) {
         setQueuedJob({
           id: acceptedJobs[0].jobId,
           status: "queued",
@@ -941,9 +957,7 @@ function UploadPage() {
                 acceptedJobs.length === 1 ? selectedFileSize : undefined,
               duration:
                 normalizeMediaDuration(job.expectedDurationSeconds) ??
-                (acceptedJobs.length === 1
-                  ? normalizedExpectedDuration
-                  : null),
+                (acceptedJobs.length === 1 ? normalizedExpectedDuration : null),
               text: "",
               status: job.status,
               progress: job.progress,
@@ -1320,8 +1334,8 @@ function UploadPage() {
                         1. Chọn nguồn cần chuyển đổi
                       </p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Chọn một tệp, nhiều tệp độc lập hoặc liên kết âm thanh/nội dung nghe nhìn
-                        công khai.
+                        Chọn một tệp, nhiều tệp độc lập hoặc liên kết âm
+                        thanh/nội dung nghe nhìn công khai.
                       </p>
                     </div>
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary">
@@ -1453,8 +1467,9 @@ function UploadPage() {
                       </div>
                       {audioMode === "song" && (
                         <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-primary">
-                          Máy chủ tách phần giọng hát bằng Demucs; nếu Demucs không
-                          khả dụng, hệ thống tự dùng ffmpeg để làm rõ giọng hát.
+                          Máy chủ tách phần giọng hát bằng Demucs; nếu Demucs
+                          không khả dụng, hệ thống tự dùng ffmpeg để làm rõ
+                          giọng hát.
                         </p>
                       )}
                     </div>
@@ -1516,7 +1531,8 @@ function UploadPage() {
                         </select>
                         <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                           Nếu biết chính xác có bao nhiêu người hoặc ca sĩ, hãy
-                          chọn số đó để tránh một giọng bị tách thành nhiều nhãn.
+                          chọn số đó để tránh một giọng bị tách thành nhiều
+                          nhãn.
                         </span>
                       </label>
                     )}
@@ -1546,9 +1562,9 @@ function UploadPage() {
                       </label>
                     </div>
                     <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      Hệ thống tạo văn bản gốc trước. Sau khi nghe lại và
-                      sửa nội dung, bạn có thể chọn ngôn ngữ dịch trong trình
-                      biên tập để bản dịch chính xác hơn.
+                      Hệ thống tạo văn bản gốc trước. Sau khi nghe lại và sửa
+                      nội dung, bạn có thể chọn ngôn ngữ dịch trong trình biên
+                      tập để bản dịch chính xác hơn.
                     </p>
                     <button
                       onClick={() => void handleUpload()}
@@ -1888,7 +1904,7 @@ function FileDropzone({
           ? "Mỗi rãnh phải là một micrô/người nói của cùng phiên và bắt đầu cùng thời điểm."
           : multipleFiles
             ? "Mỗi tệp sẽ tạo một văn bản riêng và cùng được lưu trong thư mục đã chọn."
-          : "Hoặc nhấn để chọn một tệp âm thanh hoặc nội dung nghe nhìn từ máy tính."}
+            : "Hoặc nhấn để chọn một tệp âm thanh hoặc nội dung nghe nhìn từ máy tính."}
       </p>
       <button
         type="button"
@@ -1954,8 +1970,8 @@ function MediaLinkPanel({
             tảng tại thời điểm xử lý.
           </p>
           <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-            Liên kết Spotify không chứa luồng âm thanh công khai; hãy tải lên tệp bạn
-            sở hữu hoặc được phép sử dụng.
+            Liên kết Spotify không chứa luồng âm thanh công khai; hãy tải lên
+            tệp bạn sở hữu hoặc được phép sử dụng.
           </p>
         </div>
       </div>
@@ -2001,8 +2017,8 @@ function MediaLinkPanel({
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
         <p className="inline-flex items-center gap-2 text-xs leading-5 text-muted-foreground">
           <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
-          Liên kết được kiểm tra thời lượng, thời lượng sử dụng và đưa vào hàng đợi như tệp tải
-          lên.
+          Liên kết được kiểm tra thời lượng, thời lượng sử dụng và đưa vào hàng
+          đợi như tệp tải lên.
         </p>
         <button
           type="button"
@@ -2039,7 +2055,8 @@ function UploadRequirements({
         <div>
           <p className="text-xs font-black text-foreground">Định dạng</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Âm thanh và nội dung nghe nhìn có trong danh sách hiển thị phía trên.
+            Âm thanh và nội dung nghe nhìn có trong danh sách hiển thị phía
+            trên.
           </p>
         </div>
         <div>
@@ -2074,8 +2091,8 @@ function UploadRequirements({
               : multitrack
                 ? "Từ 2–5 rãnh đồng bộ sẽ được ghép thành một văn bản với tên người nói riêng."
                 : multipleFiles
-                ? "Tối đa 8 tệp mỗi lần; mỗi tệp tạo một văn bản riêng trong cùng thư mục."
-                : "Bản dịch được tạo trong trình biên tập sau khi bạn kiểm tra văn bản gốc."}
+                  ? "Tối đa 8 tệp mỗi lần; mỗi tệp tạo một văn bản riêng trong cùng thư mục."
+                  : "Bản dịch được tạo trong trình biên tập sau khi bạn kiểm tra văn bản gốc."}
           </p>
         </div>
       </div>
@@ -2363,7 +2380,11 @@ function UploadWorkflowSteps({
   status: UploadStatus;
 }) {
   const steps = [
-    ["1", "Nguồn", "Chọn một tệp, nhiều tệp hoặc liên kết âm thanh/nội dung nghe nhìn"],
+    [
+      "1",
+      "Nguồn",
+      "Chọn một tệp, nhiều tệp hoặc liên kết âm thanh/nội dung nghe nhìn",
+    ],
     ["2", "Cài đặt", "Ngôn ngữ, người nói và thư mục"],
     ["3", "Chuyển đổi", "AI xử lý và tạo văn bản"],
     ["4", "Biên tập", "Nghe lại, sửa, sao chép và xuất tệp"],

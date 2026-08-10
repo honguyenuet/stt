@@ -36,7 +36,7 @@ export function formatMediaDuration(
 export function sumMediaDurations(
   values: Array<number | string | null | undefined>,
 ) {
-  return values.reduce(
+  return values.reduce<number>(
     (total, value) => total + (normalizeMediaDuration(value) ?? 0),
     0,
   );
