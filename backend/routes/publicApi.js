@@ -34,6 +34,7 @@ const { writeSecurityAudit } = require("../services/securityAuditService");
 const {
   protectCustomerWebhook,
 } = require("../services/customerWebhookService");
+const { recordApiUsage } = require("../services/apiUsageService");
 
 const router = express.Router();
 
@@ -223,9 +224,19 @@ router.post(
           speakerCount: req.body.speakerCount,
           expectedDurationSeconds,
           customerWebhook,
+          apiKeyId: req.apiKey.id,
         });
         const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
         const quota = await getQuotaStatus(req.user.id);
+        await recordApiUsage({
+          apiKeyId: req.apiKey.id,
+          userId: req.user.id,
+          event: "queued",
+          jobId: job.jobId,
+          transcriptionId: job.transcription.id,
+          durationSeconds: expectedDurationSeconds,
+          status: job.status,
+        });
         await writeSecurityAudit({
           event: "transcription.api_queued",
           outcome: "accepted",
@@ -273,6 +284,14 @@ router.post(
           }),
       });
       const quota = await getQuotaStatus(req.user.id);
+      await recordApiUsage({
+        apiKeyId: req.apiKey.id,
+        userId: req.user.id,
+        event: "sync_completed",
+        transcriptionId: result.id,
+        durationSeconds: result.duration || expectedDurationSeconds,
+        status: "completed",
+      });
       await writeSecurityAudit({
         event: "transcription.api_completed",
         outcome: "success",
@@ -303,6 +322,13 @@ router.post(
       });
     } catch (error) {
       console.error("Public API transcribe error:", error);
+      await recordApiUsage({
+        apiKeyId: req.apiKey?.id,
+        userId: req.user?.id,
+        event: "rejected",
+        durationSeconds: 0,
+        status: "failed",
+      });
       await writeSecurityAudit({
         event: "transcription.api_rejected",
         outcome: "failure",

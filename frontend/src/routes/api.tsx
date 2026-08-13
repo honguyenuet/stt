@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   ArrowRight,
+  BarChart3,
   Check,
   Clipboard,
   Code2,
@@ -39,6 +40,37 @@ type ApiKeyItem = {
 };
 
 type ApiKeyResponse = ApiKeyItem & { key: string };
+
+type ApiUsageKey = {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  requests: number;
+  completed: number;
+  failed: number;
+  processedSeconds: number;
+  lastEventAt: string | null;
+};
+
+type ApiUsageDaily = {
+  date: string;
+  requests: number;
+  completed: number;
+  failed: number;
+  processedSeconds: number;
+};
+
+type ApiUsageSummary = {
+  rangeDays: number;
+  totals: {
+    requests: number;
+    completed: number;
+    failed: number;
+    processedSeconds: number;
+  };
+  keys: ApiUsageKey[];
+  daily: ApiUsageDaily[];
+};
 
 type ApiResult = {
   object?: "transcription" | "transcription_job";
@@ -86,6 +118,11 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatMinutes(seconds: number) {
+  const minutes = Math.round((seconds / 60) * 10) / 10;
+  return `${minutes.toLocaleString("vi-VN")} phút`;
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -100,12 +137,15 @@ function ApiPage() {
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const [usage, setUsage] = useState<ApiUsageSummary | null>(null);
 
   const [testKey, setTestKey] = useState("");
   const [testFile, setTestFile] = useState<File | null>(null);
   const [speakerLabels, setSpeakerLabels] = useState(false);
   const [testLanguage, setTestLanguage] = useState("auto");
   const [testTranslateTo, setTestTranslateTo] = useState("none");
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const [callbackSecret, setCallbackSecret] = useState("");
   const [testing, setTesting] = useState(false);
   const [apiResult, setApiResult] = useState<ApiResult | null>(null);
 
@@ -134,10 +174,24 @@ function ApiPage() {
         return;
       }
       setKeys(data);
+      void loadUsage();
     } catch {
       setMessage("Không kết nối được backend API");
     } finally {
       setLoadingKeys(false);
+    }
+  }
+
+  async function loadUsage() {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_URL}/api/keys/usage`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json()) as ApiUsageSummary | { error?: string };
+      if (res.ok && "totals" in data) setUsage(data);
+    } catch {
+      setUsage(null);
     }
   }
 
@@ -225,6 +279,9 @@ function ApiPage() {
     formData.append("speakerLabels", String(speakerLabels));
     formData.append("language", testLanguage);
     formData.append("translateTo", testTranslateTo);
+    if (callbackUrl.trim()) formData.append("callbackUrl", callbackUrl.trim());
+    if (callbackSecret.trim())
+      formData.append("callbackSecret", callbackSecret.trim());
 
     setTesting(true);
     setApiResult(null);
@@ -277,13 +334,25 @@ function ApiPage() {
 
   const curlSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "async=true" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en"`;
+    return `curl -X POST ${API_URL}/api/v1/transcribe \\\n  -H "x-api-key: ${key}" \\\n  -F "audio=@meeting.mp3" \\\n  -F "async=true" \\\n  -F "speakerLabels=true" \\\n  -F "language=auto" \\\n  -F "translateTo=en" \\\n  -F "callbackUrl=https://your-app.com/webhooks/vbee" \\\n  -F "callbackSecret=replace-with-random-secret"`;
   }, [createdKey]);
 
   const jsSample = useMemo(() => {
     const key = createdKey || "vbee_sk_YOUR_API_KEY";
-    return `const formData = new FormData();\nformData.append("audio", file);\nformData.append("async", "true");\nformData.append("speakerLabels", "true");\nformData.append("language", "auto");\nformData.append("translateTo", "en");\n\nconst res = await fetch("${API_URL}/api/v1/transcribe", {\n  method: "POST",\n  headers: { "x-api-key": "${key}" },\n  body: formData,\n});\n\nconst data = await res.json();\n\nif (data.object === "transcription_job") {\n  console.log("Queued job:", data.jobId, data.status, data.progress);\n} else {\n  console.log(data.text);\n  console.log(data.translation?.text);\n}`;
+    return `class VbeeClient {\n  constructor(apiKey, baseUrl = "${API_URL}") {\n    this.apiKey = apiKey;\n    this.baseUrl = baseUrl;\n  }\n\n  async transcribe(file, options = {}) {\n    const form = new FormData();\n    form.append("audio", file);\n    form.append("async", "true");\n    for (const [key, value] of Object.entries(options)) {\n      if (value !== undefined && value !== null && value !== "") {\n        form.append(key, String(value));\n      }\n    }\n    const res = await fetch(\`\${this.baseUrl}/api/v1/transcribe\`, {\n      method: "POST",\n      headers: { "x-api-key": this.apiKey },\n      body: form,\n    });\n    const data = await res.json();\n    if (!res.ok) throw new Error(data.error || "Transcription failed");\n    return data;\n  }\n\n  async getJob(jobId) {\n    const res = await fetch(\`\${this.baseUrl}/api/v1/transcribe/jobs/\${jobId}\`, {\n      headers: { "x-api-key": this.apiKey },\n    });\n    const data = await res.json();\n    if (!res.ok) throw new Error(data.error || "Cannot load job");\n    return data;\n  }\n\n  async waitForJob(jobId, { intervalMs = 2000, maxAttempts = 90 } = {}) {\n    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {\n      const job = await this.getJob(jobId);\n      if (["completed", "failed", "cancelled"].includes(job.status)) return job;\n      await new Promise((resolve) => setTimeout(resolve, intervalMs));\n    }\n    throw new Error("Job is still processing");\n  }\n}\n\nconst client = new VbeeClient("${key}");\nconst job = await client.transcribe(file, {\n  speakerLabels: true,\n  language: "auto",\n  translateTo: "en",\n  callbackUrl: "https://your-app.com/webhooks/vbee",\n  callbackSecret: "replace-with-random-secret",\n});\nconst result = await client.waitForJob(job.jobId);\nconsole.log(result.text, result.translation?.text);`;
   }, [createdKey]);
+
+  const webhookSample = useMemo(
+    () =>
+      `import crypto from "node:crypto";\nimport express from "express";\n\nconst app = express();\nconst secret = process.env.VBEE_WEBHOOK_SECRET;\n\napp.post(\n  "/webhooks/vbee",\n  express.raw({ type: "application/json" }),\n  (req, res) => {\n    const expected = "sha256=" + crypto\n      .createHmac("sha256", secret)\n      .update(req.body)\n      .digest("hex");\n    const received = req.header("x-vbee-signature") || "";\n    const expectedBuffer = Buffer.from(expected);\n    const receivedBuffer = Buffer.from(received);\n\n    if (\n      expectedBuffer.length !== receivedBuffer.length ||\n      !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)\n    ) {\n      return res.status(401).send("Invalid signature");\n    }\n\n    const event = req.header("x-vbee-event");\n    const payload = JSON.parse(req.body.toString("utf8"));\n    if (event === "transcription.completed") {\n      console.log(payload.jobId, payload.text, payload.translation?.text);\n    }\n    res.sendStatus(204);\n  },\n);`,
+    [],
+  );
+
+  const pollingSample = useMemo(
+    () =>
+      `GET ${API_URL}/api/v1/transcribe/jobs/{jobId}\nHeader: x-api-key: vbee_sk_YOUR_API_KEY\n\nResponse khi đang xử lý:\n{\n  "object": "transcription_job",\n  "jobId": 123,\n  "status": "processing",\n  "progress": 45,\n  "queuePosition": 1,\n  "estimatedRemainingSeconds": 80\n}\n\nResponse khi hoàn tất có thêm text, words và translation nếu request có translateTo.`,
+    [],
+  );
 
   if (isLoading || (!user && !token)) {
     return (
@@ -497,12 +566,136 @@ function ApiPage() {
         </div>
       </section>
 
+      <section className="mx-auto max-w-7xl px-4 pb-10 md:px-6">
+        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-black text-primary">
+                <BarChart3 className="h-4 w-4" /> Usage analytics
+              </div>
+              <h2 className="text-xl font-black">Thống kê API key 30 ngày</h2>
+            </div>
+            <button
+              onClick={() => void loadUsage()}
+              className="rounded-full border border-border p-2 hover:bg-primary/10"
+              title="Tải lại thống kê"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            {[
+              ["Request", usage?.totals.requests ?? 0],
+              ["Hoàn tất", usage?.totals.completed ?? 0],
+              ["Thất bại", usage?.totals.failed ?? 0],
+              [
+                "Phút xử lý",
+                formatMinutes(usage?.totals.processedSeconds ?? 0),
+              ],
+            ].map(([label, value]) => (
+              <div
+                key={String(label)}
+                className="rounded-lg border border-border bg-[#fbf8ef] p-4"
+              >
+                <div className="text-sm font-bold text-muted-foreground">
+                  {String(label)}
+                </div>
+                <div className="mt-2 text-2xl font-black text-foreground">
+                  {String(value)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="bg-[#fbf8ef] text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3">API key</th>
+                  <th className="px-4 py-3">Request</th>
+                  <th className="px-4 py-3">Hoàn tất</th>
+                  <th className="px-4 py-3">Lỗi</th>
+                  <th className="px-4 py-3">Thời lượng</th>
+                  <th className="px-4 py-3">Lần cuối</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(usage?.keys.length ? usage.keys : []).map((item) => (
+                  <tr key={item.id} className="border-t border-border">
+                    <td className="px-4 py-3">
+                      <div className="font-black">{item.name}</div>
+                      <div className="font-mono text-xs text-primary">
+                        {item.keyPrefix}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-bold">{item.requests}</td>
+                    <td className="px-4 py-3 font-bold text-[#166534]">
+                      {item.completed}
+                    </td>
+                    <td className="px-4 py-3 font-bold text-red-600">
+                      {item.failed}
+                    </td>
+                    <td className="px-4 py-3 font-bold">
+                      {formatMinutes(item.processedSeconds)}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {formatDate(item.lastEventAt)}
+                    </td>
+                  </tr>
+                ))}
+                {!usage?.keys.length && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-4 py-6 text-center font-bold text-muted-foreground"
+                    >
+                      Chưa có dữ liệu usage. Gọi API một lần để bắt đầu ghi
+                      nhận thống kê.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {!!usage?.daily.length && (
+            <div className="mt-5 grid grid-cols-10 items-end gap-1">
+              {usage.daily.slice(-30).map((day) => {
+                const maxRequests = Math.max(
+                  1,
+                  ...usage.daily.map((item) => item.requests),
+                );
+                const height = Math.max(8, (day.requests / maxRequests) * 72);
+                return (
+                  <div
+                    key={day.date}
+                    className="flex flex-col items-center gap-2"
+                    title={`${day.date}: ${day.requests} request`}
+                  >
+                    <div
+                      className="w-full rounded-t bg-primary/70"
+                      style={{ height }}
+                    />
+                    <span className="text-[10px] font-bold text-muted-foreground">
+                      {day.date.slice(8)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
       <section
         id="docs"
         className="mx-auto grid max-w-7xl gap-5 px-4 pb-10 md:grid-cols-2 md:px-6"
       >
         <DocCard title="cURL" code={curlSample} onCopy={copyText} />
-        <DocCard title="JavaScript" code={jsSample} onCopy={copyText} />
+        <DocCard title="JavaScript SDK mẫu" code={jsSample} onCopy={copyText} />
+        <DocCard title="Webhook callback" code={webhookSample} onCopy={copyText} />
+        <DocCard title="Async polling" code={pollingSample} onCopy={copyText} />
       </section>
 
       <section className="mx-auto max-w-7xl px-4 pb-12 md:px-6">
@@ -578,6 +771,27 @@ function ApiPage() {
                     </option>
                   ))}
                 </select>
+              </label>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm font-black">
+                Callback URL
+                <input
+                  value={callbackUrl}
+                  onChange={(e) => setCallbackUrl(e.target.value)}
+                  className="mt-2 w-full rounded-lg border border-border bg-white px-4 py-2.5 font-semibold outline-none focus:border-primary"
+                  placeholder="https://your-app.com/webhooks/vbee"
+                />
+              </label>
+              <label className="text-sm font-black">
+                Callback secret
+                <input
+                  value={callbackSecret}
+                  onChange={(e) => setCallbackSecret(e.target.value)}
+                  className="mt-2 w-full rounded-lg border border-border bg-white px-4 py-2.5 font-semibold outline-none focus:border-primary"
+                  placeholder="random-secret"
+                />
               </label>
             </div>
 
@@ -662,7 +876,7 @@ function DocCard({
   onCopy: (value: string) => Promise<void>;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-white p-4 shadow-soft">
+    <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xl font-black">
           <Code2 className="h-5 w-5" /> {title}

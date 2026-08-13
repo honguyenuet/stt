@@ -56,6 +56,15 @@ const LOW_CONFIDENCE_THRESHOLD = 0.75;
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 type EditorMode = "sync" | "edit";
+type ExportLayout = "document" | "segments";
+type ExportTranslationMode = "original" | "translation" | "bilingual";
+
+interface ExportOptions {
+  includeSpeakers: boolean;
+  includeTimestamps: boolean;
+  layout: ExportLayout;
+  translationMode: ExportTranslationMode;
+}
 
 interface TranscriptWord {
   text: string;
@@ -325,6 +334,49 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function splitTranslationIntoSegments(
+  translatedText: string | null | undefined,
+  count: number,
+) {
+  const cleanText = String(translatedText || "").trim();
+  if (!cleanText || count <= 0) return [];
+  const paragraphs = cleanText
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (paragraphs.length === count) return paragraphs;
+  const sentences = cleanText
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?。！？])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const units = sentences.length >= count ? sentences : cleanText.split(/\s+/);
+  const groups: string[] = [];
+  const unitCount = Math.max(1, Math.ceil(units.length / count));
+  for (let index = 0; index < count; index += 1) {
+    groups.push(units.slice(index * unitCount, (index + 1) * unitCount).join(" "));
+  }
+  return groups.map((item) => item.trim()).filter(Boolean);
+}
+
+function formatExportTimestamp(start: number, end: number) {
+  return `[${formatClock(start)} - ${formatClock(end)}]`;
+}
+
+function exportSegmentLabel(
+  segment: TranscriptSegment,
+  options: ExportOptions,
+) {
+  const parts = [];
+  if (options.includeTimestamps) {
+    parts.push(formatExportTimestamp(segment.start, segment.end));
+  }
+  if (options.includeSpeakers && segment.speaker != null) {
+    parts.push(speakerLabel(segment.speaker));
+  }
+  return parts.join(" ");
+}
+
 function TranscriptEditorPage() {
   const { id } = Route.useParams();
   const transcriptId = Number.parseInt(id, 10);
@@ -357,6 +409,12 @@ function TranscriptEditorPage() {
   const [versions, setVersions] = useState<TranscriptVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [exportOptions, setExportOptions] = useState<ExportOptions>({
+    includeSpeakers: true,
+    includeTimestamps: true,
+    layout: "segments",
+    translationMode: "bilingual",
+  });
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
@@ -375,6 +433,10 @@ function TranscriptEditorPage() {
   const activeTranscriptId = transcript?.id ?? null;
   const syncAvailable = words.length > 0 && words.length <= MAX_SYNC_WORDS;
   const segments = useMemo(() => buildSegments(words), [words]);
+  const translationSegments = useMemo(
+    () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
+    [segments.length, transcript?.translated_text],
+  );
   const plainTextActiveRange = useMemo(
     () =>
       syncAvailable && activeWordIndex >= 0
@@ -425,6 +487,15 @@ function TranscriptEditorPage() {
   useEffect(() => {
     if (searchIndex >= searchMatches.length) setSearchIndex(-1);
   }, [searchIndex, searchMatches.length]);
+
+  useEffect(() => {
+    if (transcript?.translated_text) return;
+    setExportOptions((current) =>
+      current.translationMode === "original"
+        ? current
+        : { ...current, translationMode: "original" },
+    );
+  }, [transcript?.translated_text]);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -1102,40 +1173,166 @@ function TranscriptEditorPage() {
     return transcript?.filename.replace(/\.[^.]+$/, "") || "transcript";
   }
 
+  function effectiveExportOptions(): ExportOptions {
+    return {
+      ...exportOptions,
+      translationMode: transcript?.translated_text
+        ? exportOptions.translationMode
+        : "original",
+    };
+  }
+
+  function exportMetadataLines() {
+    return [
+      "Vbee AI Speech Workspace",
+      `Tệp: ${transcript?.filename || baseFilename()}`,
+      `Ngày tạo transcript: ${
+        transcript?.created_at
+          ? new Date(transcript.created_at).toLocaleString("vi-VN")
+          : "Chưa có"
+      }`,
+      `Thời lượng: ${formatMediaDuration(transcript?.duration, "Chưa xác định")}`,
+      `Ngôn ngữ gốc: ${languageLabel(transcript?.source_language)}`,
+      transcript?.translated_text
+        ? `Bản dịch: ${languageLabel(transcript.translation_target_language)}`
+        : "Bản dịch: Chưa có",
+    ];
+  }
+
+  function buildExportSegmentLines(options: ExportOptions) {
+    if (!segments.length) {
+      return [editorText.trim()].filter(Boolean);
+    }
+    return segments.flatMap((segment, index) => {
+      const label = exportSegmentLabel(segment, options);
+      const original = joinWords(segment.words);
+      const translated = translationSegments[index] || "";
+      const lines = [];
+      if (label) lines.push(label);
+      if (options.translationMode !== "translation") lines.push(original);
+      if (
+        options.translationMode === "translation" ||
+        options.translationMode === "bilingual"
+      ) {
+        if (translated) {
+          lines.push(
+            options.translationMode === "bilingual"
+              ? `Bản dịch: ${translated}`
+              : translated,
+          );
+        }
+      }
+      return [lines.join("\n")];
+    });
+  }
+
+  function buildExportTextContent() {
+    const options = effectiveExportOptions();
+    const title =
+      options.translationMode === "translation"
+        ? "BẢN DỊCH"
+        : options.translationMode === "bilingual"
+          ? "TRANSCRIPT SONG NGỮ"
+          : "TRANSCRIPT";
+    const body =
+      options.layout === "segments"
+        ? buildExportSegmentLines(options).join("\n\n")
+        : options.translationMode === "translation"
+          ? String(transcript?.translated_text || "").trim()
+          : options.translationMode === "bilingual"
+            ? [
+                "Transcript gốc",
+                editorText.trim(),
+                `Bản dịch (${languageLabel(transcript?.translation_target_language)})`,
+                String(transcript?.translated_text || "").trim(),
+              ]
+                .filter(Boolean)
+                .join("\n\n")
+            : editorText.trim();
+    return [title, ...exportMetadataLines(), "", body].join("\n");
+  }
+
   function exportText() {
-    const content = transcript?.translated_text
-      ? `${editorText}\n\nBản dịch (${languageLabel(transcript.translation_target_language)})\n\n${transcript.translated_text}`
-      : editorText;
     downloadBlob(
-      new Blob([content], { type: "text/plain;charset=utf-8" }),
+      new Blob([buildExportTextContent()], { type: "text/plain;charset=utf-8" }),
       `${baseFilename()}.txt`,
     );
   }
 
   async function exportDocx() {
-    const paragraphs = [
-      new Paragraph({ children: [new TextRun({ text: editorText })] }),
+    const options = effectiveExportOptions();
+    const paragraphs: Paragraph[] = [
+      new Paragraph({
+        children: [
+          new TextRun({
+            text:
+              options.translationMode === "translation"
+                ? "Bản dịch transcript"
+                : options.translationMode === "bilingual"
+                  ? "Transcript song ngữ"
+                  : "Transcript",
+            bold: true,
+            size: 34,
+          }),
+        ],
+      }),
+      ...exportMetadataLines().map(
+        (line) =>
+          new Paragraph({
+            children: [new TextRun({ text: line, size: 20, color: "5F4C82" })],
+          }),
+      ),
+      new Paragraph({ children: [new TextRun({ text: "" })] }),
     ];
-    if (transcript?.translated_text) {
-      paragraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `Bản dịch (${languageLabel(transcript.translation_target_language)})`,
-              bold: true,
+
+    if (options.layout === "segments") {
+      buildExportSegmentLines(options).forEach((segmentBlock, index) => {
+        const [firstLine, ...bodyLines] = segmentBlock.split("\n");
+        if (firstLine && (firstLine.startsWith("[") || firstLine.includes("Người nói"))) {
+          paragraphs.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: firstLine,
+                  bold: true,
+                  color: "21104A",
+                }),
+              ],
             }),
-          ],
-        }),
-        new Paragraph({
-          children: [new TextRun({ text: transcript.translated_text })],
-        }),
-      );
+          );
+        } else if (firstLine) {
+          bodyLines.unshift(firstLine);
+        }
+        bodyLines.forEach((line) => {
+          paragraphs.push(
+            new Paragraph({
+              children: [new TextRun({ text: line, size: 22 })],
+            }),
+          );
+        });
+        if (index < segments.length - 1) {
+          paragraphs.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
+        }
+      });
+    } else {
+      buildExportTextContent()
+        .split("\n")
+        .slice(exportMetadataLines().length + 2)
+        .forEach((line) => {
+          paragraphs.push(
+            new Paragraph({
+              children: [new TextRun({ text: line, size: 22 })],
+            }),
+          );
+        });
     }
+
     const documentFile = new Document({ sections: [{ children: paragraphs }] });
     downloadBlob(await Packer.toBlob(documentFile), `${baseFilename()}.docx`);
   }
 
   function exportCaptions(format: "srt" | "vtt") {
+    const options = effectiveExportOptions();
     const captionSegments = segments.length
       ? segments
       : [
@@ -1151,8 +1348,18 @@ function TranscriptEditorPage() {
       .map((segment, index) => {
         const timing = `${formatCaptionTime(segment.start, separator)} --> ${formatCaptionTime(segment.end, separator)}`;
         const label =
-          segment.speaker == null ? "" : `${speakerLabel(segment.speaker)}: `;
-        return `${format === "srt" ? `${index + 1}\n` : ""}${timing}\n${label}${joinWords(segment.words)}`;
+          options.includeSpeakers && segment.speaker != null
+            ? `${speakerLabel(segment.speaker)}: `
+            : "";
+        const original = `${label}${joinWords(segment.words)}`;
+        const translated = translationSegments[index] || "";
+        const captionText =
+          options.translationMode === "translation" && translated
+            ? translated
+            : options.translationMode === "bilingual" && translated
+              ? `${original}\n${translated}`
+              : original;
+        return `${format === "srt" ? `${index + 1}\n` : ""}${timing}\n${captionText}`;
       })
       .join("\n\n");
     const content = format === "vtt" ? `WEBVTT\n\n${body}\n` : `${body}\n`;
@@ -1629,6 +1836,84 @@ function TranscriptEditorPage() {
               <h2 className="flex items-center gap-2 text-sm font-black">
                 <Download className="h-4 w-4 text-[#8067aa]" /> Xuất transcript
               </h2>
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold text-[#5f4c82]">
+                    Mẫu xuất
+                    <select
+                      value={exportOptions.layout}
+                      onChange={(event) =>
+                        setExportOptions((current) => ({
+                          ...current,
+                          layout: event.target.value as ExportLayout,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-bold text-[#21104a]"
+                    >
+                      <option value="segments">Theo từng đoạn</option>
+                      <option value="document">Tài liệu liền mạch</option>
+                    </select>
+                  </label>
+                  <label className="text-xs font-bold text-[#5f4c82]">
+                    Nội dung
+                    <select
+                      value={exportOptions.translationMode}
+                      onChange={(event) =>
+                        setExportOptions((current) => ({
+                          ...current,
+                          translationMode:
+                            event.target.value as ExportTranslationMode,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-bold text-[#21104a]"
+                    >
+                      <option value="original">Transcript gốc</option>
+                      <option
+                        value="translation"
+                        disabled={!transcript.translated_text}
+                      >
+                        Chỉ bản dịch
+                      </option>
+                      <option
+                        value="bilingual"
+                        disabled={!transcript.translated_text}
+                      >
+                        Song ngữ
+                      </option>
+                    </select>
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 rounded-md border border-[#ece7f2] px-2 py-2 text-xs font-bold text-[#5f4c82]">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeSpeakers}
+                      onChange={(event) =>
+                        setExportOptions((current) => ({
+                          ...current,
+                          includeSpeakers: event.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 accent-[#21104a]"
+                    />
+                    Speaker
+                  </label>
+                  <label className="flex items-center gap-2 rounded-md border border-[#ece7f2] px-2 py-2 text-xs font-bold text-[#5f4c82]">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeTimestamps}
+                      onChange={(event) =>
+                        setExportOptions((current) => ({
+                          ...current,
+                          includeTimestamps: event.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 accent-[#21104a]"
+                    />
+                    Timestamp
+                  </label>
+                </div>
+              </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
                   type="button"

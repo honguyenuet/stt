@@ -16,6 +16,11 @@ const {
   updateManagedUserStatus,
 } = require("../services/adminUserService");
 const {
+  normalizeBillingCycle,
+  normalizePlan: normalizeQuotaPlan,
+  upgradeUserPlan,
+} = require("../services/quotaService");
+const {
   ACTIVE_JOB_STATUSES,
   cancelTranscriptionJobForUser,
   kickTranscriptionWorker,
@@ -37,7 +42,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
 const ADMIN_TOKEN_TTL = "8h";
 
-const MUTATION_ROLES = new Set(["super_admin", "admin"]);
+const MUTATION_ROLES = new Set(["admin"]);
 const SUPPORT_STATUSES = new Set(["open", "pending", "resolved", "closed"]);
 
 function createAdminError(statusCode, message) {
@@ -66,7 +71,7 @@ function readBearerToken(req) {
 }
 
 function normalizeAdminUser(row) {
-  const role = getEffectiveAdminRole(row) || "viewer";
+  const role = getEffectiveAdminRole(row) || "user";
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
@@ -105,7 +110,7 @@ async function requireAdmin(req, res, next) {
       admin_role: getEffectiveAdminRole(user),
     };
     if (
-      req.admin.admin_role === "support" &&
+      req.admin.admin_role === "supporter" &&
       req.path !== "/auth/me" &&
       !req.path.startsWith("/support/")
     ) {
@@ -139,11 +144,11 @@ function requireSupportMutation(req, res, next) {
   next();
 }
 
-function requireSuperAdmin(req, res, next) {
-  if (req.admin.admin_role !== "super_admin") {
+function requireCmsAdmin(req, res, next) {
+  if (req.admin.admin_role !== "admin") {
     return res
       .status(403)
-      .json({ error: "Chỉ super_admin được thực hiện thao tác này" });
+      .json({ error: "Chỉ admin được thực hiện thao tác này" });
   }
   next();
 }
@@ -151,6 +156,27 @@ function requireSuperAdmin(req, res, next) {
 function toInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseDate(value, endOfDay = false) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const date = new Date(`${raw.slice(0, 10)}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function csvEscape(value) {
+  const text =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function csvLine(values) {
+  return values.map(csvEscape).join(",");
 }
 
 function paginate(rows, page, limit, total) {
@@ -188,7 +214,8 @@ function userSelectSql() {
   return `
     SELECT u.id, u.first_name, u.last_name, u.email,
       u.admin_role, u.status, u.role, u.account_status,
-      u.quota_seconds, u.created_at, u.last_login_at,
+      u.plan, u.quota_seconds, u.plan_started_at, u.plan_expires_at,
+      u.created_at, u.last_login_at,
       COALESCE(SUM(CASE WHEN t.status = 'completed' THEN COALESCE(t.duration, 0) ELSE 0 END), 0) AS used_seconds
     FROM users u
     LEFT JOIN transcriptions t ON t.user_id = u.id
@@ -200,10 +227,18 @@ function normalizeManagedUser(row) {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role: getEffectiveAdminRole(row) || "viewer",
-    status: isAdminAccountActive(row) ? "active" : "suspended",
+    role: getEffectiveAdminRole(row) || "user",
+    status:
+      row.status === "deleted"
+        ? "deleted"
+        : isAdminAccountActive(row)
+          ? "active"
+          : "suspended",
+    plan: normalizeQuotaPlan(row.plan),
     quota_minutes: Math.ceil(Number(row.quota_seconds || 0) / 60),
     used_minutes: Math.ceil(Number(row.used_seconds || 0) / 60),
+    plan_started_at: row.plan_started_at || null,
+    plan_expires_at: row.plan_expires_at || null,
     created_at: row.created_at,
     last_login_at: row.last_login_at,
   };
@@ -333,6 +368,47 @@ function normalizeSupportMessage(row) {
     sender: row.sender === "admin" ? "admin" : "user",
     message: row.message || "",
     created_at: row.created_at,
+  };
+}
+
+function buildAuditLogFilters(query) {
+  const search = String(query.search || "").trim();
+  const action = String(query.action || "all");
+  const actor = String(query.actor || "").trim();
+  const targetType = String(query.targetType || "all");
+  const dateFrom = parseDate(query.dateFrom);
+  const dateTo = parseDate(query.dateTo, true);
+  const filters = [];
+  const params = [];
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    filters.push(
+      `(LOWER(actor) LIKE $${params.length} OR LOWER(target_id) LIKE $${params.length} OR LOWER(action) LIKE $${params.length} OR LOWER(target_type) LIKE $${params.length})`,
+    );
+  }
+  if (action !== "all") {
+    params.push(action);
+    filters.push(`action = $${params.length}`);
+  }
+  if (actor) {
+    params.push(`%${actor.toLowerCase()}%`);
+    filters.push(`LOWER(actor) LIKE $${params.length}`);
+  }
+  if (targetType !== "all") {
+    params.push(targetType);
+    filters.push(`target_type = $${params.length}`);
+  }
+  if (dateFrom) {
+    params.push(dateFrom);
+    filters.push(`created_at >= $${params.length}`);
+  }
+  if (dateTo) {
+    params.push(dateTo);
+    filters.push(`created_at <= $${params.length}`);
+  }
+  return {
+    params,
+    where: filters.length ? `WHERE ${filters.join(" AND ")}` : "",
   };
 }
 
@@ -504,6 +580,10 @@ router.get("/users", requireAdmin, async (req, res) => {
     const search = String(req.query.search || "").trim();
     const role = String(req.query.role || "all");
     const status = String(req.query.status || "all");
+    const plan = String(req.query.plan || "all");
+    const quotaStatus = String(req.query.quotaStatus || "all");
+    const createdFrom = parseDate(req.query.createdFrom);
+    const createdTo = parseDate(req.query.createdTo, true);
     const filters = [];
     const params = [];
 
@@ -514,11 +594,22 @@ router.get("/users", requireAdmin, async (req, res) => {
       );
     }
     if (role !== "all") {
-      params.push(role);
-      filters.push(
-        `(u.admin_role = $${params.length} OR
-          (u.admin_role = 'none' AND u.role = $${params.length}))`,
-      );
+      if (role === "admin") {
+        filters.push(
+          `(u.admin_role IN ('admin', 'super_admin') OR
+            (u.admin_role = 'none' AND u.role IN ('admin', 'super_admin')))`,
+        );
+      } else if (role === "supporter") {
+        filters.push(
+          `(u.admin_role IN ('supporter', 'support') OR
+            (u.admin_role = 'none' AND u.role IN ('supporter', 'support')))`,
+        );
+      } else if (role === "user") {
+        filters.push(
+          `(u.admin_role IS NULL OR u.admin_role IN ('none', 'user', 'viewer') OR
+            (u.admin_role = 'none' AND u.role = 'user'))`,
+        );
+      }
     }
     if (status !== "all") {
       params.push(status);
@@ -527,21 +618,60 @@ router.get("/users", requireAdmin, async (req, res) => {
           u.account_status = CASE
             WHEN $${params.length} = 'active' THEN 'active'
             ELSE 'blocked'
-          END)`,
+        END)`,
+      );
+    }
+    if (plan !== "all") {
+      params.push(normalizeQuotaPlan(plan));
+      filters.push(`u.plan = $${params.length}`);
+    }
+    if (createdFrom) {
+      params.push(createdFrom);
+      filters.push(`u.created_at >= $${params.length}`);
+    }
+    if (createdTo) {
+      params.push(createdTo);
+      filters.push(`u.created_at <= $${params.length}`);
+    }
+    if (quotaStatus === "low") {
+      filters.push(
+        `(u.quota_seconds > 0 AND COALESCE(usage.used_seconds, 0) >= u.quota_seconds * 0.8)`,
+      );
+    } else if (quotaStatus === "exceeded") {
+      filters.push(
+        `(u.quota_seconds > 0 AND COALESCE(usage.used_seconds, 0) >= u.quota_seconds)`,
       );
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
     const { rows } = await pool.query(
-      `${userSelectSql()}
+      `SELECT u.id, u.first_name, u.last_name, u.email,
+         u.admin_role, u.status, u.role, u.account_status,
+         u.plan, u.quota_seconds, u.plan_started_at, u.plan_expires_at,
+         u.created_at, u.last_login_at,
+         COALESCE(usage.used_seconds, 0) AS used_seconds
+       FROM users u
+       LEFT JOIN (
+         SELECT user_id,
+           COALESCE(SUM(CASE WHEN status = 'completed' THEN COALESCE(duration, 0) ELSE 0 END), 0) AS used_seconds
+         FROM transcriptions
+         GROUP BY user_id
+       ) usage ON usage.user_id = u.id
        ${where}
-       GROUP BY u.id
        ORDER BY u.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset],
     );
     const totalResult = await pool.query(
-      `SELECT COUNT(*)::int AS count FROM users u ${where}`,
+      `SELECT COUNT(*)::int AS count
+       FROM users u
+       LEFT JOIN (
+         SELECT user_id,
+           COALESCE(SUM(CASE WHEN status = 'completed' THEN COALESCE(duration, 0) ELSE 0 END), 0) AS used_seconds
+         FROM transcriptions
+         GROUP BY user_id
+       ) usage ON usage.user_id = u.id
+       ${where}`,
       params,
     );
     return res.json(
@@ -581,17 +711,17 @@ router.patch(
           `SELECT admin_role FROM users WHERE id = $1`,
           [req.params.id],
         );
-        if (target.rows[0]?.admin_role === "super_admin") {
-          const activeSuperAdmins = await pool.query(
+        if (["admin", "super_admin"].includes(target.rows[0]?.admin_role)) {
+          const activeAdmins = await pool.query(
             `SELECT COUNT(*)::integer AS count
              FROM users
-             WHERE admin_role = 'super_admin'
+             WHERE admin_role IN ('admin', 'super_admin')
                AND status = 'active'
                AND account_status = 'active'`,
           );
-          if (Number(activeSuperAdmins.rows[0]?.count || 0) <= 1) {
+          if (Number(activeAdmins.rows[0]?.count || 0) <= 1) {
             return res.status(400).json({
-              error: "Không thể khóa quản trị viên cao nhất cuối cùng",
+              error: "Không thể khóa admin cuối cùng",
             });
           }
         }
@@ -621,36 +751,36 @@ router.patch(
 router.patch(
   "/users/:id/role",
   requireAdmin,
-  requireSuperAdmin,
+  requireCmsAdmin,
   async (req, res) => {
     try {
       const role = String(req.body.role || "");
       if (!ADMIN_ROLES.has(role))
         return res.status(400).json({ error: "Role không hợp lệ" });
       if (
-        role !== "super_admin" &&
+        role !== "admin" &&
         String(req.params.id) === String(req.admin.id)
       ) {
         return res.status(400).json({
           error: "Bạn không thể tự hạ quyền của tài khoản đang đăng nhập",
         });
       }
-      if (role !== "super_admin") {
+      if (role !== "admin") {
         const target = await pool.query(
           "SELECT admin_role FROM users WHERE id = $1",
           [req.params.id],
         );
-        if (target.rows[0]?.admin_role === "super_admin") {
-          const superAdmins = await pool.query(
+        if (["admin", "super_admin"].includes(target.rows[0]?.admin_role)) {
+          const admins = await pool.query(
             `SELECT COUNT(*)::integer AS count
              FROM users
-             WHERE admin_role = 'super_admin'
+             WHERE admin_role IN ('admin', 'super_admin')
                AND status = 'active'
                AND account_status = 'active'`,
           );
-          if (Number(superAdmins.rows[0]?.count || 0) <= 1) {
+          if (Number(admins.rows[0]?.count || 0) <= 1) {
             return res.status(400).json({
-              error: "Hệ thống phải còn ít nhất một quản trị viên cao nhất",
+              error: "Hệ thống phải còn ít nhất một admin",
             });
           }
         }
@@ -683,7 +813,9 @@ router.post(
   requireMutation,
   async (req, res) => {
     try {
-      const deltaMinutes = Number(req.body.deltaMinutes);
+      const deltaMinutes = Number(
+        req.body.deltaMinutes ?? req.body.quotaMinutes,
+      );
       const reason = String(req.body.reason || "").trim().slice(0, 500);
       if (
         !Number.isFinite(deltaMinutes) ||
@@ -731,6 +863,99 @@ router.post(
   },
 );
 
+router.patch(
+  "/users/:id/plan",
+  requireAdmin,
+  requireMutation,
+  async (req, res) => {
+    try {
+      const plan = normalizeQuotaPlan(req.body.plan);
+      const billingCycle = normalizeBillingCycle(req.body.billingCycle);
+      const before = await getManagedUserById(req.params.id);
+      if (!before) {
+        return res.status(404).json({ error: "Không tìm thấy user" });
+      }
+      await upgradeUserPlan(req.params.id, plan, billingCycle);
+      const updated = await getManagedUserById(req.params.id);
+      await writeAudit({
+        actorRow: req.admin,
+        action: "plan.update",
+        targetType: "user",
+        targetId: req.params.id,
+        details: {
+          from_plan: before.plan,
+          to_plan: plan,
+          billing_cycle: billingCycle,
+        },
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error("Admin user plan error:", error);
+      return res.status(error.statusCode || 500).json({
+        error: error.statusCode ? error.message : "Không cập nhật được gói",
+      });
+    }
+  },
+);
+
+router.delete(
+  "/users/:id",
+  requireAdmin,
+  requireCmsAdmin,
+  async (req, res) => {
+    try {
+      if (String(req.params.id) === String(req.admin.id)) {
+        return res
+          .status(400)
+          .json({ error: "Bạn không thể xóa chính tài khoản đang đăng nhập" });
+      }
+      const before = await getManagedUserById(req.params.id);
+      if (!before) {
+        return res.status(404).json({ error: "Không tìm thấy user" });
+      }
+      if (before.role === "admin") {
+        const admins = await pool.query(
+          `SELECT COUNT(*)::integer AS count
+           FROM users
+           WHERE admin_role IN ('admin', 'super_admin')
+             AND status = 'active'
+             AND account_status = 'active'`,
+        );
+        if (Number(admins.rows[0]?.count || 0) <= 1) {
+          return res.status(400).json({
+            error: "Hệ thống phải còn ít nhất một admin",
+          });
+        }
+      }
+      await pool.query(
+        `UPDATE users
+         SET status = 'deleted',
+             account_status = 'blocked',
+             admin_role = 'none',
+             role = 'user',
+             auth_version = auth_version + 1
+         WHERE id = $1`,
+        [req.params.id],
+      );
+      await writeAudit({
+        actorRow: req.admin,
+        action: "user.delete",
+        targetType: "user",
+        targetId: req.params.id,
+        details: {
+          email: before.email,
+          name: before.name,
+          plan: before.plan,
+        },
+      });
+      return res.json({ ...before, status: "deleted" });
+    } catch (error) {
+      console.error("Admin delete user error:", error);
+      return res.status(500).json({ error: "Không xóa được user" });
+    }
+  },
+);
+
 router.get("/jobs", requireAdmin, async (req, res) => {
   try {
     const page = toInt(req.query.page, 1);
@@ -738,6 +963,10 @@ router.get("/jobs", requireAdmin, async (req, res) => {
     const search = String(req.query.search || "").trim();
     const status = String(req.query.status || "all");
     const language = String(req.query.language || "all");
+    const source = String(req.query.source || "all");
+    const deadLetter = String(req.query.deadLetter || "all");
+    const createdFrom = parseDate(req.query.createdFrom);
+    const createdTo = parseDate(req.query.createdTo, true);
     const filters = [];
     const params = [];
     if (search) {
@@ -757,6 +986,21 @@ router.get("/jobs", requireAdmin, async (req, res) => {
     if (language !== "all") {
       params.push(language);
       filters.push(`t.source_language = $${params.length}`);
+    }
+    if (source !== "all") {
+      params.push(source);
+      filters.push(`COALESCE(q.source, 'upload') = $${params.length}`);
+    }
+    if (deadLetter === "true") filters.push(`q.dead_lettered = TRUE`);
+    if (deadLetter === "false")
+      filters.push(`COALESCE(q.dead_lettered, FALSE) = FALSE`);
+    if (createdFrom) {
+      params.push(createdFrom);
+      filters.push(`t.created_at >= $${params.length}`);
+    }
+    if (createdTo) {
+      params.push(createdTo);
+      filters.push(`t.created_at <= $${params.length}`);
     }
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
     const { rows } = await pool.query(
@@ -1252,26 +1496,7 @@ router.get("/audit-logs", requireAdmin, async (req, res) => {
   const page = toInt(req.query.page, 1);
   const limit = Math.min(toInt(req.query.limit, 20), 100);
   const offset = (page - 1) * limit;
-  const search = String(req.query.search || "").trim();
-  const action = String(req.query.action || "all");
-  const actor = String(req.query.actor || "").trim();
-  const filters = [];
-  const params = [];
-  if (search) {
-    params.push(`%${search.toLowerCase()}%`);
-    filters.push(
-      `(LOWER(actor) LIKE $${params.length} OR LOWER(target_id) LIKE $${params.length} OR LOWER(action) LIKE $${params.length})`,
-    );
-  }
-  if (action !== "all") {
-    params.push(action);
-    filters.push(`action = $${params.length}`);
-  }
-  if (actor) {
-    params.push(`%${actor.toLowerCase()}%`);
-    filters.push(`LOWER(actor) LIKE $${params.length}`);
-  }
-  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
+  const { params, where } = buildAuditLogFilters(req.query);
   const { rows } = await pool.query(
     `SELECT id::text, actor, action, target_type, target_id, details, created_at
      FROM audit_logs ${where}
@@ -1286,11 +1511,48 @@ router.get("/audit-logs", requireAdmin, async (req, res) => {
   return res.json(paginate(rows, page, limit, totalResult.rows[0].count));
 });
 
+router.get("/audit-logs/export", requireAdmin, requireCmsAdmin, async (req, res) => {
+  const { params, where } = buildAuditLogFilters(req.query);
+  const { rows } = await pool.query(
+    `SELECT id::text, actor, action, target_type, target_id, details, created_at
+     FROM audit_logs ${where}
+     ORDER BY created_at DESC
+     LIMIT 5000`,
+    params,
+  );
+  const lines = [
+    csvLine([
+      "id",
+      "created_at",
+      "actor",
+      "action",
+      "target_type",
+      "target_id",
+      "details",
+    ]),
+    ...rows.map((row) =>
+      csvLine([
+        row.id,
+        row.created_at,
+        row.actor,
+        row.action,
+        row.target_type,
+        row.target_id,
+        row.details,
+      ]),
+    ),
+  ];
+  return res.json({
+    filename: `cms-audit-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+    content: lines.join("\n"),
+  });
+});
+
 router.get("/settings", requireAdmin, async (_req, res) => {
   return res.json(await getAdminSettings());
 });
 
-router.put("/settings", requireAdmin, requireSuperAdmin, async (req, res) => {
+router.put("/settings", requireAdmin, requireCmsAdmin, async (req, res) => {
   const settings = await saveAdminSettings(req.body || {}, req.admin.id);
   await writeAudit({
     actorRow: req.admin,
@@ -1440,7 +1702,7 @@ router.get("/plans", requireAdmin, async (_req, res) => {
   return res.json(rows.map(normalizePlan));
 });
 
-router.put("/plans/:id", requireAdmin, requireSuperAdmin, async (req, res) => {
+router.put("/plans/:id", requireAdmin, requireCmsAdmin, async (req, res) => {
   const current = await pool.query(
     "SELECT * FROM service_plans WHERE id = $1",
     [req.params.id],
@@ -1509,7 +1771,7 @@ router.get("/providers", requireAdmin, async (_req, res) => {
 router.put(
   "/providers/:id",
   requireAdmin,
-  requireSuperAdmin,
+  requireCmsAdmin,
   async (req, res) => {
     const body = req.body || {};
     const providerId = Number.parseInt(req.params.id, 10);
@@ -1722,7 +1984,33 @@ router.post(
   },
 );
 
-async function getReportSummary() {
+function getReportDateScope(query = {}) {
+  return {
+    dateFrom: parseDate(query.dateFrom),
+    dateTo: parseDate(query.dateTo, true),
+  };
+}
+
+function buildDateFilter(scope, column = "created_at") {
+  const filters = [];
+  const params = [];
+  if (scope.dateFrom) {
+    params.push(scope.dateFrom);
+    filters.push(`${column} >= $${params.length}`);
+  }
+  if (scope.dateTo) {
+    params.push(scope.dateTo);
+    filters.push(`${column} <= $${params.length}`);
+  }
+  return {
+    params,
+    where: filters.length ? `WHERE ${filters.join(" AND ")}` : "",
+    and: filters.length ? `AND ${filters.join(" AND ")}` : "",
+  };
+}
+
+async function getReportSummary(scope = {}) {
+  const dateFilter = buildDateFilter(scope);
   const [users, jobs, audio, quota, revenue, performance, usage, providers] =
     await Promise.all([
       pool.query(`
@@ -1735,13 +2023,13 @@ async function getReportSummary() {
         SELECT COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
           COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
-        FROM transcriptions
-      `),
+        FROM transcriptions ${dateFilter.where}
+      `, dateFilter.params),
       pool.query(`
         SELECT COUNT(*)::int AS files,
           COALESCE(CEIL(SUM(COALESCE(duration, 0)) / 60.0), 0)::int AS processed_minutes
-        FROM transcriptions WHERE status = 'completed'
-      `),
+        FROM transcriptions WHERE status = 'completed' ${dateFilter.and}
+      `, dateFilter.params),
       pool.query(`
         SELECT COALESCE(CEIL(SUM(quota_seconds) / 60.0), 0)::int AS allocated_minutes
         FROM users
@@ -1749,12 +2037,12 @@ async function getReportSummary() {
       pool.query(`
         SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)::int AS total_vnd,
           COUNT(*) FILTER (WHERE status = 'paid')::int AS paid_orders
-        FROM billing_orders
-      `),
+        FROM billing_orders ${dateFilter.where}
+      `, dateFilter.params),
       pool.query(`
         SELECT COALESCE(AVG(processing_seconds), 0)::float AS average_processing_time
-        FROM transcriptions WHERE processing_seconds IS NOT NULL
-      `),
+        FROM transcriptions WHERE processing_seconds IS NOT NULL ${dateFilter.and}
+      `, dateFilter.params),
       pool.query(`
         SELECT to_char(day, 'YYYY-MM-DD') AS date,
           COALESCE(SUM(web_minutes), 0)::float AS web_minutes,
@@ -1802,24 +2090,38 @@ async function getReportSummary() {
       ),
     },
     daily_usage: usage.rows,
+    scope: {
+      date_from: scope.dateFrom ? scope.dateFrom.toISOString().slice(0, 10) : null,
+      date_to: scope.dateTo ? scope.dateTo.toISOString().slice(0, 10) : null,
+    },
   };
 }
 
-router.get("/reports/summary", requireAdmin, async (_req, res) => {
-  return res.json(await getReportSummary());
+router.get("/reports/summary", requireAdmin, async (req, res) => {
+  return res.json(await getReportSummary(getReportDateScope(req.query)));
 });
 
-router.get("/reports/export", requireAdmin, async (_req, res) => {
-  const report = await getReportSummary();
+router.get("/reports/export", requireAdmin, requireCmsAdmin, async (req, res) => {
+  const report = await getReportSummary(getReportDateScope(req.query));
   const lines = [
     "metric,value",
+    `date_from,${report.scope.date_from || "all"}`,
+    `date_to,${report.scope.date_to || "all"}`,
     `users_total,${report.users.total}`,
+    `users_active,${report.users.active}`,
+    `users_suspended,${report.users.suspended}`,
     `jobs_total,${report.jobs.total}`,
+    `jobs_completed,${report.jobs.completed}`,
+    `jobs_failed,${report.jobs.failed}`,
     `audio_processed_minutes,${report.audio.processed_minutes}`,
+    `audio_files,${report.audio.files}`,
+    `quota_allocated_minutes,${report.quota.allocated_minutes}`,
     `quota_used_minutes,${report.quota.used_minutes}`,
     `revenue_vnd,${report.revenue.total_vnd}`,
+    `paid_orders,${report.revenue.paid_orders}`,
     `success_rate,${report.jobs.success_rate}`,
     `avg_processing_time,${report.performance.average_processing_time}`,
+    `avg_provider_latency_ms,${report.performance.average_latency_ms}`,
   ];
   return res.json({
     filename: `cms-report-${new Date().toISOString().slice(0, 10)}.csv`,

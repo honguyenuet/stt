@@ -84,17 +84,19 @@ function AdminLoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[#f7f4ec] px-4 text-[#21104a]">
-      <div className="w-full max-w-md rounded-lg border border-[#e4ddcf] bg-white p-6 shadow-sm">
+    <div className="grid min-h-screen place-items-center bg-slate-50 px-4 text-slate-950">
+      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#ffcb05]">
+          <span className="grid h-12 w-12 place-items-center rounded-lg bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">
             <ShieldCheck className="h-6 w-6" />
           </span>
           <div>
-            <p className="text-xs font-black uppercase tracking-wide text-[#8a7100]">
-              Vbee CMS
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+              Vbee Admin
             </p>
-            <h1 className="text-2xl font-black">Đăng nhập quản trị</h1>
+            <h1 className="text-2xl font-black tracking-tight">
+              Đăng nhập quản trị
+            </h1>
           </div>
         </div>
         <form
@@ -102,12 +104,12 @@ function AdminLoginPage() {
           className="space-y-4"
         >
           <label className="block text-sm font-bold">
-              Thư điện tử
+              Email
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               type="email"
-              className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 outline-none focus:border-[#21104a]"
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
           </label>
           <label className="block text-sm font-bold">
@@ -116,7 +118,7 @@ function AdminLoginPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
-              className="mt-1 w-full rounded-md border border-[#e4ddcf] px-3 py-2 outline-none focus:border-[#21104a]"
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
           </label>
           {error && (
@@ -126,12 +128,12 @@ function AdminLoginPage() {
           )}
           <button
             disabled={loading}
-            className="w-full rounded-md bg-[#21104a] px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+            className="w-full rounded-md bg-indigo-600 px-4 py-3 text-sm font-black text-white transition hover:bg-indigo-700 disabled:opacity-60"
           >
             {loading ? "Đang đăng nhập..." : "Đăng nhập quản trị"}
           </button>
         </form>
-        <div className="mt-5 rounded-md bg-[#fbf8ef] p-3 text-xs leading-5 text-[#756894]">
+        <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
           {checkingSession
             ? "Đang kiểm tra phiên đăng nhập Vbee..."
             : user
@@ -141,7 +143,7 @@ function AdminLoginPage() {
         {!authLoading && !user && (
           <a
             href={`/login?from=${encodeURIComponent(from || "/admin")}`}
-            className="mt-3 inline-flex text-sm font-bold text-[#21104a] underline underline-offset-4"
+            className="mt-3 inline-flex text-sm font-bold text-indigo-700 underline underline-offset-4"
           >
             Đăng nhập tài khoản Vbee
           </a>

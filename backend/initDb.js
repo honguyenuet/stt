@@ -158,7 +158,7 @@ async function initDatabase() {
     UPDATE users
     SET admin_role = role
     WHERE admin_role = 'none'
-      AND role IN ('admin', 'super_admin');
+      AND role IN ('admin', 'super_admin', 'supporter', 'support');
   `);
   await pool.query(`
     UPDATE users
@@ -817,6 +817,30 @@ async function initDatabase() {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS api_key_usage_events (
+      id BIGSERIAL PRIMARY KEY,
+      api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event VARCHAR(30) NOT NULL,
+      job_id INTEGER,
+      transcription_id INTEGER,
+      duration_seconds INTEGER NOT NULL DEFAULT 0,
+      status VARCHAR(20),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_api_key_usage_key_created ON api_key_usage_events(api_key_id, created_at DESC);`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_api_key_usage_user_created ON api_key_usage_events(user_id, created_at DESC);`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_api_key_usage_event_created ON api_key_usage_events(event, created_at DESC);`,
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS billing_orders (
       id VARCHAR(36) PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1332,15 +1356,15 @@ async function initDatabase() {
       `INSERT INTO users (
          first_name, last_name, email, password, admin_role, status, role, account_status
        )
-       VALUES ($1, $2, $3, $4, 'super_admin', 'active', 'super_admin', 'active')
+       VALUES ($1, $2, $3, $4, 'admin', 'active', 'admin', 'active')
        ON CONFLICT (email) DO UPDATE
          SET password = CASE
            WHEN $5::boolean OR users.password IS NULL THEN EXCLUDED.password
            ELSE users.password
          END,
-         admin_role = 'super_admin',
+         admin_role = 'admin',
          status = 'active',
-         role = 'super_admin',
+         role = 'admin',
          account_status = 'active'`,
       [
         process.env.ADMIN_SEED_FIRST_NAME || "Vbee",
@@ -1376,14 +1400,14 @@ async function initDatabase() {
     .filter(Boolean);
   if (adminEmails.length > 0) {
     await pool.query(
-      `UPDATE users SET role = 'admin'
-       WHERE LOWER(email) = ANY($1::text[]) AND role <> 'super_admin'`,
+      `UPDATE users SET role = 'admin', admin_role = 'admin'
+       WHERE LOWER(email) = ANY($1::text[])`,
       [adminEmails],
     );
   }
   if (superAdminEmails.length > 0) {
     await pool.query(
-      `UPDATE users SET role = 'super_admin'
+      `UPDATE users SET role = 'admin', admin_role = 'admin'
        WHERE LOWER(email) = ANY($1::text[])`,
       [superAdminEmails],
     );

@@ -18,6 +18,10 @@ export function listUsers(params: ListUsersParams) {
       search: params.search,
       role: params.role,
       status: params.status,
+      plan: params.plan,
+      quotaStatus: params.quotaStatus,
+      createdFrom: params.createdFrom,
+      createdTo: params.createdTo,
     })}`,
   );
 }

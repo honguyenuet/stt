@@ -13,6 +13,7 @@ import { getApiBaseUrl } from "@/lib/api-base-url";
 const API_URL = getApiBaseUrl();
 const DEFAULT_TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_TOKEN_REFRESH_DELAY_MS = 30_000;
+const TOKEN_REFRESH_ON_VISIBLE_THRESHOLD_MS = 2 * 60 * 1000;
 const ACCOUNT_STATUS_CHECK_INTERVAL_MS = 60 * 1000;
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -39,7 +40,7 @@ export interface User {
   email: string;
   avatar: string | null;
   plan?: PlanCode;
-  role?: "user" | "support" | "finance" | "admin" | "super_admin";
+  role?: "user" | "supporter" | "admin";
   accountStatus?: "active" | "blocked" | "suspended" | "deleted";
   emailVerified?: boolean;
   organization?: string;
@@ -241,7 +242,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshDelay,
     );
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") void refreshSession();
+      const expiresAt = tokenExpiresAtRef.current;
+      const shouldRefresh =
+        !expiresAt || expiresAt - Date.now() <= TOKEN_REFRESH_ON_VISIBLE_THRESHOLD_MS;
+      if (document.visibilityState === "visible" && shouldRefresh) {
+        void refreshSession();
+      }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
@@ -260,10 +266,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       checkAccountStatus,
       ACCOUNT_STATUS_CHECK_INTERVAL_MS,
     );
-    window.addEventListener("focus", checkAccountStatus);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("focus", checkAccountStatus);
     };
   }, [fetchUser, token, user]);
 

@@ -72,10 +72,19 @@ const {
 } = require('../services/appleOAuthService');
 
 const router = express.Router();
+const { normalizeRole } = require("../services/adminAccess");
 router.use((_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Pragma', 'no-cache');
   next();
+});
+
+router.get('/providers', (_req, res) => {
+  res.json({
+    google: Boolean(passportConfig.hasGoogleOAuth),
+    facebook: hasFacebookOAuth(),
+    apple: hasAppleOAuth(),
+  });
 });
 
 const PASSWORD_RESET_TTL_MINUTES = Math.max(
@@ -143,7 +152,7 @@ function normalizeUser(row) {
     email: row.email,
     avatar: row.avatar ?? null,
     plan: normalizePlan(row.plan),
-    role: row.role || 'user',
+    role: normalizeRole(row.role),
     accountStatus: row.account_status || 'active',
     emailVerified: row.email_verified !== false,
   };
@@ -436,7 +445,7 @@ router.get(
         path: '/',
       });
       const { googleId, email, emailVerified, firstName, lastName, photo } = req.user;
-      return completeOAuthLogin({
+      return await completeOAuthLogin({
         provider: 'google',
         profile: {
           providerUserId: googleId,
@@ -515,7 +524,7 @@ router.get('/facebook/callback', oauthLimiter, async (req, res) => {
       req.query.code,
       getOAuthCallbackUrl(req, 'facebook'),
     );
-    return completeOAuthLogin({
+    return await completeOAuthLogin({
       provider: 'facebook',
       profile,
       referralCode: state.referral_code,
@@ -602,7 +611,7 @@ router.post('/apple/callback', oauthLimiter, async (req, res) => {
         // Apple chỉ gửi user object ở lần cấp quyền đầu tiên.
       }
     }
-    return completeOAuthLogin({
+    return await completeOAuthLogin({
       provider: 'apple',
       profile: {
         ...profile,

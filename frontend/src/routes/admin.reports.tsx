@@ -21,13 +21,15 @@ export const Route = createFileRoute("/admin/reports")({
 function AdminReportsPage() {
   const [report, setReport] = useState<ReportSummary | null>(null);
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   function load(showLoading = true) {
     if (showLoading) setLoading(true);
     if (showLoading) setError("");
-    void Promise.all([fetchReportSummary(), fetchSystemStatus()])
+    void Promise.all([fetchReportSummary({ dateFrom, dateTo }), fetchSystemStatus()])
       .then(([nextReport, nextStatus]) => {
         setReport(nextReport);
         setStatus(nextStatus);
@@ -47,11 +49,11 @@ function AdminReportsPage() {
       ADMIN_SUMMARY_REFRESH_MS,
     );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [dateFrom, dateTo]);
 
   async function download() {
     try {
-      const file = await exportReportCsv();
+      const file = await exportReportCsv({ dateFrom, dateTo });
       const blob = new Blob([file.content], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -71,6 +73,45 @@ function AdminReportsPage() {
     <PageState loading={loading} error={error} empty={!report} onRetry={load}>
       {report && (
         <div className="space-y-5">
+          <AdminPanel>
+            <AdminPanelHeader
+              title="Bộ lọc báo cáo"
+              description="Khoảng ngày áp dụng cho job, audio, doanh thu và hiệu năng."
+              action={
+                <button
+                  onClick={() => void download()}
+                  className="rounded-md bg-[#21104a] px-4 py-2 text-sm font-black text-white"
+                >
+                  Xuất CSV
+                </button>
+              }
+            />
+            <div className="grid gap-3 p-4 md:grid-cols-3">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+                aria-label="Từ ngày"
+              />
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+                aria-label="Đến ngày"
+              />
+              <button
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm font-black"
+              >
+                Xóa lọc ngày
+              </button>
+            </div>
+          </AdminPanel>
           <div className="grid gap-3 md:grid-cols-4">
             <Metric label="Người dùng" value={report.users.total} />
             <Metric label="Tác vụ" value={report.jobs.total} />
@@ -102,14 +143,6 @@ function AdminReportsPage() {
           <AdminPanel>
             <AdminPanelHeader
               title="Mức sử dụng 30 ngày"
-              action={
-                <button
-                  onClick={() => void download()}
-                  className="rounded-md bg-[#21104a] px-4 py-2 text-sm font-black text-white"
-                >
-                  Xuất CSV
-                </button>
-              }
             />
             <div className="flex h-72 items-end gap-1 p-4">
               {report.daily_usage.map((point) => (

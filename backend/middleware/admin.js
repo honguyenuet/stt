@@ -1,6 +1,6 @@
 const pool = require("../db");
 
-const CMS_ROLES = new Set(["support", "admin"]);
+const CMS_ROLES = new Set(["supporter", "admin"]);
 
 function requireAdmin(req, res, next) {
   if (!req.user || !CMS_ROLES.has(String(req.user.role || ""))) {

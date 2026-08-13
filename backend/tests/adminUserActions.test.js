@@ -34,9 +34,13 @@ test("CMS updates user status and role with PostgreSQL-safe parameters", async (
     assert.equal(admin.admin_role, "admin");
     assert.equal(admin.role, "admin");
 
-    const viewer = await updateManagedUserRole(client, userId, "viewer");
-    assert.equal(viewer.admin_role, "viewer");
-    assert.equal(viewer.role, "user");
+    const supporter = await updateManagedUserRole(client, userId, "supporter");
+    assert.equal(supporter.admin_role, "supporter");
+    assert.equal(supporter.role, "supporter");
+
+    const normalUser = await updateManagedUserRole(client, userId, "user");
+    assert.equal(normalUser.admin_role, "none");
+    assert.equal(normalUser.role, "user");
   } finally {
     await client.query("ROLLBACK");
     client.release();

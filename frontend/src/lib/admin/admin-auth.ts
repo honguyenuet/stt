@@ -44,17 +44,17 @@ export function readAdminSession() {
 }
 
 export function canMutate(role: AdminRole) {
-  return role === "admin" || role === "super_admin";
+  return role === "admin";
 }
 
 export function canManageSettings(role: AdminRole) {
-  return role === "super_admin";
+  return role === "admin";
 }
 
 export function canReplySupport(role: AdminRole) {
-  return role === "admin" || role === "super_admin" || role === "support";
+  return role === "admin" || role === "supporter";
 }
 
 export function canUpdateSupportStatus(role: AdminRole) {
-  return role === "admin" || role === "super_admin";
+  return role === "admin";
 }

@@ -5,6 +5,7 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { writeSecurityAudit } = require('../services/securityAuditService');
 const { getQuotaStatus } = require('../services/quotaService');
+const { getApiKeyUsageSummary } = require('../services/apiUsageService');
 
 const router = express.Router();
 
@@ -82,6 +83,16 @@ router.post('/', requireAuth, async (req, res) => {
     });
   } finally {
     client.release();
+  }
+});
+
+router.get('/usage', requireAuth, async (req, res) => {
+  try {
+    const usage = await getApiKeyUsageSummary(req.user.id);
+    return res.json(usage);
+  } catch (error) {
+    console.error('API key usage summary error:', error);
+    return res.status(500).json({ error: 'Không thể lấy thống kê API key' });
   }
 });
 

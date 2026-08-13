@@ -1,19 +1,29 @@
 const jwt = require("jsonwebtoken");
 
-const ADMIN_ROLES = new Set(["super_admin", "admin", "support", "viewer"]);
-const ADMIN_MUTATION_ROLES = new Set(["super_admin", "admin"]);
-const SUPPORT_REPLY_ROLES = new Set(["super_admin", "admin", "support"]);
+const ADMIN_ROLES = new Set(["user", "supporter", "admin"]);
+const CMS_ROLES = new Set(["supporter", "admin"]);
+const ADMIN_MUTATION_ROLES = new Set(["admin"]);
+const SUPPORT_REPLY_ROLES = new Set(["admin", "supporter"]);
 const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_TOKEN_TTL = "8h";
 
+function normalizeRole(role) {
+  if (role === "super_admin") return "admin";
+  if (role === "support") return "supporter";
+  if (role === "admin" || role === "supporter" || role === "user") return role;
+  return "user";
+}
+
 function getEffectiveAdminRole(user) {
-  if (ADMIN_ROLES.has(user?.admin_role)) return user.admin_role;
-  if (["super_admin", "admin"].includes(user?.role)) return user.role;
+  const adminRole = normalizeRole(user?.admin_role);
+  if (CMS_ROLES.has(adminRole)) return adminRole;
+  const accountRole = normalizeRole(user?.role);
+  if (CMS_ROLES.has(accountRole)) return accountRole;
   return null;
 }
 
 function normalizeAdminUser(row) {
-  const role = getEffectiveAdminRole(row) || "viewer";
+  const role = getEffectiveAdminRole(row) || "user";
   return {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
@@ -68,6 +78,7 @@ function canUpdateSupportStatusRole(role) {
 
 module.exports = {
   ADMIN_ROLES,
+  CMS_ROLES,
   canMutateAdminRole,
   canReplySupportRole,
   canUpdateSupportStatusRole,
@@ -75,4 +86,5 @@ module.exports = {
   getEffectiveAdminRole,
   isAdminAccountActive,
   normalizeAdminUser,
+  normalizeRole,
 };

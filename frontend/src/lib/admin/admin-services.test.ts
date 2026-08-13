@@ -15,7 +15,12 @@ import {
   readAdminSession,
   validateAdminSession,
 } from "./admin-auth";
-import { listUsers } from "./users-service";
+import {
+  adjustUserQuota,
+  deleteUserAccount,
+  listUsers,
+  updateUserPlan,
+} from "./users-service";
 import {
   listTranscriptionJobs,
   retryTranscriptionJob,
@@ -57,7 +62,7 @@ function seedSession() {
       id: "admin_test",
       name: "Test Admin",
       email: "admin@test.local",
-      role: "super_admin",
+      role: "admin",
     },
   });
 }
@@ -74,10 +79,9 @@ describe("admin utilities", () => {
   });
 
   it("provides a visible label for every CMS role", () => {
-    expect(roleLabel.super_admin).toBe("Quản trị cao nhất");
+    expect(roleLabel.user).toBe("Người dùng");
+    expect(roleLabel.supporter).toBe("Hỗ trợ viên");
     expect(roleLabel.admin).toBe("Quản trị viên");
-    expect(roleLabel.support).toBe("Hỗ trợ viên");
-    expect(roleLabel.viewer).toBe("Chỉ xem");
   });
 
   it("keeps status badges on one horizontal line", () => {
@@ -106,7 +110,7 @@ describe("admin utilities", () => {
               id: "1",
               name: "Vbee Admin",
               email: "superadmin@vbee.local",
-              role: "super_admin",
+              role: "admin",
             },
           }),
         ),
@@ -114,7 +118,7 @@ describe("admin utilities", () => {
     );
 
     await loginAdmin("superadmin@vbee.local", "admin123");
-    expect(readAdminSession()?.user.role).toBe("super_admin");
+    expect(readAdminSession()?.user.role).toBe("admin");
   });
 
   it("exchanges an authenticated Vbee session for a CMS session", async () => {
@@ -128,7 +132,7 @@ describe("admin utilities", () => {
               id: "5",
               name: "Vbee Admin",
               email: "admin@example.com",
-              role: "super_admin",
+              role: "admin",
             },
           }),
         ),
@@ -152,7 +156,7 @@ describe("admin utilities", () => {
               id: "admin_test",
               name: "Test Admin",
               email: "admin@test.local",
-              role: "super_admin",
+              role: "admin",
             },
           }),
         ),
@@ -161,7 +165,7 @@ describe("admin utilities", () => {
 
     const result = await validateAdminSession();
 
-    expect(result.user.role).toBe("super_admin");
+    expect(result.user.role).toBe("admin");
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(headers.get("Authorization")).toBe("Bearer test-token");
   });
@@ -183,7 +187,7 @@ describe("admin services", () => {
               id: "2",
               name: "Tran Hoang Nam",
               email: "nam.tran@example.com",
-              role: "viewer",
+              role: "user",
               status: "active",
               quota_minutes: 300,
               used_minutes: 20,
@@ -204,15 +208,62 @@ describe("admin services", () => {
       page: 1,
       limit: 10,
       search: "nam.tran",
-      role: "viewer",
+      role: "user",
       status: "active",
     });
 
     expect(result.total).toBe(1);
     expect(result.data[0]?.email).toBe("nam.tran@example.com");
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/api/admin/users?page=1&limit=10&search=nam.tran&role=viewer&status=active",
+      "/api/admin/users?page=1&limit=10&search=nam.tran&role=user&status=active",
     );
+  });
+
+  it("sends user quota, plan and delete mutations to the admin API", async () => {
+    const fetchMock = vi.fn(
+      (
+        _input: RequestInfo | URL,
+        _init?: RequestInit,
+      ): ReturnType<typeof fetch> =>
+        Promise.resolve(
+          jsonResponse({
+            id: "2",
+            name: "Tran Hoang Nam",
+            email: "nam.tran@example.com",
+            role: "user",
+            status: "active",
+            plan: "special",
+            quota_minutes: 1200,
+            used_minutes: 20,
+            plan_started_at: new Date().toISOString(),
+            plan_expires_at: null,
+            created_at: new Date().toISOString(),
+            last_login_at: null,
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await adjustUserQuota("2", 45, "Bù quota cho khách hàng");
+    await updateUserPlan("2", "special", "yearly");
+    await deleteUserAccount("2");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users/2/quota",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      quotaMinutes: 45,
+      reason: "Bù quota cho khách hàng",
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      "/api/admin/users/2/plan",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      plan: "special",
+      billingCycle: "yearly",
+    });
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: "DELETE" });
   });
 
   it("retries failed jobs through backend API", async () => {

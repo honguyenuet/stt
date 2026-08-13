@@ -3,10 +3,9 @@ import { siApple, siFacebook, siGoogle } from "simple-icons";
 import type { SimpleIcon } from "simple-icons";
 
 import { BrandIcon } from "@/components/ui/app-icon";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 type SocialProvider = "google" | "facebook" | "apple";
 type ProviderAvailability = Partial<Record<SocialProvider, boolean>>;
@@ -56,6 +55,7 @@ export function SocialAuthButtons({
     if (availability[provider] === false) return;
     setRedirecting(provider);
     const params = new URLSearchParams();
+    params.set("mode", mode);
     if (referralCode) params.set("ref", referralCode);
     if (from) params.set("from", from);
     const query = params.toString() ? `?${params.toString()}` : "";

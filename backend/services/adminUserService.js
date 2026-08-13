@@ -13,9 +13,10 @@ async function updateManagedUserStatus(db, userId, status) {
 }
 
 async function updateManagedUserRole(db, userId, adminRole) {
-  const accountRole = ["admin", "super_admin"].includes(adminRole)
+  const accountRole = adminRole === "admin" || adminRole === "supporter"
     ? adminRole
     : "user";
+  const cmsRole = accountRole === "user" ? "none" : accountRole;
   const { rows } = await db.query(
     `UPDATE users
      SET admin_role = $1,
@@ -23,7 +24,7 @@ async function updateManagedUserRole(db, userId, adminRole) {
      WHERE id = $3
      RETURNING id, first_name, last_name, email, admin_role, status,
        role, account_status, quota_seconds, created_at, last_login_at`,
-    [adminRole, accountRole, userId],
+    [cmsRole, accountRole, userId],
   );
   return rows[0] || null;
 }

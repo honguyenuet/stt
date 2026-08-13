@@ -247,6 +247,27 @@ ON api_keys(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash
 ON api_keys(key_hash);
 
+CREATE TABLE IF NOT EXISTS api_key_usage_events (
+  id                 BIGSERIAL PRIMARY KEY,
+  api_key_id         INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event              VARCHAR(30) NOT NULL,
+  job_id             INTEGER,
+  transcription_id   INTEGER,
+  duration_seconds   INTEGER NOT NULL DEFAULT 0,
+  status             VARCHAR(20),
+  created_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_key_created
+ON api_key_usage_events(api_key_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_user_created
+ON api_key_usage_events(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_event_created
+ON api_key_usage_events(event, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS transcription_provider_circuits (
   provider VARCHAR(40) PRIMARY KEY,
   state VARCHAR(20) NOT NULL DEFAULT 'closed'

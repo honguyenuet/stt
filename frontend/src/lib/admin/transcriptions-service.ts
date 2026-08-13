@@ -13,6 +13,10 @@ export function listTranscriptionJobs(params: ListJobsParams) {
       search: params.search,
       status: params.status,
       language: params.language,
+      source: params.source,
+      deadLetter: params.deadLetter,
+      createdFrom: params.createdFrom,
+      createdTo: params.createdTo,
     })}`,
   );
 }
