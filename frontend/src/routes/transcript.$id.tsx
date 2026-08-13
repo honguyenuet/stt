@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
+import { TranscriptSidebarSection } from "@/components/transcript-sidebar-section";
 import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
@@ -1402,8 +1403,14 @@ function TranscriptEditorPage() {
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
-          <section className="overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
+        <div
+          className={`grid gap-4 lg:min-h-[360px] lg:grid-cols-[minmax(0,1fr)_310px] ${
+            transcript.audio_filename
+              ? "lg:h-[calc(100dvh-345px)]"
+              : "lg:h-[calc(100dvh-290px)]"
+          }`}
+        >
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex w-fit rounded-md bg-[#f3f0f7] p-1">
                 <button
@@ -1506,7 +1513,7 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
-                className="max-h-[calc(100vh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7"
+                className="max-h-[calc(100dvh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
               >
                 <div className="mx-auto max-w-3xl space-y-6">
                   {segments.map((segment, segmentIndex) => (
@@ -1542,8 +1549,8 @@ function TranscriptEditorPage() {
                 </div>
               </div>
             ) : (
-              <div className="p-4 md:p-6">
-                <div className="relative min-h-[560px]">
+              <div className="flex min-h-[620px] flex-col p-4 md:p-6 lg:min-h-0 lg:flex-1">
+                <div className="relative min-h-[560px] lg:min-h-0 lg:flex-1">
                   {syncAvailable && (
                     <div
                       aria-hidden="true"
@@ -1570,7 +1577,7 @@ function TranscriptEditorPage() {
                     }}
                     aria-label="Nội dung transcript"
                     spellCheck
-                    className={`relative min-h-[560px] w-full resize-y rounded-lg border border-[#ded5e9] px-5 py-4 text-[15px] leading-8 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 ${
+                    className={`relative h-full min-h-[560px] w-full resize-y rounded-lg border border-[#ded5e9] px-5 py-4 text-[15px] leading-8 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 lg:min-h-0 lg:resize-none ${
                       syncAvailable
                         ? "bg-transparent text-transparent caret-[#21104a] selection:bg-[#8067aa]/20"
                         : "bg-[#fbfaf7] text-[#342752]"
@@ -1585,12 +1592,13 @@ function TranscriptEditorPage() {
             )}
           </section>
 
-          <aside className="space-y-4 print:hidden">
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <FileText className="h-4 w-4 text-[#8067aa]" /> Thông tin
-              </h2>
-              <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-xs">
+          <aside className="space-y-2 print:hidden lg:h-full lg:overflow-y-auto lg:pr-1">
+            <TranscriptSidebarSection
+              icon={<FileText className="h-4 w-4" />}
+              title="Thông tin"
+              defaultOpen
+            >
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
                 <div>
                   <dt className="text-[#8a7da1]">Thời lượng</dt>
                   <dd className="mt-1 font-bold">
@@ -1619,21 +1627,22 @@ function TranscriptEditorPage() {
                   </dd>
                 </div>
               </dl>
-              <div className="mt-4 flex items-center gap-2 border-t border-[#ece7f2] pt-4 text-xs text-[#756894]">
+              <div className="mt-3 flex items-center gap-2 border-t border-[#ece7f2] pt-3 text-xs text-[#756894]">
                 <Clock3 className="h-3.5 w-3.5" />
                 {new Date(transcript.created_at).toLocaleString("vi-VN")}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Download className="h-4 w-4 text-[#8067aa]" /> Xuất transcript
-              </h2>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+            <TranscriptSidebarSection
+              icon={<Download className="h-4 w-4" />}
+              title="Xuất transcript"
+              meta="6 tùy chọn"
+            >
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => void handleCopy()}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   {copied ? (
                     <Check className="h-3.5 w-3.5" />
@@ -1645,46 +1654,47 @@ function TranscriptEditorPage() {
                 <button
                   type="button"
                   onClick={exportText}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   TXT
                 </button>
                 <button
                   type="button"
                   onClick={() => void exportDocx()}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   DOCX
                 </button>
                 <button
                   type="button"
                   onClick={() => exportCaptions("srt")}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   SRT
                 </button>
                 <button
                   type="button"
                   onClick={() => exportCaptions("vtt")}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   VTT
                 </button>
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   <Printer className="h-3.5 w-3.5" /> PDF
                 </button>
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Users className="h-4 w-4 text-[#8067aa]" /> Người nói
-              </h2>
-              <div className="mt-3 space-y-2">
+            <TranscriptSidebarSection
+              icon={<Users className="h-4 w-4" />}
+              title="Người nói"
+              meta={speakers.length ? `${speakers.length}` : "Chưa tách"}
+            >
+              <div className="grid grid-cols-2 gap-2">
                 {speakers.length ? (
                   speakers.map((speaker) => (
                     <label
@@ -1715,13 +1725,14 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Flag className="h-4 w-4 text-[#8067aa]" /> Từ cần review
-              </h2>
-              <p className="mt-2 text-xs leading-5 text-[#8a7da1]">
+            <TranscriptSidebarSection
+              icon={<Flag className="h-4 w-4" />}
+              title="Từ cần review"
+              meta={`${lowConfidenceWords.length} từ`}
+            >
+              <p className="text-xs leading-5 text-[#8a7da1]">
                 Confidence thấp hơn {Math.round(LOW_CONFIDENCE_THRESHOLD * 100)}%.
               </p>
               <div className="mt-3 max-h-72 space-y-2 overflow-auto">
@@ -1762,21 +1773,20 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-sm font-black">
-                  <History className="h-4 w-4 text-[#8067aa]" /> Phiên bản
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => void loadVersions()}
-                  className="rounded-md border border-[#ded5e9] px-2 py-1 text-[11px] font-black"
-                >
-                  Tải lại
-                </button>
-              </div>
+            <TranscriptSidebarSection
+              icon={<History className="h-4 w-4" />}
+              title="Phiên bản"
+              meta={`${versions.length}`}
+            >
+              <button
+                type="button"
+                onClick={() => void loadVersions()}
+                className="ml-auto block rounded-md border border-[#ded5e9] px-2 py-1 text-[11px] font-black"
+              >
+                Tải lại
+              </button>
               {versionError && (
                 <p className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-800">
                   {versionError}
@@ -1814,12 +1824,13 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Languages className="h-4 w-4 text-[#8067aa]" /> Bản dịch
-              </h2>
+            <TranscriptSidebarSection
+              icon={<Languages className="h-4 w-4" />}
+              title="Bản dịch"
+              meta={transcript.translated_text ? "Sẵn sàng" : "Chưa có"}
+            >
               {transcript.translated_text ? (
                 <div className="mt-3">
                   <p className="mb-2 text-xs font-bold text-[#8a7da1]">
@@ -1874,7 +1885,7 @@ function TranscriptEditorPage() {
                   )}
                 </div>
               )}
-            </section>
+            </TranscriptSidebarSection>
           </aside>
         </div>
       </main>
