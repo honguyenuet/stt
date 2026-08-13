@@ -16,8 +16,11 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
-import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
-import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import {
+  fetchQuota,
+  formatQuotaTime,
+  type QuotaStatus,
+} from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
   TRANSLATION_LANGUAGE_OPTIONS,
@@ -117,6 +120,26 @@ function RealtimePage() {
       });
     }
   }, [user, isLoading, navigate]);
+
+  useEffect(() => {
+    if (!token) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchQuota(token)
+      .then((nextQuota) => {
+        if (!cancelled) setQuota(nextQuota);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quotaRefreshKey, token]);
 
   useEffect(() => {
     return () => {
@@ -398,35 +421,34 @@ function RealtimePage() {
   const liveText = `${transcript} ${interim}`.trim();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
-      <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
-        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-primary">
+            <div className="hidden items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-primary">
               <Radio className="h-3.5 w-3.5" />
               Realtime phiên bản 2
             </div>
-            <h1 className="text-2xl font-black tracking-tight md:text-3xl">
+            <h1 className="text-xl font-black tracking-tight sm:text-2xl">
               Realtime
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Nói vào micrô, chữ sẽ hiện gần như tức thì. Khi hoàn tất, bấm lưu
-              để đưa văn bản vào lịch sử và trừ thời lượng theo thời gian nói.
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+              Nói vào micrô, xem chữ tức thì rồi lưu vào lịch sử.
             </p>
           </div>
           <Link
             to="/history"
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-black transition hover:border-primary/50 hover:text-primary"
+            className="hidden items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-black transition hover:border-primary/50 hover:text-primary sm:inline-flex"
           >
             <History className="h-4 w-4" />
             Mở lịch sử
           </Link>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          <section className="rounded-lg border border-border bg-white p-4 shadow-soft">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+          <section className="rounded-lg border border-border bg-white p-4">
             <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">
@@ -487,7 +509,7 @@ function RealtimePage() {
               </div>
             )}
 
-            <div className="mt-4 min-h-[260px] rounded-lg border border-border bg-[#fbf8ef] p-4">
+            <div className="mt-4 min-h-[220px] rounded-lg border border-border bg-[#fbf8ef] p-4">
               {liveText ? (
                 <p
                   data-typography="content"
@@ -499,9 +521,9 @@ function RealtimePage() {
                   )}
                 </p>
               ) : (
-                <div className="flex min-h-[220px] flex-col items-center justify-center text-center">
-                  <Sparkles className="h-12 w-12 text-primary/60" />
-                  <h2 className="mt-4 text-xl font-black">
+                <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
+                  <Sparkles className="h-9 w-9 text-primary/60" />
+                  <h2 className="mt-3 text-lg font-black">
                     Bấm “Bắt đầu nói” để tạo văn bản Realtime
                   </h2>
                   <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
@@ -574,13 +596,7 @@ function RealtimePage() {
           </section>
 
           <aside className="self-start space-y-4">
-            <VbeeAccountUsageCard
-              firstName={user.firstName}
-              refreshKey={quotaRefreshKey}
-              onQuotaChange={setQuota}
-            />
-
-            <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
+            <div className="rounded-lg border border-border bg-white p-4">
               <h2 className="flex items-center gap-2 text-lg font-black">
                 <Languages className="h-5 w-5 text-primary" />
                 Cấu hình realtime
@@ -619,7 +635,7 @@ function RealtimePage() {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
+            <div className="rounded-lg border border-border bg-white p-4">
               <p className="text-xs font-black uppercase tracking-[0.14em] text-primary">
                 Giới hạn phiên
               </p>
@@ -629,11 +645,6 @@ function RealtimePage() {
                   {formatQuotaTime(quota?.remainingSeconds ?? 0)}
                 </span>
                 .
-              </p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Lưu ý: bản realtime dùng Web Speech API của trình duyệt ở V2
-                cục bộ. Khi vận hành thật nên nâng cấp thành máy chủ trung gian WebSocket
-                tới Deepgram Streaming.
               </p>
             </div>
           </aside>
