@@ -4,9 +4,11 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    ...(mode === "test"
+      ? []
+      : [cloudflare({ viteEnvironment: { name: "ssr" } })]),
     tailwindcss(),
     tanstackStart({
       server: { entry: "server" },
@@ -34,4 +36,4 @@ export default defineConfig({
       "@tanstack/query-core",
     ],
   },
-});
+}));
