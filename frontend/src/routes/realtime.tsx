@@ -8,7 +8,6 @@ import {
   Languages,
   Mic,
   Pause,
-  Radio,
   RotateCcw,
   Save,
   Sparkles,
@@ -427,10 +426,6 @@ function RealtimePage() {
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="hidden items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-primary">
-              <Radio className="h-3.5 w-3.5" />
-              Realtime phiên bản 2
-            </div>
             <h1 className="text-xl font-black tracking-tight sm:text-2xl">
               Realtime
             </h1>

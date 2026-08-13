@@ -2,18 +2,14 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
-  ArrowRight,
   Check,
   Clipboard,
   Code2,
   Copy,
-  FileAudio,
   KeyRound,
   Loader2,
   LockKeyhole,
-  PlugZap,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
   Trash2,
   UploadCloud,
@@ -299,82 +295,6 @@ function ApiPage() {
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
-
-      <section className="hidden">
-        <div className="absolute -left-24 top-10 h-56 w-56 rounded-full bg-[#ffcb05]/18 blur-3xl" />
-        <div className="absolute -right-16 bottom-0 h-56 w-56 rounded-full bg-[#21104a]/8 blur-3xl" />
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 md:grid-cols-[1fr_.85fr] md:px-6 md:py-12">
-          <div className="relative z-10 min-w-0">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-bold text-primary">
-              <PlugZap className="h-4 w-4" /> API chuyển giọng nói thành văn bản của Vbee
-            </div>
-            <h1 className="max-w-3xl text-2xl font-black leading-tight md:text-3xl">
-              Tích hợp chuyển âm thanh thành văn bản vào sản phẩm của bạn.
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-              Tạo và thu hồi API key, kiểm thử endpoint và tham khảo ví dụ tích
-              hợp ngay tại đây. Đội kỹ thuật cấu hình nhà cung cấp nhận dạng
-              giọng nói phù hợp trong môi trường máy chủ để bắt đầu xử lý file.
-            </p>
-            <div className="mt-7 flex flex-wrap gap-3">
-              <a
-                href="#keys"
-                className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground shadow-glow"
-              >
-                Tạo API key <ArrowRight className="h-4 w-4" />
-              </a>
-              <a
-                href="#docs"
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-5 py-2.5 font-black text-foreground hover:bg-primary/5"
-              >
-                Xem tài liệu <Code2 className="h-4 w-4" />
-              </a>
-            </div>
-          </div>
-
-          <div className="relative z-10 min-w-0 rounded-lg border border-border bg-white p-4 text-foreground shadow-soft">
-            <div className="min-w-0 rounded-lg bg-[#fbf8ef] p-4">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <KeyRound className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <div className="font-black">API endpoint</div>
-                    <div className="text-sm text-muted-foreground">
-                      POST /api/v1/transcribe
-                    </div>
-                  </div>
-                </div>
-                <span className="rounded-full bg-[#dcfce7] px-3 py-1 text-xs font-black text-[#166534]">
-                  Sẵn sàng
-                </span>
-              </div>
-              <pre className="max-w-full overflow-x-auto rounded-lg bg-white p-4 text-xs leading-6 text-primary">
-                <code>{curlSample}</code>
-              </pre>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                {[
-                  [ShieldCheck, "Key bảo mật", "Lưu hash SHA-256"],
-                  [FileAudio, "Tải âm thanh lên", "MP3, WAV, M4A, MP4"],
-                  [Zap, "Nhà cung cấp linh hoạt", "Deepgram, AssemblyAI, Google STT"],
-                ].map(([Icon, title, desc]) => (
-                  <div
-                    key={String(title)}
-                    className="rounded-lg border border-border bg-white p-3 shadow-sm"
-                  >
-                    <Icon className="mb-2 h-5 w-5 text-primary" />
-                    <div className="font-black">{String(title)}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {String(desc)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       <section
         id="keys"

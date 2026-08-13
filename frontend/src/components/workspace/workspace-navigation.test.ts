@@ -4,6 +4,7 @@ import {
   DESKTOP_WORKSPACE_NAV_ITEMS,
   MOBILE_MORE_NAV_ITEMS,
   PRIMARY_MOBILE_NAV_ITEMS,
+  canAccessWorkspaceCms,
   getActiveWorkspaceNavItem,
 } from "./workspace-navigation";
 
@@ -41,5 +42,13 @@ describe("workspace navigation", () => {
       "/upload",
     );
     expect(getActiveWorkspaceNavItem("/uploader")).toBeUndefined();
+  });
+
+  it("shows the CMS entry only to account roles accepted by the workspace", () => {
+    expect(canAccessWorkspaceCms("support")).toBe(true);
+    expect(canAccessWorkspaceCms("admin")).toBe(true);
+    expect(canAccessWorkspaceCms("super_admin")).toBe(true);
+    expect(canAccessWorkspaceCms("user")).toBe(false);
+    expect(canAccessWorkspaceCms(undefined)).toBe(false);
   });
 });

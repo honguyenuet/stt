@@ -17,6 +17,7 @@ import {
   DESKTOP_WORKSPACE_NAV_ITEMS,
   MOBILE_MORE_NAV_ITEMS,
   PRIMARY_MOBILE_NAV_ITEMS,
+  canAccessWorkspaceCms,
   getActiveWorkspaceNavItem,
 } from "@/components/workspace/workspace-navigation";
 import {
@@ -41,9 +42,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
     select: (state) => state.location.pathname,
   });
   const activeItem = getActiveWorkspaceNavItem(pathname);
-  const canAccessCms = ["support", "admin"].includes(
-    user?.role || "user",
-  );
+  const canAccessCms = canAccessWorkspaceCms(user?.role);
 
   useEffect(() => {
     if (!token) {
