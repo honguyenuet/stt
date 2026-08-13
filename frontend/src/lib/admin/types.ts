@@ -1,9 +1,4 @@
-export type AdminRole =
-  | "super_admin"
-  | "admin"
-  | "support"
-  | "viewer"
-  | "user";
+export type AdminRole = "super_admin" | "admin" | "support" | "viewer" | "user";
 export type AssignableAdminRole = Exclude<AdminRole, "user">;
 export type UserStatus = "active" | "suspended" | "deleted";
 export type ManagedUserPlan = "free" | "standard" | "special" | "business";
@@ -22,6 +17,7 @@ export type AuditAction =
   | "user.suspend"
   | "user.activate"
   | "user.delete"
+  | "user.plan_update"
   | "user.role_update"
   | "quota.adjust"
   | "transcription.retry"
@@ -29,6 +25,8 @@ export type AuditAction =
   | "file.delete"
   | "settings.update"
   | "plan.update"
+  | "template.create"
+  | "template.update"
   | "provider.update"
   | "support.reply"
   | "support.status_update";

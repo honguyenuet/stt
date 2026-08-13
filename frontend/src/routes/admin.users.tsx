@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Eye } from "lucide-react";
+import { Eye, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -20,13 +20,17 @@ import {
 } from "@/lib/admin/formatters";
 import {
   adjustUserQuota,
+  deleteUserAccount,
   listUsers,
+  updateUserPlan,
   updateUserRole,
   updateUserStatus,
 } from "@/lib/admin/users-service";
 import type {
   AdminUser,
   AssignableAdminRole,
+  BillingCycle,
+  ManagedUserPlan,
   PaginatedResponse,
   UserStatus,
 } from "@/lib/admin/types";
@@ -48,6 +52,13 @@ const statuses: Array<UserStatus | "all"> = [
   "suspended",
   "deleted",
 ];
+const plans: ManagedUserPlan[] = ["free", "standard", "special", "business"];
+const planLabel: Record<ManagedUserPlan, string> = {
+  free: "Miễn phí",
+  standard: "Tiêu chuẩn",
+  special: "Đặc biệt",
+  business: "Doanh nghiệp",
+};
 
 function AdminUsersPage() {
   const session = useAdminSession();
@@ -57,6 +68,8 @@ function AdminUsersPage() {
   const [status, setStatus] = useState<UserStatus | "all">("all");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AdminUser | null>(null);
+  const [planDraft, setPlanDraft] = useState<ManagedUserPlan>("free");
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>("monthly");
   const [quotaDelta, setQuotaDelta] = useState(30);
   const [quotaReason, setQuotaReason] = useState("");
   const [loading, setLoading] = useState(true);
@@ -85,6 +98,7 @@ function AdminUsersPage() {
     try {
       const user = await action();
       setSelected(user);
+      setPlanDraft(user.plan);
       toast.success(success);
       load();
     } catch (err) {
@@ -94,6 +108,28 @@ function AdminUsersPage() {
     }
   }
 
+  function openUser(user: AdminUser) {
+    setSelected(user);
+    setPlanDraft(user.plan);
+    setBillingCycle("monthly");
+  }
+
+  function deleteSelectedUser() {
+    if (
+      !selected ||
+      !window.confirm(
+        `Xóa tài khoản ${selected.email}? Tài khoản sẽ bị chặn, các phiên đăng nhập/API key bị thu hồi và tác vụ đang chờ bị hủy.`,
+      )
+    ) {
+      return;
+    }
+    void mutate(
+      "delete",
+      () => deleteUserAccount(selected.id),
+      "Đã xóa tài khoản người dùng",
+    );
+  }
+
   const mayMutate = session ? canMutate(session.user.role) : false;
   const mayChangeRole = session ? canManageSettings(session.user.role) : false;
   const quotaError = selected
@@ -101,6 +137,7 @@ function AdminUsersPage() {
     : "";
   const canSaveQuota =
     mayMutate &&
+    selected?.status !== "deleted" &&
     !savingAction &&
     !quotaError &&
     Boolean(quotaReason.trim());
@@ -172,6 +209,7 @@ function AdminUsersPage() {
                     "Thư điện tử",
                     "Vai trò",
                     "Trạng thái",
+                    "Gói",
                     "Thời lượng",
                     "Đã dùng",
                     "Ngày tạo",
@@ -193,6 +231,7 @@ function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <StatusBadge status={user.status} />
                     </td>
+                    <td className="px-4 py-3">{planLabel[user.plan]}</td>
                     <td className="px-4 py-3">
                       {formatMinutes(user.quota_minutes)}
                     </td>
@@ -207,7 +246,7 @@ function AdminUsersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => setSelected(user)}
+                        onClick={() => openUser(user)}
                         aria-label={`Xem chi tiết ${user.name}`}
                         title={`Xem chi tiết ${user.name}`}
                         className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
@@ -252,6 +291,12 @@ function AdminUsersPage() {
                 <b>Trạng thái:</b> <StatusBadge status={selected.status} />
               </p>
               <p>
+                <b>Gói:</b> {planLabel[selected.plan]}
+              </p>
+              <p>
+                <b>Hết hạn gói:</b> {formatDateTime(selected.plan_expires_at)}
+              </p>
+              <p>
                 <b>Thời lượng:</b> {formatMinutes(selected.quota_minutes)}
               </p>
               <p>
@@ -266,7 +311,11 @@ function AdminUsersPage() {
               <h3 className="font-black">Trạng thái</h3>
               <div className="flex gap-2">
                 <button
-                  disabled={!mayMutate || selected.status === "active"}
+                  disabled={
+                    !mayMutate ||
+                    selected.status === "active" ||
+                    selected.status === "deleted"
+                  }
                   title={
                     selected.status === "active"
                       ? "Tài khoản đang hoạt động"
@@ -284,7 +333,11 @@ function AdminUsersPage() {
                   Mở khóa
                 </button>
                 <button
-                  disabled={!mayMutate || selected.status === "suspended"}
+                  disabled={
+                    !mayMutate ||
+                    selected.status === "suspended" ||
+                    selected.status === "deleted"
+                  }
                   title={
                     selected.status === "suspended"
                       ? "Tài khoản đã bị khóa"
@@ -304,7 +357,11 @@ function AdminUsersPage() {
               </div>
               <h3 className="font-black">Vai trò</h3>
               <select
-                disabled={!mayChangeRole || Boolean(savingAction)}
+                disabled={
+                  !mayChangeRole ||
+                  selected.status === "deleted" ||
+                  Boolean(savingAction)
+                }
                 value={selected.role}
                 onChange={(e) =>
                   void mutate(
@@ -329,23 +386,78 @@ function AdminUsersPage() {
               </p>
             </div>
             <div className="space-y-3">
+              <h3 className="font-black">Gói người dùng</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  aria-label="Chọn gói người dùng"
+                  disabled={
+                    !mayChangeRole ||
+                    selected.status === "deleted" ||
+                    Boolean(savingAction)
+                  }
+                  value={planDraft}
+                  onChange={(event) =>
+                    setPlanDraft(event.target.value as ManagedUserPlan)
+                  }
+                  className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
+                >
+                  {plans.map((plan) => (
+                    <option key={plan} value={plan}>
+                      {planLabel[plan]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Chọn chu kỳ gói người dùng"
+                  disabled={
+                    !mayChangeRole ||
+                    selected.status === "deleted" ||
+                    Boolean(savingAction)
+                  }
+                  value={billingCycle}
+                  onChange={(event) =>
+                    setBillingCycle(event.target.value as BillingCycle)
+                  }
+                  className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
+                >
+                  <option value="monthly">Theo tháng</option>
+                  <option value="yearly">Theo năm</option>
+                </select>
+              </div>
+              <button
+                disabled={
+                  !mayChangeRole ||
+                  selected.status === "deleted" ||
+                  Boolean(savingAction)
+                }
+                onClick={() =>
+                  void mutate(
+                    "plan",
+                    () => updateUserPlan(selected.id, planDraft, billingCycle),
+                    "Đã cập nhật gói người dùng",
+                  )
+                }
+                className="w-full rounded-md border border-[#21104a] px-3 py-2 text-sm font-black text-[#21104a] disabled:opacity-40"
+              >
+                {savingAction === "plan" ? "Đang cập nhật..." : "Cập nhật gói"}
+              </button>
               <h3 className="font-black">Điều chỉnh thời lượng</h3>
               <input
                 type="number"
+                disabled={selected.status === "deleted"}
                 value={quotaDelta}
                 onChange={(e) => setQuotaDelta(Number(e.target.value))}
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
               <input
+                disabled={selected.status === "deleted"}
                 value={quotaReason}
                 onChange={(e) => setQuotaReason(e.target.value)}
                 placeholder="Lý do điều chỉnh"
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
               {quotaError && (
-                <p className="text-sm text-red-700">
-                  {quotaError}
-                </p>
+                <p className="text-sm text-red-700">{quotaError}</p>
               )}
               {!quotaReason.trim() && (
                 <p className="text-xs text-[#756894]">
@@ -364,6 +476,19 @@ function AdminUsersPage() {
                 className="w-full rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white disabled:opacity-40"
               >
                 {savingAction === "quota" ? "Đang lưu..." : "Lưu thời lượng"}
+              </button>
+              <button
+                disabled={
+                  !mayChangeRole ||
+                  selected.status === "deleted" ||
+                  selected.id === session?.user.id ||
+                  Boolean(savingAction)
+                }
+                onClick={deleteSelectedUser}
+                className="flex w-full items-center justify-center gap-2 rounded-md border border-red-300 px-3 py-2 text-sm font-black text-red-700 disabled:opacity-40"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {savingAction === "delete" ? "Đang xóa..." : "Xóa tài khoản"}
               </button>
             </div>
           </div>

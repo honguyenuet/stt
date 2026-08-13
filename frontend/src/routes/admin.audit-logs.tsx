@@ -22,12 +22,18 @@ const actions: Array<AuditAction | "all"> = [
   "all",
   "user.suspend",
   "user.activate",
+  "user.delete",
+  "user.plan_update",
   "user.role_update",
   "quota.adjust",
   "transcription.retry",
   "transcription.cancel",
   "file.delete",
   "settings.update",
+  "plan.update",
+  "template.create",
+  "template.update",
+  "provider.update",
   "support.reply",
   "support.status_update",
 ];
@@ -48,7 +54,9 @@ function AdminAuditLogsPage() {
       .then(setRows)
       .catch((err) =>
         setError(
-          err instanceof Error ? err.message : "Không tải được nhật ký kiểm toán",
+          err instanceof Error
+            ? err.message
+            : "Không tải được nhật ký kiểm toán",
         ),
       )
       .finally(() => setLoading(false));

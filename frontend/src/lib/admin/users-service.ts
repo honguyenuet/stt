@@ -47,12 +47,12 @@ export function updateUserRole(userId: string, role: AssignableAdminRole) {
 
 export function adjustUserQuota(
   userId: string,
-  quotaMinutes: number,
+  deltaMinutes: number,
   reason: string,
 ) {
   return adminRequest<AdminUser>(`/api/admin/users/${userId}/quota`, {
     method: "POST",
-    body: JSON.stringify({ quotaMinutes, reason }),
+    body: JSON.stringify({ deltaMinutes, reason }),
   });
 }
 

@@ -15,7 +15,13 @@ import {
   readAdminSession,
   validateAdminSession,
 } from "./admin-auth";
-import { listUsers } from "./users-service";
+import {
+  adjustUserQuota,
+  deleteUserAccount,
+  getUserDetail,
+  listUsers,
+  updateUserPlan,
+} from "./users-service";
 import {
   listTranscriptionJobs,
   retryTranscriptionJob,
@@ -212,6 +218,88 @@ describe("admin services", () => {
     expect(result.data[0]?.email).toBe("nam.tran@example.com");
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
       "/api/admin/users?page=1&limit=10&search=nam.tran&role=viewer&status=active",
+    );
+  });
+
+  it("looks up an exact CMS user by id", async () => {
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(
+          jsonResponse({
+            data: [{ id: "42", email: "user@example.com" }],
+            page: 1,
+            limit: 1,
+            total: 1,
+            total_pages: 1,
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getUserDetail("42");
+
+    expect(result?.id).toBe("42");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users?search=42&page=1&limit=1",
+    );
+  });
+
+  it("updates a managed user plan through the CMS API", async () => {
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(jsonResponse({ id: "42", plan: "standard" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await updateUserPlan("42", "standard", "yearly");
+
+    expect(result.plan).toBe("standard");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users/42/plan",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ plan: "standard", billingCycle: "yearly" }),
+      }),
+    );
+  });
+
+  it("sends the quota delta field expected by the backend", async () => {
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(jsonResponse({ id: "42", quota_minutes: 90 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await adjustUserQuota("42", 30, "Tặng thời lượng hỗ trợ");
+
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          deltaMinutes: 30,
+          reason: "Tặng thời lượng hỗ trợ",
+        }),
+      }),
+    );
+  });
+
+  it("soft-deletes a managed user through the CMS API", async () => {
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(jsonResponse({ id: "42", status: "deleted" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await deleteUserAccount("42");
+
+    expect(result.status).toBe("deleted");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users/42",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ method: "DELETE" }),
     );
   });
 
