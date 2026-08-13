@@ -2,10 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Languages, X } from "lucide-react";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
-import {
-  VbeePreferencesFooter,
-  VbeePreferencesSidebar,
-} from "@/components/vbee-preferences-layout";
 import { useAuth } from "@/context/AuthContext";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
@@ -50,16 +46,16 @@ function SettingBlock({
   children: ReactNode;
 }) {
   return (
-    <div className="border-b border-border py-7 last:border-b-0">
+    <div className="border-b border-border py-4 last:border-b-0">
       {eyebrow && (
         <p className="mb-2 text-sm font-semibold text-muted-foreground">
           {eyebrow}
         </p>
       )}
-      <h2 className="text-lg font-black uppercase tracking-[0.08em]">
+      <h2 className="text-base font-black uppercase">
         {title}
       </h2>
-      <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+      <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
         {description}
       </p>
       <div className="mt-3 max-w-2xl">{children}</div>
@@ -161,18 +157,18 @@ function TranscriptionSettingsPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+      <main className="mx-auto max-w-4xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-5 border-b-2 border-[#ffcb05] pb-4">
-            <h1 className="text-2xl font-light tracking-tight md:text-3xl">
+          <div className="mb-3 border-b-2 border-[#ffcb05] pb-3">
+            <h1 className="text-xl font-black tracking-tight sm:text-2xl">
               Cài đặt văn bản
             </h1>
           </div>
 
-          <div className="max-w-3xl rounded-lg border border-border bg-white px-5 shadow-soft sm:px-6">
+          <div className="rounded-lg border border-border bg-white px-4 sm:px-5">
             <SettingBlock
               title="Tự động điều chỉnh mốc thời gian từ dữ liệu mô tả"
               description="Mốc thời gian ảnh hưởng đến thời điểm bắt đầu của tệp và toàn bộ thời điểm theo từng từ. Bạn có thể để văn bản bắt đầu từ 00:00:00.000 hoặc dùng dữ liệu mô tả của tệp."
@@ -306,10 +302,7 @@ function TranscriptionSettingsPage() {
           </div>
         </section>
 
-        <VbeePreferencesSidebar firstName={user.firstName} />
       </main>
-
-      <VbeePreferencesFooter />
     </div>
   );
 }
