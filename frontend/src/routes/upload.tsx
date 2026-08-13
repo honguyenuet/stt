@@ -14,8 +14,6 @@ import {
   Folder,
   FolderPlus,
   HardDrive,
-  Heart,
-  Home,
   Info,
   Languages,
   ListChecks,
@@ -39,12 +37,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { VbeePreferencesSidebar } from "@/components/vbee-preferences-layout";
 import {
   formatMediaDuration as formatDuration,
   normalizeMediaDuration,
 } from "@/lib/format-duration";
-import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
   TRANSLATION_LANGUAGE_OPTIONS,
@@ -321,6 +318,26 @@ function UploadPage() {
       });
     }
   }, [user, isLoading, navigate]);
+
+  useEffect(() => {
+    if (!token) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchQuota(token)
+      .then((nextQuota) => {
+        if (!cancelled) setQuota(nextQuota);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quotaRefreshKey, token]);
 
   useEffect(() => {
     if (!user || !token) return;
@@ -1024,7 +1041,7 @@ function UploadPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
       <input
@@ -1038,38 +1055,25 @@ function UploadPage() {
         }}
       />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-5">
-            <div className="mb-4 flex items-center gap-3">
-              <Heart className="h-8 w-8 text-[#ffcb05]" />
-              <h1 className="text-2xl font-light tracking-tight text-foreground md:text-3xl">
-                Chào mừng, {user.firstName}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-xl font-black tracking-tight sm:text-2xl">
+                Tải tệp
               </h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Chọn nguồn, kiểm tra tệp rồi bắt đầu chuyển thành văn bản.
+              </p>
             </div>
 
-            <Link
-              to="/dashboard"
-              className="mb-3 flex items-center justify-center rounded-md border border-border bg-card/75 px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
-            >
-              <Home className="mr-2 h-4 w-4 text-primary" />
-              Không gian làm việc
-            </Link>
-
-            <div className="grid grid-cols-[1fr_1fr_44px] gap-2 sm:flex">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
-              >
-                <Upload className="h-4 w-4" />
-                TẢI FILE
-              </button>
+            <div className="flex gap-2">
               <button
                 onClick={() => setFolderOpen(true)}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-black text-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-white px-3 text-sm font-bold text-foreground transition hover:border-primary/50 hover:text-primary"
               >
                 <FolderPlus className="h-4 w-4" />
-                THƯ MỤC MỚI
+                Thư mục mới
               </button>
               <button
                 onClick={() => {
@@ -1085,33 +1089,28 @@ function UploadPage() {
                     to: "choose-file",
                   });
                 }}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
                 title="Tải transcript"
               >
                 <Download className="h-4 w-4" />
               </button>
             </div>
-
-            <UploadWorkflowSteps
-              hasFile={hasSelectedSource}
-              status={uploadStatus}
-            />
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-border bg-white shadow-soft">
-            <div className="border-b border-border bg-[#fbf8ef] px-5 py-4">
+          <div className="overflow-hidden rounded-xl border border-border bg-white">
+            <div className="border-b border-border px-4 py-3 sm:px-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
-                    Dự án mới
+                  <p className="text-xs font-black uppercase text-primary">
+                    Nguồn chuyển đổi
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <div className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
                     {activeFolder}
                   </div>
                 </div>
-                <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
-                  {history.length + (hasSelectedSource ? 1 : 0)} items
+                <div className="rounded-md border border-border bg-[#f7f7fb] px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                  {history.length + (hasSelectedSource ? 1 : 0)} tệp
                 </div>
               </div>
             </div>
@@ -1134,24 +1133,23 @@ function UploadPage() {
             )}
 
             {!hasSelectedSource && (
-              <div className="m-4 space-y-4">
-                <section className="rounded-xl border border-border bg-[#fbf8ef] p-4">
+              <div className="m-4 space-y-3">
+                <section>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-black text-foreground">
-                        1. Chọn nguồn cần chuyển đổi
+                        Chọn nguồn cần chuyển đổi
                       </p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Chọn file, nhiều track của cùng một buổi ghi, hoặc link
-                        video công khai.
+                        Một tệp, nhiều track hoặc link video công khai.
                       </p>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary">
+                    <span className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary sm:inline-flex">
                       <ListChecks className="h-3.5 w-3.5" />
                       Bước đầu tiên
                     </span>
                   </div>
-                  <div className="mt-4">
+                  <div className="mt-3">
                     <UploadModeSelector
                       mode={uploadMode}
                       setMode={setUploadMode}
@@ -1574,18 +1572,13 @@ function UploadPage() {
               />
             ))}
 
-            <div className="border-t border-border bg-[#fbf8ef] px-5 py-3 text-center text-sm font-black text-primary">
-              {history.length + (hasSelectedSource ? 1 : 0)} items,{" "}
+            <div className="border-t border-border bg-[#fafafe] px-5 py-3 text-center text-xs font-bold text-muted-foreground">
+              {history.length + (hasSelectedSource ? 1 : 0)} tệp,{" "}
               {formatDuration(totalDuration)}
             </div>
           </div>
         </section>
 
-        <VbeePreferencesSidebar
-          firstName={user.firstName}
-          refreshKey={quotaRefreshKey}
-          onQuotaChange={setQuota}
-        />
       </main>
 
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
@@ -2175,67 +2168,6 @@ function VbeeFileCard({
   );
 }
 
-function UploadWorkflowSteps({
-  hasFile,
-  status,
-}: {
-  hasFile: boolean;
-  status: UploadStatus;
-}) {
-  const steps = [
-    ["1", "Nguồn", "Chọn file, nhiều track hoặc link video"],
-    ["2", "Cài đặt", "Ngôn ngữ, người nói và thư mục"],
-    ["3", "Chuyển đổi", "AI xử lý và tạo transcript"],
-    ["4", "Biên tập", "Nghe lại, sửa, copy và xuất file"],
-  ];
-  const activeIndex =
-    status === "done"
-      ? 3
-      : status === "uploading" || status === "queued"
-        ? 2
-        : hasFile
-          ? 1
-          : 0;
-
-  return (
-    <div className="mt-4 grid gap-2 md:grid-cols-4">
-      {steps.map(([number, title, desc], index) => {
-        const active = index <= activeIndex;
-        return (
-          <div
-            key={title}
-            className={`rounded-lg border px-3 py-2.5 transition ${
-              active
-                ? "border-primary/30 bg-primary/5"
-                : "border-border bg-white"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-black ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {index < activeIndex ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  number
-                )}
-              </span>
-              <p className="text-sm font-black">{title}</p>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {desc}
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function UploadModeSelector({
   mode,
   setMode,
@@ -2270,7 +2202,7 @@ function UploadModeSelector({
   ];
 
   return (
-    <div className="grid gap-2 md:grid-cols-3">
+    <div className="grid grid-cols-3 gap-2">
       {modes.map((item) => {
         const Icon = item.icon;
         const active = mode === item.value;
@@ -2278,15 +2210,19 @@ function UploadModeSelector({
           <button
             key={item.value}
             onClick={() => setMode(item.value)}
-            className={`rounded-lg border p-3 text-left transition ${
+            className={`min-w-0 rounded-lg border p-2 text-left transition sm:p-3 ${
               active
                 ? "border-primary/40 bg-primary/5 text-foreground"
                 : "border-border bg-white text-muted-foreground hover:border-primary/40"
             }`}
           >
-            <Icon className="mb-3 h-5 w-5 text-primary" />
-            <p className="font-black">{item.title}</p>
-            <p className="mt-1 text-xs leading-5">{item.desc}</p>
+            <Icon className="mb-2 h-4 w-4 text-primary sm:h-5 sm:w-5" />
+            <p className="truncate text-xs font-black sm:text-sm">
+              {item.title}
+            </p>
+            <p className="mt-1 hidden text-xs leading-5 sm:block">
+              {item.desc}
+            </p>
           </button>
         );
       })}
