@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useRef } from "react";
-import type { ComponentType } from "react";
 import {
   AudioLines,
   AlertCircle,
@@ -8,18 +7,12 @@ import {
   BookOpen,
   Camera,
   Check,
-  Clock,
-  Download,
   Eye,
   EyeOff,
-  FileAudio,
   Folder,
   FolderPlus,
-  Gift,
   Heart,
-  Home,
   KeyRound,
-  Languages,
   MessageCircle,
   Mic,
   MonitorSmartphone,
@@ -27,7 +20,6 @@ import {
   RefreshCw,
   Settings,
   ShieldAlert,
-  SlidersHorizontal,
   Trash2,
   Upload,
   UploadCloud,
@@ -42,8 +34,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PhilosophyQuoteCard } from "@/components/philosophy-quote-card";
-import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
 import {
   formatMediaDuration as formatDuration,
   sumMediaDurations,
@@ -51,19 +41,6 @@ import {
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
 const API_URL = getApiBaseUrl();
-
-const SPARKLES = [
-  { top: "6%", left: "18%", delay: 0, size: "h-1.5 w-1.5" },
-  { top: "11%", left: "78%", delay: 0.7, size: "h-1 w-1" },
-  { top: "30%", left: "94%", delay: 1.3, size: "h-1 w-1" },
-  { top: "45%", left: "1%", delay: 0.4, size: "h-2 w-2" },
-  { top: "60%", left: "96%", delay: 1.8, size: "h-1 w-1" },
-  { top: "72%", left: "5%", delay: 0.9, size: "h-1.5 w-1.5" },
-  { top: "84%", left: "88%", delay: 1.5, size: "h-1 w-1" },
-  { top: "90%", left: "35%", delay: 0.2, size: "h-2 w-2" },
-  { top: "3%", left: "55%", delay: 1.1, size: "h-1 w-1" },
-  { top: "50%", left: "2%", delay: 0.6, size: "h-1 w-1" },
-];
 
 interface HistoryItem {
   id: number;
@@ -88,13 +65,6 @@ interface AuthSession {
   expiresAt: string;
   revokedAt: string | null;
 }
-
-type ActionDialogState = {
-  title: string;
-  description: string;
-  ctaLabel?: string;
-  to?: string;
-};
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("vi-VN", {
@@ -197,9 +167,6 @@ function DashboardPage() {
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
   const [activeFolder, setActiveFolder] = useState("Dự án mới");
-  const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
-    null,
-  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -524,68 +491,6 @@ function DashboardPage() {
     setFolderName("Dự án mới");
   }
 
-  function openFeature(label: string) {
-    const normalized = label.toLowerCase();
-    if (
-      normalized.includes("transcription") ||
-      normalized.includes("chuyển giọng nói")
-    ) {
-      void navigate({ to: "/transcription-settings" });
-      return;
-    }
-    if (normalized.includes("dictionary") || normalized.includes("từ điển")) {
-      void navigate({ to: "/custom-dictionary" });
-      return;
-    }
-    if (normalized.includes("upload") || normalized.includes("tải lên")) {
-      void navigate({ to: "/upload" });
-      return;
-    }
-    if (
-      normalized.includes("zoom") ||
-      normalized.includes("teams") ||
-      normalized.includes("zapier")
-    ) {
-      setActionDialog({
-        title: label,
-        description:
-          "Phần tích hợp này sẽ dùng API key và webhook. Mở trang API để tạo key, test endpoint và chuẩn bị tích hợp giống Sonix.",
-        ctaLabel: "Mở trang API",
-        to: "/api",
-      });
-      return;
-    }
-    if (normalized.includes("analysis") || normalized.includes("phân tích")) {
-      setActionDialog({
-        title: label,
-        description:
-          "Phân tích AI sẽ dùng bản chép lời đã tạo để tóm tắt, trích ý chính và tìm chủ đề. Trước mắt bạn có thể mở lịch sử để chọn bản chép lời cần phân tích.",
-        ctaLabel: "Mở lịch sử",
-        to: "/history",
-      });
-      return;
-    }
-    if (
-      normalized.includes("help") ||
-      normalized.includes("video") ||
-      normalized.includes("hỗ trợ")
-    ) {
-      setActionDialog({
-        title: label,
-        description:
-          "Bạn có thể dùng trang ghi âm để mở bảng trợ giúp, hoặc quay lại tải file hoặc ghi âm để bắt đầu.",
-        ctaLabel: "Mở ghi âm",
-        to: "/record",
-      });
-      return;
-    }
-    setActionDialog({
-      title: label,
-      description:
-        "Thiết lập này đã có điểm bấm và sẽ được nối sâu hơn khi có màn cấu hình riêng.",
-    });
-  }
-
   // ── Loading ──────────────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -605,109 +510,119 @@ function DashboardPage() {
     `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-background font-sans text-foreground antialiased">
-      {/* ── Nền ──────────────────────────────────────────────────────── */}
-      <div className="absolute inset-0 bg-gradient-hero pointer-events-none" />
-      <div className="absolute top-[8%]  left-[5%]   h-80 w-80 rounded-full bg-primary/15 blur-3xl animate-float pointer-events-none" />
-      <div
-        className="absolute bottom-[5%] right-[4%] h-64 w-64 rounded-full bg-primary/10 blur-3xl animate-float pointer-events-none"
-        style={{ animationDelay: "1.6s" }}
-      />
-      <div
-        className="absolute top-[50%] left-[65%]  h-48 w-48 rounded-full bg-primary/20 blur-2xl animate-float pointer-events-none"
-        style={{ animationDelay: "0.8s" }}
-      />
-      {SPARKLES.map((s, i) => (
-        <span
-          key={i}
-          className={`absolute ${s.size} rounded-full bg-primary animate-twinkle pointer-events-none`}
-          style={{ top: s.top, left: s.left, animationDelay: `${s.delay}s` }}
-        />
-      ))}
-
+    <div className="relative min-h-screen overflow-x-hidden bg-[#f7f7fb] font-sans text-foreground antialiased">
       <AuthenticatedHeader onEditProfile={openEdit} />
 
       {/* ── Main ─────────────────────────────────────────────────────── */}
-      <main className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 md:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="relative z-10 mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-6">
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="mb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black text-primary">
+                <div className="hidden items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black text-primary">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
                   Không gian làm việc sẵn sàng
                 </div>
                 <div className="flex items-center gap-3">
-                  <Heart className="h-10 w-10 text-[#ffcb05]" />
-                  <h1 className="text-2xl font-light tracking-tight text-foreground md:text-3xl">
+                  <Heart className="h-6 w-6 text-[#e4b600]" />
+                  <h1 className="text-xl font-black tracking-tight text-foreground sm:text-2xl">
                     Chào mừng, {user.firstName}
                   </h1>
                 </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Bắt đầu chuyển giọng nói hoặc tiếp tục từ tệp gần đây.
+                </p>
               </div>
               <Link
                 to="/history"
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-4 py-2 text-sm font-bold text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+                className="hidden items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-bold text-muted-foreground transition hover:border-primary/50 hover:text-primary sm:inline-flex"
               >
                 Xem lịch sử
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
 
-            <Link
-              to="/"
-              className="mb-3 flex items-center justify-center rounded-md border border-border bg-card/75 px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
-            >
-              <Home className="mr-2 h-4 w-4 text-primary" />
-              Trang chủ
-            </Link>
-
-            <div className="grid grid-cols-2 gap-2 sm:flex">
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:flex">
               <Link
                 to="/upload"
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-black text-primary-foreground transition hover:bg-[#32166f]"
               >
                 <Upload className="h-4 w-4" />
-                TẢI FILE
+                Tải tệp
               </Link>
               <button
                 onClick={() => setFolderOpen(true)}
-                className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card/70 px-5 py-3 text-sm font-black text-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-bold text-foreground transition hover:border-primary/50 hover:text-primary"
               >
                 <FolderPlus className="h-4 w-4" />
-                THƯ MỤC MỚI
+                Thư mục mới
               </button>
               <Link
                 to="/record"
-                className="inline-flex h-12 w-12 items-center justify-center rounded-md border border-border bg-card/70 text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-bold text-muted-foreground transition hover:border-primary/50 hover:text-primary"
                 title="Ghi âm nhanh"
               >
                 <Mic className="h-4 w-4" />
+                <span>Ghi âm</span>
               </Link>
               <Link
                 to="/realtime"
-                className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-border bg-white text-[#756894] shadow-sm transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-bold text-[#756894] transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
                 title="Realtime"
               >
                 <Radio className="h-4 w-4" />
+                <span>Trực tiếp</span>
               </Link>
             </div>
 
-            <CustomerJourneyPanel />
+            <nav
+              className="mt-3 flex flex-wrap gap-2"
+              aria-label="Thiết lập nhanh"
+            >
+              <Link
+                to="/transcription-settings"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Cài đặt chuyển đổi
+              </Link>
+              <Link
+                to="/custom-dictionary"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                Từ điển riêng
+              </Link>
+              <Link
+                to="/api"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                API
+              </Link>
+              <Link
+                to="/support"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Hỗ trợ
+              </Link>
+            </nav>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-border bg-card/75 shadow-soft">
-            <div className="border-b border-border bg-background/35 px-5 py-4">
+          <div className="overflow-hidden rounded-xl border border-border bg-white">
+            <div className="border-b border-border px-4 py-3 sm:px-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
-                    DỰ ÁN
+                  <p className="text-xs font-black uppercase text-primary">
+                    Tệp gần đây
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <div className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
                     {activeFolder}
                   </div>
                 </div>
-                <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
+                <div className="rounded-md border border-border bg-[#f7f7fb] px-2.5 py-1 text-xs font-bold text-muted-foreground">
                   {history.length} tệp
                 </div>
               </div>
@@ -731,26 +646,25 @@ function DashboardPage() {
             )}
 
             {!historyError && history.length === 0 ? (
-              <div className="m-5 rounded-2xl border border-dashed border-border bg-background/35 p-8 text-center">
-                <UploadCloud className="mx-auto h-12 w-12 text-primary" />
-                <h2 className="mt-4 text-xl font-black">
+              <div className="m-4 rounded-lg border border-dashed border-border bg-[#fafafe] p-6 text-center sm:m-5">
+                <UploadCloud className="mx-auto h-9 w-9 text-primary" />
+                <h2 className="mt-3 text-lg font-black">
                   Chưa có file transcript
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                  Bắt đầu giống Sonix: tải file, ghi âm trực tiếp, rồi mọi bản
-                  transcript sẽ xuất hiện trong workspace này.
+                  Tải tệp hoặc ghi âm; bản chép lời sẽ xuất hiện tại đây.
                 </p>
-                <div className="mt-5 flex flex-wrap justify-center gap-3">
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
                   <Link
                     to="/upload"
-                    className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow"
+                    className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-black text-primary-foreground"
                   >
                     <Upload className="h-4 w-4" />
                     Tải file đầu tiên
                   </Link>
                   <Link
                     to="/record"
-                    className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm font-black transition hover:border-primary/50 hover:text-primary"
+                    className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-bold transition hover:border-primary/50 hover:text-primary"
                   >
                     <Mic className="h-4 w-4" />
                     Ghi âm ngay
@@ -763,107 +677,17 @@ function DashboardPage() {
               ))
             ) : null}
 
-            <div className="border-t border-border bg-background/35 px-5 py-4 text-center text-sm font-black text-primary">
-              {history.length} tệp,{" "}
-              {formatDuration(
-                sumMediaDurations(history.map((item) => item.duration)),
-              )}
+            <div className="flex items-center justify-between border-t border-border bg-[#fafafe] px-4 py-3 text-xs font-bold text-muted-foreground sm:px-5">
+              <span>Tổng thời lượng</span>
+              <span>
+                {history.length} tệp,{" "}
+                {formatDuration(
+                  sumMediaDurations(history.map((item) => item.duration)),
+                )}
+              </span>
             </div>
           </div>
-
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            {[
-              [
-                Languages,
-                "54+ ngôn ngữ",
-                "Chuyển giọng nói và dịch nhiều ngôn ngữ",
-              ],
-              [
-                AudioLines,
-                "Mốc thời gian từng từ",
-                "Đánh dấu theo từng từ khi phát âm thanh",
-              ],
-              [
-                Radio,
-                "Chuyển giọng nói trực tiếp",
-                "Nói trực tiếp và lưu bản chép lời vào lịch sử",
-              ],
-              [
-                Download,
-                "Xuất nhanh",
-                "DOCX, âm thanh và bản chép lời đã chỉnh sửa",
-              ],
-            ].map(([Icon, title, desc]) => (
-              <div
-                key={String(title)}
-                className="rounded-2xl border border-border bg-card/70 p-5 shadow-soft"
-              >
-                <Icon className="mb-3 h-5 w-5 text-primary" />
-                <h3 className="font-black">{String(title)}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {String(desc)}
-                </p>
-              </div>
-            ))}
-          </div>
         </section>
-
-        <aside className="space-y-5 lg:pt-28">
-          <VbeeAccountUsageCard
-            firstName={user.firstName}
-            showReferral={false}
-          />
-
-          <div className="rounded-2xl border border-border bg-card/85 p-6 shadow-soft">
-            <DashboardSideSection
-              title="TÙY CHỈNH"
-              items={[
-                [Settings, "Cài đặt chuyển giọng nói"],
-                [BookOpen, "Từ điển riêng"],
-                [UploadCloud, "Cài đặt tải lên"],
-              ]}
-              onAction={openFeature}
-            />
-            <DashboardSideSection
-              title="PHÂN TÍCH AI"
-              items={[[SlidersHorizontal, "Cài đặt phân tích AI"]]}
-              onAction={openFeature}
-            />
-            <DashboardSideSection
-              title="TÍCH HỢP"
-              items={[
-                [FileAudio, "Tích hợp Zoom"],
-                [Mic, "Tích hợp Microsoft Teams"],
-                [Zap, "Tự động hóa Zapier"],
-              ]}
-              onAction={openFeature}
-            />
-            <DashboardSideSection
-              title="HỖ TRỢ"
-              items={[
-                [BookOpen, "Video hướng dẫn"],
-                [MessageCircle, "Trung tâm hỗ trợ"],
-              ]}
-              onAction={openFeature}
-            />
-
-            <Link
-              to="/referral"
-              className="mt-5 flex w-full items-center rounded-xl border border-[#e5dfef] bg-[#fbf8ef] p-4 text-left transition hover:border-[#ffcb05] hover:bg-[#fff8d7]"
-            >
-              <div className="flex items-center gap-3">
-                <Gift className="h-8 w-8 text-[#21104a]" />
-                <p className="text-sm font-black leading-5 text-[#21104a]">
-                  GIỚI THIỆU BẠN BÈ
-                  <br />
-                  NHẬN 100 PHÚT MIỄN PHÍ
-                </p>
-              </div>
-            </Link>
-          </div>
-
-          <PhilosophyQuoteCard />
-        </aside>
       </main>
 
       {/* ── Edit Profile Dialog ──────────────────────────────────────── */}
@@ -1354,130 +1178,6 @@ function DashboardPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={Boolean(actionDialog)}
-        onOpenChange={(open) => {
-          if (!open) setActionDialog(null);
-        }}
-      >
-        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{actionDialog?.title}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm leading-6 text-muted-foreground">
-              {actionDialog?.description}
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setActionDialog(null)}
-                className="flex-1 rounded-full border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-background"
-              >
-                Đóng
-              </button>
-              {actionDialog?.ctaLabel && actionDialog.to && (
-                <button
-                  onClick={() => {
-                    const to = actionDialog.to;
-                    setActionDialog(null);
-                    if (to) void navigate({ to });
-                  }}
-                  className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
-                >
-                  {actionDialog.ctaLabel}
-                </button>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function CustomerJourneyPanel() {
-  const steps = [
-    {
-      icon: UploadCloud,
-      step: "01",
-      title: "Tạo bản chép lời",
-      desc: "Tải file âm thanh, video hoặc ghi âm trực tiếp để bắt đầu.",
-      cta: "Tải file",
-      to: "/upload",
-    },
-    {
-      icon: Radio,
-      step: "02",
-      title: "Nói trực tiếp",
-      desc: "Dùng khi cần ghi nhanh cuộc họp, ý tưởng hoặc phỏng vấn đang diễn ra.",
-      cta: "Mở ghi âm trực tiếp",
-      to: "/realtime",
-    },
-    {
-      icon: Languages,
-      step: "03",
-      title: "Sửa, dịch, xuất tệp",
-      desc: "Mở bản chép lời đã tạo để sao chép, tải DOCX/TXT và xem bản dịch.",
-      cta: "Xem lịch sử",
-      to: "/history",
-    },
-    {
-      icon: Clock,
-      step: "04",
-      title: "Theo dõi hạn mức",
-      desc: "Khi gần hết thời gian sử dụng, chọn gói phù hợp để tiếp tục xử lý.",
-      cta: "Xem gói cước",
-      to: "/pricing",
-    },
-  ] as const;
-
-  return (
-    <div className="mt-5 rounded-2xl border border-border bg-card/75 p-4 shadow-soft">
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
-            Luồng khách hàng
-          </p>
-          <h2 className="mt-1 text-xl font-black text-foreground">
-            Bắt đầu, xử lý, xuất file và quay lại lịch sử trong một đường đi
-          </h2>
-        </div>
-        <span className="w-fit rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-black text-primary">
-          Luồng Vbee
-        </span>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {steps.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.step}
-              to={item.to}
-              className="group rounded-2xl border border-border bg-background/35 p-4 transition hover:-translate-y-0.5 hover:border-primary/55 hover:bg-primary/10"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-primary">
-                  {item.step}
-                </span>
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-glow">
-                  <Icon className="h-4 w-4" />
-                </span>
-              </div>
-              <h3 className="mt-4 text-base font-black text-foreground">
-                {item.title}
-              </h3>
-              <p className="mt-2 min-h-[3rem] text-sm leading-6 text-muted-foreground">
-                {item.desc}
-              </p>
-              <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-black text-primary">
-                {item.cta}
-                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-              </span>
-            </Link>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -1550,33 +1250,5 @@ function WorkspaceFileRow({ item }: { item: HistoryItem }) {
         <p className="font-semibold">{formatDate(item.created_at)}</p>
       </div>
     </Link>
-  );
-}
-
-function DashboardSideSection({
-  title,
-  items,
-  onAction,
-}: {
-  title: string;
-  items: Array<[ComponentType<{ className?: string }>, string]>;
-  onAction: (label: string) => void;
-}) {
-  return (
-    <div className="mt-5">
-      <h3 className="mb-2 text-sm font-black text-primary">{title}</h3>
-      <div className="overflow-hidden rounded-xl border border-border">
-        {items.map(([Icon, label]) => (
-          <button
-            key={label}
-            onClick={() => onAction(label)}
-            className="flex w-full items-center gap-3 border-b border-border bg-background/35 px-4 py-3 text-left text-sm font-semibold text-muted-foreground transition last:border-b-0 hover:bg-primary/10 hover:text-primary"
-          >
-            <Icon className="h-4 w-4 text-primary" />
-            {label}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
