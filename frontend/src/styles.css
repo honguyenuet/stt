@@ -206,6 +206,18 @@
   }
 }
 
+@media (min-width: 1024px) {
+  body:has([data-workspace-shell]) {
+    padding-left: 72px;
+  }
+}
+
+@media (max-width: 1023px) {
+  body:has([data-workspace-shell]) {
+    padding-bottom: 64px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

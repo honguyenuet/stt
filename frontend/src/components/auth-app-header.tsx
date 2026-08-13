@@ -2,22 +2,23 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
-  History,
+  ChevronDown,
+  Clock3,
   LayoutDashboard,
   LogOut,
-  Menu,
-  Mic,
+  MoreHorizontal,
   Pencil,
-  PlugZap,
-  Radio,
   ShieldCheck,
-  Upload,
-  User,
 } from "lucide-react";
+
 import { AppIcon } from "@/components/ui/app-icon";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
-import { useAuth } from "@/context/AuthContext";
-import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import {
+  DESKTOP_WORKSPACE_NAV_ITEMS,
+  MOBILE_MORE_NAV_ITEMS,
+  PRIMARY_MOBILE_NAV_ITEMS,
+  getActiveWorkspaceNavItem,
+} from "@/components/workspace/workspace-navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,14 +27,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-const NAV_ITEMS = [
-  { to: "/upload", label: "Tải tệp lên", icon: Upload },
-  { to: "/record", label: "Ghi âm", icon: Mic },
-  { to: "/realtime", label: "Realtime", icon: Radio },
-  { to: "/history", label: "Lịch sử", icon: History },
-  { to: "/api", label: "API", icon: PlugZap },
-] as const;
+import { useAuth } from "@/context/AuthContext";
+import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 
 type AuthenticatedHeaderProps = {
   onEditProfile?: () => void;
@@ -45,6 +40,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const activeItem = getActiveWorkspaceNavItem(pathname);
   const canAccessCms = ["support", "admin"].includes(
     user?.role || "user",
   );
@@ -54,6 +50,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
       setQuota(null);
       return;
     }
+
     let cancelled = false;
     const loadQuota = async () => {
       try {
@@ -63,6 +60,7 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
         if (!cancelled) setQuota(null);
       }
     };
+
     void loadQuota();
     const timer = window.setInterval(() => void loadQuota(), 30_000);
     return () => {
@@ -75,182 +73,264 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
 
   const initials =
     `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
+  const moreMenuIsActive = MOBILE_MORE_NAV_ITEMS.some(
+    (item) => item.to === activeItem?.to,
+  );
 
   function handleLogout() {
     logout();
     window.location.href = "/login";
   }
 
+  const accountMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex h-9 items-center gap-2 rounded-lg border border-[#e5e0f0] bg-white px-1.5 text-[#21104a] transition hover:bg-[#f7f5ff] focus:outline-none"
+          aria-label={`Mở tài khoản của ${user.firstName} ${user.lastName}`}
+        >
+          {user.avatar ? (
+            <img
+              src={user.avatar}
+              alt=""
+              className="h-7 w-7 rounded-md object-cover"
+            />
+          ) : (
+            <span className="flex h-7 w-7 select-none items-center justify-center rounded-md bg-[#ffcb05] text-xs font-black text-[#21104a]">
+              {initials}
+            </span>
+          )}
+          <span className="hidden max-w-28 truncate text-xs font-bold sm:block">
+            {user.firstName}
+          </span>
+          <AppIcon
+            icon={ChevronDown}
+            size="sm"
+            className="hidden text-[#756894] sm:block"
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-56 rounded-lg border-[#e5e0f0] bg-white text-[#21104a]"
+      >
+        <DropdownMenuLabel className="pb-1">
+          <p className="text-sm font-semibold">
+            {user.firstName} {user.lastName}
+          </p>
+          <p className="truncate text-xs font-normal text-[#756894]">
+            {user.email}
+          </p>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild className="cursor-pointer gap-2">
+          <Link to="/dashboard">
+            <AppIcon icon={LayoutDashboard} size="sm" />
+            Không gian làm việc
+          </Link>
+        </DropdownMenuItem>
+        {canAccessCms && (
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link to="/admin">
+              <AppIcon icon={ShieldCheck} size="sm" />
+              Trung tâm quản trị
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {onEditProfile && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="cursor-pointer gap-2"
+              onSelect={onEditProfile}
+            >
+              <AppIcon icon={Pencil} size="sm" />
+              Chỉnh sửa thông tin
+            </DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="cursor-pointer gap-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
+          onSelect={handleLogout}
+        >
+          <AppIcon icon={LogOut} size="sm" />
+          Đăng xuất
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
-    <header className="sticky top-0 z-50 border-b border-[#e8decc] bg-white/92 text-[#21104a] shadow-[0_8px_28px_rgba(33,16,74,.05)] backdrop-blur-xl">
-      <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-2 md:px-6">
-        <Link to="/" className="flex items-center" aria-label="Về trang chủ Vbee">
-          <VbeeBrandLogo size="compact" />
+    <>
+      <aside
+        className="fixed inset-y-0 left-0 z-50 hidden w-[72px] flex-col border-r border-white/10 bg-[#21104a] text-white lg:flex"
+        aria-label="Điều hướng không gian làm việc"
+        data-desktop-workspace-rail
+      >
+        <Link
+          to="/dashboard"
+          className="flex h-14 items-center justify-center border-b border-white/10 px-2"
+          aria-label="Vbee AIVoice - Không gian làm việc"
+        >
+          <VbeeBrandLogo size="compact" className="h-7 max-w-12" />
         </Link>
 
-        <div className="hidden items-center gap-1 text-sm md:flex">
-          {NAV_ITEMS.map((item) => {
+        <nav className="flex flex-1 flex-col gap-1 px-2 py-3">
+          {DESKTOP_WORKSPACE_NAV_ITEMS.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.to;
+            const active = activeItem?.to === item.to;
             return (
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 font-bold transition ${
+                aria-current={active ? "page" : undefined}
+                aria-label={item.label}
+                title={item.label}
+                className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[10px] font-bold leading-tight transition ${
                   active
-                    ? "bg-[#21104a] text-white"
-                    : "text-[#65587c] hover:bg-[#fbf8ef] hover:text-[#21104a]"
+                    ? "bg-[#ffcb05] text-[#21104a]"
+                    : "text-[#d8d0e9] hover:bg-white/10 hover:text-white"
                 }`}
               >
-                <AppIcon icon={Icon} size="sm" />
-                {item.label}
+                <AppIcon icon={Icon} size="md" />
+                <span className="max-w-full truncate">{item.shortLabel}</span>
               </Link>
             );
           })}
+        </nav>
+      </aside>
+
+      <header
+        className="sticky top-0 z-40 flex h-14 items-center border-b border-[#e5e0f0] bg-white/95 px-3 text-[#21104a] backdrop-blur-xl sm:px-4"
+        data-workspace-shell
+      >
+        <Link
+          to="/dashboard"
+          className="flex items-center lg:hidden"
+          aria-label="Về không gian làm việc"
+        >
+          <VbeeBrandLogo size="compact" className="h-8 max-w-[120px]" />
+        </Link>
+
+        <div className="hidden min-w-0 lg:block">
+          <p className="truncate text-sm font-black">
+            {activeItem?.label ?? "Không gian làm việc"}
+          </p>
+          <p className="text-[11px] text-[#756894]">
+            Không gian làm việc sẵn sàng
+          </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 rounded-full border border-[#e8decc] bg-white px-2 py-1 transition hover:bg-[#fbf8ef] focus:outline-none focus:ring-2 focus:ring-[#ffcb05]/50">
-                {user.avatar ? (
-                  <img
-                    src={user.avatar}
-                    alt="avatar"
-                    className="h-7 w-7 rounded-full object-cover ring-1 ring-[#ffcb05]/50"
-                  />
-                ) : (
-                  <span className="flex h-7 w-7 select-none items-center justify-center rounded-full bg-[#ffcb05] text-xs font-bold text-[#21104a]">
-                    {initials}
-                  </span>
-                )}
-                <span className="hidden max-w-[120px] truncate text-sm font-bold text-[#21104a] sm:block">
-                  {user.firstName} {user.lastName}
-                </span>
-                <AppIcon icon={User} size="sm" className="text-[#756894]" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-56 rounded-xl border-[#e8decc] bg-white text-[#21104a]"
+        <div className="ml-auto flex items-center gap-2">
+          {quota && (
+            <Link
+              to="/pricing"
+              title={`Còn ${formatQuotaTime(quota.remainingSeconds)} xử lý`}
+              className={`flex h-9 items-center gap-1.5 rounded-lg border px-2 text-xs font-bold transition hover:bg-[#f7f5ff] ${
+                quota.isLimitReached
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : quota.shouldAlert
+                    ? "border-[#ffcb05]/60 bg-[#fff8d7] text-[#21104a]"
+                    : "border-[#e5e0f0] bg-white text-[#65587c]"
+              }`}
             >
-              <DropdownMenuLabel className="pb-1">
-                <p className="text-sm font-semibold text-[#21104a]">
-                  {user.firstName} {user.lastName}
-                </p>
-                <p className="truncate text-xs font-normal text-[#756894]">
-                  {user.email}
-                </p>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-                <Link to="/dashboard">
-                  <AppIcon icon={LayoutDashboard} size="sm" className="text-[#21104a]" />
-                  Không gian làm việc
-                </Link>
-              </DropdownMenuItem>
-              {canAccessCms && (
-                <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-                  <Link to="/admin">
-                    <AppIcon icon={ShieldCheck} size="sm" className="text-[#21104a]" />
-                    Trung tâm quản trị
-                  </Link>
-                </DropdownMenuItem>
-              )}
-              {onEditProfile && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="gap-2 cursor-pointer"
-                    onSelect={onEditProfile}
-                  >
-                    <AppIcon icon={Pencil} size="sm" className="text-[#21104a]" />
-                    Chỉnh sửa thông tin
-                  </DropdownMenuItem>
-                </>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="gap-2 cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
-                onSelect={handleLogout}
-              >
-                <AppIcon icon={LogOut} size="sm" />
-                Đăng xuất
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#e8decc] bg-white text-[#21104a] transition hover:bg-[#fbf8ef] md:hidden"
-                aria-label="Mở menu điều hướng"
-              >
-                <AppIcon icon={Menu} size="md" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-48 rounded-xl border-[#e8decc] bg-white text-[#21104a] md:hidden"
-            >
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <DropdownMenuItem
-                    asChild
-                    key={item.to}
-                    className="gap-2 cursor-pointer"
-                  >
-                    <Link to={item.to}>
-                      <AppIcon icon={Icon} size="sm" className="text-[#21104a]" />
-                      {item.label}
-                    </Link>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <AppIcon
+                icon={quota.shouldAlert ? AlertTriangle : Clock3}
+                size="sm"
+              />
+              <span className="hidden sm:inline">
+                {quota.isLimitReached
+                  ? "Hết thời lượng"
+                  : formatQuotaTime(quota.remainingSeconds)}
+              </span>
+            </Link>
+          )}
+          {accountMenu}
         </div>
-      </nav>
+      </header>
 
-      <div className="grid grid-cols-5 border-t border-[#e8decc] bg-white md:hidden">
-        {NAV_ITEMS.map((item) => {
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-5 border-t border-[#e5e0f0] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_28px_rgba(33,16,74,.08)] lg:hidden"
+        aria-label="Điều hướng nhanh"
+        data-mobile-workspace-nav
+      >
+        {PRIMARY_MOBILE_NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.to;
+          const active = activeItem?.to === item.to;
           return (
             <Link
               key={item.to}
               to={item.to}
-              className={`flex flex-col items-center gap-1 px-2 py-1.5 text-[11px] font-bold transition ${
-                active ? "bg-[#fbf8ef] text-[#21104a]" : "text-[#756894]"
+              aria-current={active ? "page" : undefined}
+              className={`flex min-w-0 flex-col items-center justify-center gap-0.5 text-[10px] font-bold ${
+                active ? "text-[#21104a]" : "text-[#756894]"
               }`}
             >
-              <AppIcon icon={Icon} size="sm" />
-              {item.label}
+              <span
+                className={`flex h-7 w-10 items-center justify-center rounded-lg ${
+                  active ? "bg-[#ffcb05]" : ""
+                }`}
+              >
+                <AppIcon icon={Icon} size="md" />
+              </span>
+              <span className="max-w-full truncate px-1">{item.shortLabel}</span>
             </Link>
           );
         })}
-      </div>
-      {(quota?.shouldAlert || quota?.isLimitReached) && (
-        <div
-          role="status"
-          className={`border-t px-4 py-2 text-center text-xs font-bold ${
-            quota.isLimitReached
-              ? "border-red-200 bg-red-50 text-red-700"
-              : "border-[#ffcb05]/40 bg-[#fff8d7] text-[#21104a]"
-          }`}
-        >
-          <span className="inline-flex items-center gap-2">
-            <AppIcon icon={AlertTriangle} size="sm" />
-            {quota.isLimitReached
-              ? "Bạn đã hết thời lượng sử dụng."
-              : `Bạn chỉ còn ${formatQuotaTime(quota.remainingSeconds)} xử lý.`}
-            <Link to="/pricing" className="underline underline-offset-2">
-              Xem gói cước
-            </Link>
-          </span>
-        </div>
-      )}
-    </header>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className={`flex min-w-0 flex-col items-center justify-center gap-0.5 text-[10px] font-bold ${
+                moreMenuIsActive ? "text-[#21104a]" : "text-[#756894]"
+              }`}
+              aria-label="Mở thêm chức năng"
+            >
+              <span
+                className={`flex h-7 w-10 items-center justify-center rounded-lg ${
+                  moreMenuIsActive ? "bg-[#ffcb05]" : ""
+                }`}
+              >
+                <AppIcon icon={MoreHorizontal} size="md" />
+              </span>
+              Thêm
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            sideOffset={8}
+            className="w-52 rounded-lg border-[#e5e0f0] bg-white text-[#21104a]"
+          >
+            {MOBILE_MORE_NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <DropdownMenuItem
+                  asChild
+                  key={item.to}
+                  className="cursor-pointer gap-2"
+                >
+                  <Link to={item.to}>
+                    <AppIcon icon={Icon} size="sm" />
+                    {item.label}
+                  </Link>
+                </DropdownMenuItem>
+              );
+            })}
+            {canAccessCms && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild className="cursor-pointer gap-2">
+                  <Link to="/admin">
+                    <AppIcon icon={ShieldCheck} size="sm" />
+                    Trung tâm quản trị
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </nav>
+    </>
   );
 }
