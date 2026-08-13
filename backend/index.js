@@ -79,12 +79,12 @@ app.use("/api/referrals", referralRoutes);
 app.use("/api/v1", publicApiRoutes);
 
 app.get("/", (_req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
   res.json({
     name: "Vbee API Backend",
     status: "ok",
     docs: "/api/v1/health",
-    message:
-      "Backend API đang chạy. Mở frontend ở http://localhost:3000 để dùng giao diện.",
+    message: `Backend API đang chạy. Mở frontend ở ${frontendUrl} để dùng giao diện.`,
   });
 });
 
@@ -141,7 +141,8 @@ initDatabase()
     startBillingReconciliationDispatcher();
     await startTranscriptionWorker();
     const server = app.listen(PORT, () => {
-      console.log(`Backend server đang chạy tại http://localhost:${PORT}`);
+      const publicUrl = process.env.PUBLIC_BACKEND_URL || `http://localhost:${PORT}`;
+      console.log(`Backend server đang chạy tại ${publicUrl}`);
     });
     server.requestTimeout = 15 * 60 * 1000;
     server.headersTimeout = 15 * 1000;

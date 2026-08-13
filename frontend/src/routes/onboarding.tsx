@@ -12,10 +12,9 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
 import { useAuth, type User } from "@/context/AuthContext";
 import { redirectAfterAuth } from "@/lib/auth-redirect";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 const JOB_ROLES = [
   { value: "creator", label: "Sáng tạo nội dung" },

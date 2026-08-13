@@ -53,7 +53,7 @@ function AdminDashboardPage() {
     <PageState loading={loading} error={error} empty={!data} onRetry={load}>
       {data && (
         <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Metric
               icon={<Users className="h-5 w-5" />}
               label="Người dùng"
@@ -76,13 +76,13 @@ function AdminDashboardPage() {
             />
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+          <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
             <AdminPanel>
               <AdminPanelHeader
                 title="Mức sử dụng 7 ngày"
                 description="Mức sử dụng web và API theo ngày"
               />
-              <div className="flex h-72 items-end gap-3 p-4">
+              <div className="flex h-72 items-end gap-3 px-5 py-4">
                 {data.usage.map((point) => {
                   const total = point.web_minutes + point.api_minutes;
                   return (
@@ -90,14 +90,14 @@ function AdminDashboardPage() {
                       key={point.date}
                       className="flex flex-1 flex-col items-center gap-2"
                     >
-                      <div className="flex h-56 w-full items-end rounded-md bg-[#fbf8ef] px-2">
+                      <div className="flex h-56 w-full items-end rounded-md bg-slate-100 px-2">
                         <div
-                          className="w-full rounded-t-md bg-[#21104a]"
+                          className="w-full rounded-t-md bg-indigo-600"
                           style={{ height: `${Math.min(100, total / 2)}%` }}
                           title={`${total} phút`}
                         />
                       </div>
-                      <span className="text-xs font-bold text-[#756894]">
+                      <span className="text-xs font-bold text-slate-500">
                         {point.date.slice(5)}
                       </span>
                     </div>
@@ -111,7 +111,7 @@ function AdminDashboardPage() {
                 title="Tình trạng tác vụ"
                 description="Tỷ lệ xử lý và trạng thái"
               />
-              <div className="space-y-4 p-4">
+              <div className="space-y-4 px-5 py-4">
                 <div className="grid grid-cols-2 gap-3">
                   <Metric
                     label="Thành công"
@@ -125,7 +125,7 @@ function AdminDashboardPage() {
                     icon={<AlertTriangle className="h-4 w-4" />}
                   />
                 </div>
-                <div className="text-sm font-bold">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">
                   Thời gian xử lý TB:{" "}
                   {formatDuration(data.average_processing_time)}
                 </div>
@@ -134,7 +134,7 @@ function AdminDashboardPage() {
                     ([status, count]) => (
                       <div
                         key={status}
-                        className="rounded-md border border-[#e4ddcf] p-3"
+                        className="rounded-md border border-slate-200 p-3"
                       >
                         <StatusBadge
                           status={status as keyof typeof data.jobs_by_status}
@@ -171,13 +171,19 @@ function Metric({
 }) {
   return (
     <div
-      className={`rounded-lg border border-[#e4ddcf] bg-white p-4 shadow-sm ${compact ? "" : "min-h-28"}`}
+      className={`rounded-lg border border-slate-200 bg-white p-4 shadow-sm ${compact ? "" : "min-h-28"}`}
     >
-      <div className="flex items-center justify-between text-[#756894]">
+      <div className="flex items-center justify-between text-slate-500">
         <span className="text-sm font-bold">{label}</span>
-        {icon}
+        {icon && (
+          <span className="grid h-9 w-9 place-items-center rounded-md bg-slate-100 text-slate-600">
+            {icon}
+          </span>
+        )}
       </div>
-      <p className="mt-3 text-2xl font-black text-[#21104a]">{value}</p>
+      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+        {value}
+      </p>
     </div>
   );
 }
@@ -192,9 +198,9 @@ function JobList({
   return (
     <AdminPanel>
       <AdminPanelHeader title={title} />
-      <div className="divide-y divide-[#efe7d8]">
+      <div className="divide-y divide-slate-200">
         {jobs.length === 0 ? (
-          <p className="p-4 text-sm text-[#756894]">Không có tác vụ.</p>
+          <p className="p-4 text-sm text-slate-500">Không có tác vụ.</p>
         ) : (
           jobs.map((job) => (
             <div
@@ -202,8 +208,8 @@ function JobList({
               className="grid gap-2 p-4 md:grid-cols-[1fr_auto] md:items-center"
             >
               <div>
-                <p className="font-black">{job.file_name}</p>
-                <p className="text-sm text-[#756894]">{job.user_email}</p>
+                <p className="font-black text-slate-950">{job.file_name}</p>
+                <p className="text-sm text-slate-500">{job.user_email}</p>
               </div>
               <StatusBadge status={job.status} />
             </div>

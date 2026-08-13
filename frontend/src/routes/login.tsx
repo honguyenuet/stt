@@ -80,7 +80,7 @@ function LoginPage() {
       setToken(data.token, data.user, data.expiresIn);
       redirectAfterAuth(from);
     } catch {
-      setFormError("Không kết nối được backend. Hãy kiểm tra http://localhost:3001");
+      setFormError("Không kết nối được backend. Vui lòng kiểm tra cấu hình API.");
     } finally {
       setIsSubmitting(false);
     }

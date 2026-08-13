@@ -37,6 +37,7 @@ const statuses: Array<JobStatus | "all"> = [
   "cancelled",
 ];
 const languages = ["all", "vi", "en", "ja", "ko", "zh"];
+const sources = ["all", "upload", "recording", "api"] as const;
 
 function AdminJobsPage() {
   const session = useAdminSession();
@@ -46,6 +47,11 @@ function AdminJobsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<JobStatus | "all">("all");
   const [language, setLanguage] = useState("all");
+  const [source, setSource] = useState<(typeof sources)[number]>("all");
+  const [deadLetter, setDeadLetter] =
+    useState<"all" | "true" | "false">("all");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<TranscriptionJob | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +61,17 @@ function AdminJobsPage() {
     (showLoading = true) => {
       if (showLoading) setLoading(true);
       if (showLoading) setError("");
-      void listTranscriptionJobs({ page, limit: 5, search, status, language })
+      void listTranscriptionJobs({
+        page,
+        limit: 5,
+        search,
+        status,
+        language,
+        source,
+        deadLetter,
+        createdFrom,
+        createdTo,
+      })
         .then(setRows)
         .catch((err) =>
           setError(err instanceof Error ? err.message : "Không tải được tác vụ"),
@@ -64,7 +80,7 @@ function AdminJobsPage() {
           if (showLoading) setLoading(false);
         });
     },
-    [language, page, search, status],
+    [createdFrom, createdTo, deadLetter, language, page, search, source, status],
   );
 
   useEffect(() => {
@@ -109,7 +125,7 @@ function AdminJobsPage() {
           title="Tác vụ chuyển giọng nói"
           description="Tìm theo mã tác vụ, tên tệp hoặc thư điện tử người dùng."
         />
-        <div className="grid gap-3 p-4 md:grid-cols-4">
+        <div className="grid gap-3 p-4 md:grid-cols-4 xl:grid-cols-8">
           <input
             value={search}
             onChange={(e) => {
@@ -147,6 +163,52 @@ function AdminJobsPage() {
               </option>
             ))}
           </select>
+          <select
+            value={source}
+            onChange={(e) => {
+              setSource(e.target.value as (typeof sources)[number]);
+              setPage(1);
+            }}
+            className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+          >
+            {sources.map((item) => (
+              <option key={item} value={item}>
+                {item === "all" ? "Tất cả nguồn" : item}
+              </option>
+            ))}
+          </select>
+          <select
+            value={deadLetter}
+            onChange={(e) => {
+              setDeadLetter(e.target.value as "all" | "true" | "false");
+              setPage(1);
+            }}
+            className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+          >
+            <option value="all">Tất cả DLQ</option>
+            <option value="true">Chỉ DLQ</option>
+            <option value="false">Không DLQ</option>
+          </select>
+          <input
+            type="date"
+            value={createdFrom}
+            onChange={(e) => {
+              setCreatedFrom(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+            aria-label="Tạo từ ngày"
+          />
+          <input
+            type="date"
+            value={createdTo}
+            onChange={(e) => {
+              setCreatedTo(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
+            aria-label="Tạo đến ngày"
+          />
           <button
             onClick={() => load()}
             className="rounded-md bg-[#21104a] px-3 py-2 text-sm font-black text-white"

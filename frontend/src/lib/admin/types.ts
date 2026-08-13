@@ -1,5 +1,5 @@
-export type AdminRole = "super_admin" | "admin" | "support" | "viewer" | "user";
-export type AssignableAdminRole = Exclude<AdminRole, "user">;
+export type AdminRole = "user" | "supporter" | "admin";
+export type AssignableAdminRole = AdminRole;
 export type UserStatus = "active" | "suspended" | "deleted";
 export type ManagedUserPlan = "free" | "standard" | "special" | "business";
 export type BillingCycle = "monthly" | "yearly";
@@ -252,6 +252,7 @@ export interface ReportSummary {
   revenue: { total_vnd: number; paid_orders: number };
   performance: { average_processing_time: number; average_latency_ms: number };
   daily_usage: UsagePoint[];
+  scope?: { date_from: string | null; date_to: string | null };
 }
 
 export interface SystemStatus {
@@ -266,12 +267,20 @@ export interface ListUsersParams extends PaginationParams {
   search?: string;
   role?: AssignableAdminRole | "all";
   status?: UserStatus | "all";
+  plan?: ManagedUserPlan | "all";
+  quotaStatus?: "all" | "low" | "exceeded";
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 export interface ListJobsParams extends PaginationParams {
   search?: string;
   status?: JobStatus | "all";
   language?: string;
+  source?: "all" | "upload" | "recording" | "api";
+  deadLetter?: "all" | "true" | "false";
+  createdFrom?: string;
+  createdTo?: string;
 }
 
 export interface ListFilesParams extends PaginationParams {
@@ -291,4 +300,7 @@ export interface ListAuditLogsParams extends PaginationParams {
   search?: string;
   action?: AuditAction | "all";
   actor?: string;
+  targetType?: AuditLog["target_type"] | "all";
+  dateFrom?: string;
+  dateTo?: string;
 }

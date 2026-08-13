@@ -16,7 +16,7 @@ function normalizeManagedUser(row) {
     id: String(row.id),
     name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
     email: row.email,
-    role: getEffectiveAdminRole(row) || "viewer",
+    role: getEffectiveAdminRole(row) || "user",
     status:
       row.status === "deleted"
         ? "deleted"
@@ -90,6 +90,8 @@ async function deleteManagedUserAccount(db, userId) {
     `UPDATE users
      SET status = 'deleted',
          account_status = 'blocked',
+         admin_role = 'none',
+         role = 'user',
          auth_version = auth_version + 1,
          plan_cancel_at_period_end = FALSE,
          plan_cancellation_requested_at = NULL
@@ -142,9 +144,10 @@ async function deleteManagedUserAccount(db, userId) {
 }
 
 async function updateManagedUserRole(db, userId, adminRole) {
-  const accountRole = ["admin", "super_admin"].includes(adminRole)
+  const accountRole = adminRole === "admin" || adminRole === "supporter"
     ? adminRole
     : "user";
+  const cmsRole = accountRole === "user" ? "none" : accountRole;
   const { rows } = await db.query(
     `UPDATE users
      SET admin_role = $1,
@@ -153,7 +156,7 @@ async function updateManagedUserRole(db, userId, adminRole) {
        AND status <> 'deleted'
      RETURNING id, first_name, last_name, email, admin_role, status,
        role, account_status, quota_seconds, created_at, last_login_at`,
-    [adminRole, accountRole, userId],
+    [cmsRole, accountRole, userId],
   );
   return rows[0] || null;
 }

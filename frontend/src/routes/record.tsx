@@ -32,6 +32,7 @@ import { useAuth } from "@/context/AuthContext";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
 import vbeeLogo from "@/assets/vbee-logo.png";
+import { getApiBaseUrl } from "@/lib/api-base-url";
 import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
@@ -41,9 +42,7 @@ import {
 } from "@/lib/language-options";
 import { SPEAKER_COUNT_OPTIONS } from "@/lib/speaker-options";
 
-const API_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  "http://localhost:3001";
+const API_URL = getApiBaseUrl();
 
 interface Word {
   text: string;

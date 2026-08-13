@@ -25,6 +25,7 @@ const {
   validateAfterTranscription,
   validateBeforeTranscription,
 } = require("./quotaService");
+const { recordApiUsage } = require("./apiUsageService");
 
 function getEnvInt(name, fallback) {
   const value = Number.parseInt(process.env[name] || "", 10);
@@ -538,6 +539,7 @@ async function enqueueTranscriptionJob({
   batchTrackIndex = null,
   batchTrackName = null,
   customerWebhook = null,
+  apiKeyId = null,
   uploadFingerprint = null,
 }) {
   if (!file || (!file.buffer && !file.path)) {
@@ -680,6 +682,7 @@ async function enqueueTranscriptionJob({
               : Number(batchTrackIndex),
           batchTrackName: batchTrackName || null,
           customerWebhook: customerWebhook || null,
+          apiKeyId: apiKeyId || null,
         }),
         adminSettings.max_retry_attempts || QUEUE_MAX_ATTEMPTS,
         QUEUE_JOB_TIMEOUT_SECONDS,
@@ -1151,6 +1154,15 @@ async function processJob(job) {
 
     await setJobProgress(job, 90, "finalizing");
     await completeJob(job, result);
+    await recordApiUsage({
+      apiKeyId: job.payload?.apiKeyId,
+      userId: job.user_id,
+      event: "completed",
+      jobId: job.id,
+      transcriptionId: job.transcription_id,
+      durationSeconds: result.duration || job.expected_duration_seconds,
+      status: "completed",
+    });
     if (job.payload?.batchKind === "multitrack" && job.payload?.batchId) {
       await finalizeMultitrackBatch(job.payload.batchId);
     }
@@ -1178,6 +1190,15 @@ async function processJob(job) {
         );
       }
       if (failure?.terminal) {
+        await recordApiUsage({
+          apiKeyId: job.payload?.apiKeyId,
+          userId: job.user_id,
+          event: "failed",
+          jobId: job.id,
+          transcriptionId: job.transcription_id,
+          durationSeconds: 0,
+          status: "failed",
+        });
         await notifyCustomerWebhook(job, "failed", { error });
         await notifyAdminJobFailure(job, error).catch((notificationError) => {
           console.error(

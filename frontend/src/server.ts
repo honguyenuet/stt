@@ -12,6 +12,7 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 function withSecurityHeaders(response: Response, request: Request): Response {
   const headers = new Headers(response.headers);
   const isHttps = new URL(request.url).protocol === "https:";
+  const localDevSources = isHttps ? "" : " http://localhost:3001";
   const csp = [
     "default-src 'self'",
     "base-uri 'self'",
@@ -22,8 +23,8 @@ function withSecurityHeaders(response: Response, request: Request): Response {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: blob: https:",
-    "media-src 'self' blob: data: http://localhost:3001 https:",
-    "connect-src 'self' http://localhost:3001 https: ws: wss:",
+    `media-src 'self' blob: data:${localDevSources} https:`,
+    `connect-src 'self'${localDevSources} https: ws: wss:`,
     "worker-src 'self' blob:",
     ...(isHttps ? ["upgrade-insecure-requests"] : []),
   ].join("; ");

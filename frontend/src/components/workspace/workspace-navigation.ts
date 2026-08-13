@@ -71,7 +71,12 @@ export const MOBILE_MORE_NAV_ITEMS = DESKTOP_WORKSPACE_NAV_ITEMS.filter(
   (item) => !PRIMARY_MOBILE_PATHS.has(item.to),
 );
 
-const WORKSPACE_CMS_ROLES = new Set(["support", "admin", "super_admin"]);
+const WORKSPACE_CMS_ROLES = new Set([
+  "support",
+  "supporter",
+  "admin",
+  "super_admin",
+]);
 
 export function canAccessWorkspaceCms(role?: string | null) {
   return WORKSPACE_CMS_ROLES.has(role || "");

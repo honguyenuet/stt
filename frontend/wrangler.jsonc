@@ -4,6 +4,16 @@
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
+  "routes": [
+    {
+      "pattern": "vbeeaistt.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.vbeeaistt.com",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true
   }

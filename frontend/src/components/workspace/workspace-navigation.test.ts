@@ -46,6 +46,7 @@ describe("workspace navigation", () => {
 
   it("shows the CMS entry only to account roles accepted by the workspace", () => {
     expect(canAccessWorkspaceCms("support")).toBe(true);
+    expect(canAccessWorkspaceCms("supporter")).toBe(true);
     expect(canAccessWorkspaceCms("admin")).toBe(true);
     expect(canAccessWorkspaceCms("super_admin")).toBe(true);
     expect(canAccessWorkspaceCms("user")).toBe(false);
