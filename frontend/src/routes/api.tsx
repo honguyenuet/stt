@@ -297,10 +297,10 @@ function ApiPage() {
   if (!user) return null;
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
+    <main className="min-h-screen overflow-x-hidden bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
-      <section className="relative overflow-hidden bg-gradient-hero text-foreground">
+      <section className="hidden">
         <div className="absolute -left-24 top-10 h-56 w-56 rounded-full bg-[#ffcb05]/18 blur-3xl" />
         <div className="absolute -right-16 bottom-0 h-56 w-56 rounded-full bg-[#21104a]/8 blur-3xl" />
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 md:grid-cols-[1fr_.85fr] md:px-6 md:py-12">
@@ -378,15 +378,15 @@ function ApiPage() {
 
       <section
         id="keys"
-        className="mx-auto grid max-w-7xl gap-5 px-4 py-10 md:grid-cols-[.9fr_1.1fr] md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 py-4 sm:px-5 sm:py-5 md:grid-cols-[.9fr_1.1fr]"
       >
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center gap-3">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
               <KeyRound className="h-6 w-6" />
             </span>
             <div>
-              <h2 className="text-xl font-black">Tạo API key</h2>
+              <h1 className="text-xl font-black">Tạo API key</h1>
               <p className="text-sm text-muted-foreground">
                 Key đầy đủ chỉ hiện một lần sau khi tạo.
               </p>
@@ -444,7 +444,7 @@ function ApiPage() {
           )}
         </div>
 
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black">Danh sách API key</h2>
@@ -499,14 +499,14 @@ function ApiPage() {
 
       <section
         id="docs"
-        className="mx-auto grid max-w-7xl gap-5 px-4 pb-10 md:grid-cols-2 md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 pb-4 sm:px-5 md:grid-cols-2"
       >
         <DocCard title="cURL" code={curlSample} onCopy={copyText} />
         <DocCard title="JavaScript" code={jsSample} onCopy={copyText} />
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-12 md:px-6">
-        <div className="grid gap-5 rounded-lg border border-border bg-white p-5 text-foreground shadow-soft md:grid-cols-[.9fr_1.1fr] md:p-6">
+      <section className="mx-auto max-w-6xl px-3 pb-6 sm:px-5">
+        <div className="grid gap-4 rounded-lg border border-border bg-white p-4 text-foreground md:grid-cols-[.9fr_1.1fr]">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-black text-primary">
               <UploadCloud className="h-4 w-4" /> Kiểm thử API thật
