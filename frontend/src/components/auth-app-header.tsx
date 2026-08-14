@@ -2,17 +2,14 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
-  ChevronDown,
   Clock3,
-  LayoutDashboard,
-  LogOut,
   MoreHorizontal,
-  Pencil,
   ShieldCheck,
 } from "lucide-react";
 
 import { AppIcon } from "@/components/ui/app-icon";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
+import { WorkspaceAccountMenu } from "@/components/workspace/workspace-account-menu";
 import {
   DESKTOP_WORKSPACE_NAV_ITEMS,
   MOBILE_MORE_NAV_ITEMS,
@@ -24,7 +21,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -70,8 +66,6 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
 
   if (!user) return null;
 
-  const initials =
-    `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
   const moreMenuIsActive = MOBILE_MORE_NAV_ITEMS.some(
     (item) => item.to === activeItem?.to,
   );
@@ -81,101 +75,22 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
     window.location.href = "/login";
   }
 
-  const accountMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className="flex h-9 items-center gap-2 rounded-lg border border-[#e5e0f0] bg-white px-1.5 text-[#21104a] transition hover:bg-[#f7f5ff] focus:outline-none"
-          aria-label={`Mở tài khoản của ${user.firstName} ${user.lastName}`}
-        >
-          {user.avatar ? (
-            <img
-              src={user.avatar}
-              alt=""
-              className="h-7 w-7 rounded-md object-cover"
-            />
-          ) : (
-            <span className="flex h-7 w-7 select-none items-center justify-center rounded-md bg-[#ffcb05] text-xs font-black text-[#21104a]">
-              {initials}
-            </span>
-          )}
-          <span className="hidden max-w-28 truncate text-xs font-bold sm:block">
-            {user.firstName}
-          </span>
-          <AppIcon
-            icon={ChevronDown}
-            size="sm"
-            className="hidden text-[#756894] sm:block"
-          />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className="w-56 rounded-lg border-[#e5e0f0] bg-white text-[#21104a]"
-      >
-        <DropdownMenuLabel className="pb-1">
-          <p className="text-sm font-semibold">
-            {user.firstName} {user.lastName}
-          </p>
-          <p className="truncate text-xs font-normal text-[#756894]">
-            {user.email}
-          </p>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild className="cursor-pointer gap-2">
-          <Link to="/dashboard">
-            <AppIcon icon={LayoutDashboard} size="sm" />
-            Không gian làm việc
-          </Link>
-        </DropdownMenuItem>
-        {canAccessCms && (
-          <DropdownMenuItem asChild className="cursor-pointer gap-2">
-            <Link to="/admin">
-              <AppIcon icon={ShieldCheck} size="sm" />
-              Trung tâm quản trị
-            </Link>
-          </DropdownMenuItem>
-        )}
-        {onEditProfile && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer gap-2"
-              onSelect={onEditProfile}
-            >
-              <AppIcon icon={Pencil} size="sm" />
-              Chỉnh sửa thông tin
-            </DropdownMenuItem>
-          </>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          className="cursor-pointer gap-2 text-destructive hover:bg-destructive/10 focus:bg-destructive/10"
-          onSelect={handleLogout}
-        >
-          <AppIcon icon={LogOut} size="sm" />
-          Đăng xuất
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
   return (
     <>
       <aside
-        className="fixed inset-y-0 left-0 z-50 hidden w-[72px] flex-col border-r border-white/10 bg-[#21104a] text-white lg:flex"
+        className="fixed inset-y-0 left-0 z-50 hidden w-24 flex-col border-r border-white/10 bg-[#21104a] text-white lg:flex"
         aria-label="Điều hướng không gian làm việc"
         data-desktop-workspace-rail
       >
         <Link
           to="/dashboard"
-          className="flex h-14 items-center justify-center border-b border-white/10 px-2"
+          className="flex h-16 items-center justify-center border-b border-white/10 px-3"
           aria-label="Vbee AIVoice - Không gian làm việc"
         >
-          <VbeeBrandLogo size="compact" className="h-7 max-w-12" />
+          <VbeeBrandLogo size="compact" className="h-8 max-w-[72px]" />
         </Link>
 
-        <nav className="flex flex-1 flex-col gap-1 px-2 py-3">
+        <nav className="flex flex-1 flex-col gap-1 px-3 py-3">
           {DESKTOP_WORKSPACE_NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = activeItem?.to === item.to;
@@ -186,18 +101,31 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
                 aria-current={active ? "page" : undefined}
                 aria-label={item.label}
                 title={item.label}
-                className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[10px] font-bold leading-tight transition ${
+                className={`flex min-h-12 flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[11px] font-bold leading-tight transition ${
                   active
                     ? "bg-[#ffcb05] text-[#21104a]"
                     : "text-[#d8d0e9] hover:bg-white/10 hover:text-white"
                 }`}
               >
                 <AppIcon icon={Icon} size="md" />
-                <span className="max-w-full truncate">{item.shortLabel}</span>
+                <span className="max-w-full whitespace-nowrap">
+                  {item.shortLabel}
+                </span>
               </Link>
             );
           })}
         </nav>
+
+        <div className="border-t border-white/10 p-2">
+          <WorkspaceAccountMenu
+            user={user}
+            quota={quota}
+            placement="rail"
+            canAccessCms={canAccessCms}
+            onEditProfile={onEditProfile}
+            onLogout={handleLogout}
+          />
+        </div>
       </aside>
 
       <header
@@ -245,7 +173,16 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
               </span>
             </Link>
           )}
-          {accountMenu}
+          <div className="lg:hidden">
+            <WorkspaceAccountMenu
+              user={user}
+              quota={quota}
+              placement="topbar"
+              canAccessCms={canAccessCms}
+              onEditProfile={onEditProfile}
+              onLogout={handleLogout}
+            />
+          </div>
         </div>
       </header>
 

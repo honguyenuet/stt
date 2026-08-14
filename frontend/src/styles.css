@@ -208,7 +208,7 @@
 
 @media (min-width: 1024px) {
   body:has([data-workspace-shell]) {
-    padding-left: 72px;
+    padding-left: 96px;
   }
 }
 
