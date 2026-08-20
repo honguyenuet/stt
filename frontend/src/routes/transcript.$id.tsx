@@ -29,6 +29,8 @@ import {
   RotateCw,
   Save,
   Search,
+  Sparkles,
+  Tag,
   Undo2,
   Redo2,
   Users,
@@ -36,6 +38,7 @@ import {
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { TranscriptSidebarSection } from "@/components/transcript-sidebar-section";
+import { TranscriptCollaborationPanel } from "@/components/transcript-collaboration-panel";
 import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
@@ -83,6 +86,11 @@ interface TranscriptDetail {
   processing_seconds: number | null;
   text: string;
   words: TranscriptWord[];
+  transcript_template: TranscriptTemplate;
+  insights: TranscriptInsights | null;
+  insights_updated_at: string | null;
+  reviewed_word_indexes: number[];
+  tags: string[];
   audio_filename: string | null;
   source_language: string | null;
   translated_text: string | null;
@@ -92,6 +100,30 @@ interface TranscriptDetail {
   status: "queued" | "processing" | "completed" | "failed" | "cancelled";
   error_message: string | null;
   created_at: string;
+}
+
+type TranscriptTemplate = "meeting" | "interview" | "podcast" | "lecture";
+
+interface TranscriptInsights {
+  template: TranscriptTemplate;
+  summary: string;
+  keyPoints: string[];
+  actionItems: Array<{
+    text: string;
+    owner: string | null;
+    deadline: string | null;
+  }>;
+  decisions: string[];
+  chapters: Array<{
+    title: string;
+    startMs: number;
+    endMs: number;
+    summary: string;
+  }>;
+  keywords: string[];
+  questions: string[];
+  generatedAt: string;
+  generator: string;
 }
 
 interface IndexedWord extends TranscriptWord {
@@ -212,6 +244,12 @@ function HighlightedPlainText({
 }
 
 export const Route = createFileRoute("/transcript/$id")({
+  validateSearch: (search: Record<string, unknown>) => {
+    const at = Number(search.at);
+    return {
+      at: Number.isFinite(at) && at >= 0 ? at : undefined,
+    };
+  },
   component: TranscriptEditorPage,
 });
 
@@ -380,6 +418,7 @@ function exportSegmentLabel(
 
 function TranscriptEditorPage() {
   const { id } = Route.useParams();
+  const { at: requestedStartMs } = Route.useSearch();
   const transcriptId = Number.parseInt(id, 10);
   const { user, token, isLoading } = useAuth();
   const navigate = useNavigate();
@@ -410,6 +449,12 @@ function TranscriptEditorPage() {
   const [versions, setVersions] = useState<TranscriptVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [insightsGenerating, setInsightsGenerating] = useState(false);
+  const [insightsError, setInsightsError] = useState("");
+  const [tagDraft, setTagDraft] = useState("");
+  const [speakerMergeSource, setSpeakerMergeSource] = useState("");
+  const [speakerMergeTarget, setSpeakerMergeTarget] = useState("");
+  const [rememberSpeakerLabels, setRememberSpeakerLabels] = useState(true);
   const [exportOptions, setExportOptions] = useState<ExportOptions>({
     includeSpeakers: true,
     includeTimestamps: true,
@@ -465,10 +510,11 @@ function TranscriptEditorPage() {
           (word) =>
             typeof word.confidence === "number" &&
             word.confidence > 0 &&
-            word.confidence < LOW_CONFIDENCE_THRESHOLD,
+            word.confidence < LOW_CONFIDENCE_THRESHOLD &&
+            !transcript?.reviewed_word_indexes?.includes(word.index),
         )
         .slice(0, 30),
-    [words],
+    [transcript?.reviewed_word_indexes, words],
   );
   const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -553,7 +599,40 @@ function TranscriptEditorPage() {
       }
       const detail = body as TranscriptDetail;
       detail.words = normalizeWords(detail.words);
+      try {
+        const remembered = JSON.parse(
+          window.localStorage.getItem("vbee-speaker-labels") || "{}",
+        ) as Record<string, string>;
+        detail.words = detail.words.map((word) => {
+          const key = String(word.speaker ?? "");
+          return key && remembered[key] ? { ...word, speaker: remembered[key] } : word;
+        });
+      } catch {
+        // Bộ nhớ trình duyệt có thể bị chặn; transcript vẫn hoạt động bình thường.
+      }
       detail.text = String(detail.text || "");
+      detail.transcript_template = [
+        "meeting",
+        "interview",
+        "podcast",
+        "lecture",
+      ].includes(detail.transcript_template)
+        ? detail.transcript_template
+        : "meeting";
+      detail.insights =
+        detail.insights && typeof detail.insights === "object"
+          ? detail.insights
+          : null;
+      detail.reviewed_word_indexes = Array.isArray(
+        detail.reviewed_word_indexes,
+      )
+        ? detail.reviewed_word_indexes.filter(
+            (value) => Number.isSafeInteger(value) && value >= 0,
+          )
+        : [];
+      detail.tags = Array.isArray(detail.tags)
+        ? detail.tags.map((tag) => String(tag)).filter(Boolean)
+        : [];
       setTranscript(detail);
       setTranslationRetryError("");
       setEditorText(detail.text);
@@ -564,6 +643,8 @@ function TranscriptEditorPage() {
       setRedoStack([]);
       setSearchQuery("");
       setSearchIndex(-1);
+      setInsightsError("");
+      setTagDraft(detail.tags.join(", "));
       setEditorMode(
         detail.words.length > 0 && detail.words.length <= MAX_SYNC_WORDS
           ? "sync"
@@ -637,8 +718,14 @@ function TranscriptEditorPage() {
     setAudioDurationSeconds(0);
     setActiveWordIndex(-1);
     playWhenReadyRef.current = false;
-    pendingSeekMillisecondsRef.current = null;
-  }, [transcript?.audio_filename, transcript?.id]);
+    pendingSeekMillisecondsRef.current = requestedStartMs ?? null;
+    if (requestedStartMs !== undefined) {
+      setPlaybackSeconds(requestedStartMs / 1000);
+      setActiveWordIndex(
+        findActiveWordIndex(wordsRef.current, requestedStartMs),
+      );
+    }
+  }, [requestedStartMs, transcript?.audio_filename, transcript?.id]);
 
   useEffect(() => {
     if (editorMode !== "sync" || activeWordIndex < 0) return;
@@ -1046,16 +1133,186 @@ function TranscriptEditorPage() {
         : word,
     );
     applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+    if (rememberSpeakerLabels) {
+      try {
+        const remembered = JSON.parse(
+          window.localStorage.getItem("vbee-speaker-labels") || "{}",
+        ) as Record<string, string>;
+        remembered[previousSpeaker] = cleanSpeaker;
+        window.localStorage.setItem("vbee-speaker-labels", JSON.stringify(remembered));
+      } catch {
+        // Không chặn thao tác đổi tên nếu bộ nhớ trình duyệt không khả dụng.
+      }
+    }
   }
 
-  function markLowConfidenceReviewed(wordIndex: number) {
-    const currentWords = wordsRef.current;
-    const currentWord = currentWords[wordIndex];
-    if (!currentWord) return;
-    const nextWords = currentWords.map((word, index) =>
-      index === wordIndex ? { ...word, confidence: 1 } : word,
+  function mergeSpeakers() {
+    if (!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget) return;
+    const nextWords = wordsRef.current.map((word) =>
+      String(word.speaker ?? "") === speakerMergeSource
+        ? { ...word, speaker: speakerMergeTarget }
+        : word,
     );
-    applyEditorChange(editorTextRef.current, nextWords, true);
+    applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+    setSpeakerMergeSource("");
+  }
+
+  function splitSpeakerAtActiveWord() {
+    if (activeWordIndex < 0 || activeWordIndex >= wordsRef.current.length) return;
+    const currentSpeaker = String(wordsRef.current[activeWordIndex].speaker ?? "");
+    if (!currentSpeaker) return;
+    const nextSpeaker = `${speakerLabel(currentSpeaker)} (phần 2)`;
+    let segmentEnd = activeWordIndex + 1;
+    while (
+      segmentEnd < wordsRef.current.length &&
+      String(wordsRef.current[segmentEnd].speaker ?? "") === currentSpeaker
+    ) {
+      segmentEnd += 1;
+    }
+    const nextWords = wordsRef.current.map((word, index) => {
+      return index >= activeWordIndex && index < segmentEnd
+        ? { ...word, speaker: nextSpeaker }
+        : word;
+    });
+    applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+  }
+
+  async function saveWorkflow(values: {
+    template?: TranscriptTemplate;
+    tags?: string[];
+    reviewedWordIndexes?: number[];
+  }) {
+    if (!token || !activeTranscriptId) return;
+    const response = await fetch(
+      `${API_URL}/api/transcribe/${activeTranscriptId}/workflow`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(values),
+      },
+    );
+    const body = (await response.json().catch(() => ({}))) as {
+      template?: TranscriptTemplate;
+      tags?: string[];
+      reviewedWordIndexes?: number[];
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(body.error || "Không lưu được thiết lập transcript");
+    }
+    setTranscript((current) =>
+      current
+        ? {
+            ...current,
+            transcript_template: body.template ?? current.transcript_template,
+            tags: body.tags ?? current.tags,
+            reviewed_word_indexes:
+              body.reviewedWordIndexes ?? current.reviewed_word_indexes,
+          }
+        : current,
+    );
+  }
+
+  async function markLowConfidenceReviewed(wordIndex: number) {
+    if (!transcript || transcript.reviewed_word_indexes.includes(wordIndex)) {
+      return;
+    }
+    const reviewedWordIndexes = [
+      ...transcript.reviewed_word_indexes,
+      wordIndex,
+    ].sort((left, right) => left - right);
+    setTranscript((current) =>
+      current ? { ...current, reviewed_word_indexes: reviewedWordIndexes } : current,
+    );
+    try {
+      await saveWorkflow({ reviewedWordIndexes });
+    } catch (error) {
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              reviewed_word_indexes: current.reviewed_word_indexes.filter(
+                (index) => index !== wordIndex,
+              ),
+            }
+          : current,
+      );
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "Không lưu được trạng thái review",
+      );
+    }
+  }
+
+  async function generateInsights(template: TranscriptTemplate) {
+    if (!token || !activeTranscriptId) return;
+    setInsightsGenerating(true);
+    setInsightsError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}/insights`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ template }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as
+        | { insights: TranscriptInsights; template: TranscriptTemplate }
+        | { error?: string };
+      if (!response.ok || !("insights" in body)) {
+        throw new Error(
+          "error" in body && body.error
+            ? body.error
+            : "Không tạo được phân tích transcript",
+        );
+      }
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              transcript_template: body.template,
+              insights: body.insights,
+              insights_updated_at: body.insights.generatedAt,
+            }
+          : current,
+      );
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error
+          ? error.message
+          : "Không tạo được phân tích transcript",
+      );
+    } finally {
+      setInsightsGenerating(false);
+    }
+  }
+
+  async function saveTags() {
+    const tags = [
+      ...new Set(
+        tagDraft
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      ),
+    ].slice(0, 30);
+    setInsightsError("");
+    try {
+      await saveWorkflow({ tags });
+      setTagDraft(tags.join(", "));
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error ? error.message : "Không lưu được tag",
+      );
+    }
   }
 
   async function restoreVersion(versionId: number) {
@@ -1840,6 +2097,188 @@ function TranscriptEditorPage() {
               </div>
             </TranscriptSidebarSection>
 
+            {token && (
+              <TranscriptSidebarSection
+                icon={<Users className="h-4 w-4" />}
+                title="Chia sẻ và cộng tác"
+                meta="Bảo mật"
+              >
+                <TranscriptCollaborationPanel
+                  transcriptId={transcript.id}
+                  token={token}
+                  playbackMilliseconds={Math.round(playbackSeconds * 1000)}
+                />
+              </TranscriptSidebarSection>
+            )}
+
+            <TranscriptSidebarSection
+              icon={<Sparkles className="h-4 w-4" />}
+              title="Phân tích nội dung"
+              meta={transcript.insights ? "Đã tạo" : "Chưa tạo"}
+              defaultOpen
+            >
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <label className="text-[11px] font-bold text-[#5f4c82]">
+                  Mẫu transcript
+                  <select
+                    value={transcript.transcript_template}
+                    onChange={(event) => {
+                      const template = event.target.value as TranscriptTemplate;
+                      setTranscript((current) =>
+                        current
+                          ? { ...current, transcript_template: template }
+                          : current,
+                      );
+                    }}
+                    className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-bold text-[#21104a]"
+                  >
+                    <option value="meeting">Cuộc họp</option>
+                    <option value="interview">Phỏng vấn</option>
+                    <option value="podcast">Podcast</option>
+                    <option value="lecture">Bài giảng</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void generateInsights(transcript.transcript_template)
+                  }
+                  disabled={insightsGenerating}
+                  className="mt-[18px] inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#ffcb05] px-3 text-xs font-black text-[#21104a] disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Sparkles
+                    className={`h-3.5 w-3.5 ${insightsGenerating ? "animate-pulse" : ""}`}
+                  />
+                  {insightsGenerating ? "Đang tạo" : "Tạo lại"}
+                </button>
+              </div>
+
+              <label className="mt-3 block text-[11px] font-bold text-[#5f4c82]">
+                Tag, phân cách bằng dấu phẩy
+                <div className="mt-1 flex gap-2">
+                  <input
+                    value={tagDraft}
+                    onChange={(event) => setTagDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveTags();
+                      }
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-semibold outline-none focus:border-[#ffcb05]"
+                    placeholder="khách hàng, sprint 8"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveTags()}
+                    className="rounded-md border border-[#ded5e9] bg-white px-2.5 text-xs font-black"
+                    aria-label="Lưu tag"
+                  >
+                    <Tag className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </label>
+
+              {insightsError && (
+                <p className="mt-3 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-800">
+                  {insightsError}
+                </p>
+              )}
+
+              {transcript.insights ? (
+                <div className="mt-3 space-y-3 text-xs leading-5 text-[#4e4168]">
+                  <div>
+                    <p className="font-black text-[#21104a]">Tóm tắt</p>
+                    <p className="mt-1">{transcript.insights.summary}</p>
+                  </div>
+                  {transcript.insights.actionItems.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Việc cần làm</p>
+                      <ul className="mt-1 space-y-1.5">
+                        {transcript.insights.actionItems.map((item, index) => (
+                          <li
+                            key={`${item.text}-${index}`}
+                            className="rounded-md bg-[#fbfaf7] p-2"
+                          >
+                            <span className="font-bold">{item.text}</span>
+                            {(item.owner || item.deadline) && (
+                              <span className="mt-1 block text-[11px] text-[#8a7da1]">
+                                {item.owner
+                                  ? `Phụ trách: ${item.owner}`
+                                  : "Chưa rõ người phụ trách"}
+                                {item.deadline ? ` · Hạn: ${item.deadline}` : ""}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {transcript.insights.decisions.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Quyết định</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.decisions.map((decision) => (
+                          <li key={decision}>{decision}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {transcript.insights.chapters.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Chapters</p>
+                      <div className="mt-1 space-y-1">
+                        {transcript.insights.chapters.map((chapter, index) => (
+                          <button
+                            key={`${chapter.startMs}-${index}`}
+                            type="button"
+                            onClick={() => seekTo(chapter.startMs)}
+                            className="flex w-full items-start gap-2 rounded-md border border-[#ece7f2] bg-white p-2 text-left hover:border-[#ffcb05]"
+                          >
+                            <span className="shrink-0 font-black text-[#8067aa]">
+                              {formatPlaybackTime(chapter.startMs / 1000)}
+                            </span>
+                            <span className="line-clamp-2 font-bold text-[#342752]">
+                              {chapter.title}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {transcript.insights.keywords.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {transcript.insights.keywords.map((keyword) => (
+                        <span
+                          key={keyword}
+                          className="rounded-full border border-[#ded5e9] bg-white px-2 py-0.5 text-[11px] font-bold"
+                        >
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {transcript.insights.questions.length > 0 && (
+                    <details>
+                      <summary className="cursor-pointer font-black text-[#21104a]">
+                        Câu hỏi trong transcript ({transcript.insights.questions.length})
+                      </summary>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.questions.map((question) => (
+                          <li key={question}>{question}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs leading-5 text-[#8a7da1]">
+                  Tạo tóm tắt, ý chính, action items, quyết định, chapter,
+                  keyword và câu hỏi từ transcript này.
+                </p>
+              )}
+            </TranscriptSidebarSection>
+
             <TranscriptSidebarSection
               icon={<Download className="h-4 w-4" />}
               title="Xuất transcript"
@@ -2010,6 +2449,55 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
+              {speakers.length > 0 && (
+                <div className="mt-3 space-y-2 border-t border-[#ece7f2] pt-3">
+                  <label className="flex items-center gap-2 text-xs font-bold text-[#5f4c82]">
+                    <input
+                      type="checkbox"
+                      checked={rememberSpeakerLabels}
+                      onChange={(event) => setRememberSpeakerLabels(event.target.checked)}
+                      className="h-4 w-4 accent-[#21104a]"
+                    />
+                    Nhớ tên cho transcript sau trên thiết bị này
+                  </label>
+                  {speakers.length > 1 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={speakerMergeSource}
+                        onChange={(event) => setSpeakerMergeSource(event.target.value)}
+                        className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
+                      >
+                        <option value="">Gộp người…</option>
+                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                      </select>
+                      <select
+                        value={speakerMergeTarget}
+                        onChange={(event) => setSpeakerMergeTarget(event.target.value)}
+                        className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
+                      >
+                        <option value="">vào người…</option>
+                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={mergeSpeakers}
+                        disabled={!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget}
+                        className="col-span-2 rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
+                      >
+                        Gộp hai người nói
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={splitSpeakerAtActiveWord}
+                    disabled={activeWordIndex < 0}
+                    className="w-full rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
+                  >
+                    Tách đoạn tại từ đang chọn
+                  </button>
+                </div>
+              )}
             </TranscriptSidebarSection>
 
             <TranscriptSidebarSection
@@ -2045,7 +2533,7 @@ function TranscriptEditorPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => markLowConfidenceReviewed(word.index)}
+                        onClick={() => void markLowConfidenceReviewed(word.index)}
                         className="mt-2 w-full rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-red-800"
                       >
                         Đánh dấu đã xem

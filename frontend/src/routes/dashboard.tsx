@@ -39,6 +39,12 @@ import {
   sumMediaDurations,
 } from "@/lib/format-duration";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  buildDashboardHistoryPath,
+  normalizeDashboardFolders,
+  selectDashboardFolder,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
 const API_URL = getApiBaseUrl();
 
@@ -52,6 +58,10 @@ interface HistoryItem {
   error_message?: string | null;
   translation_error?: string | null;
   created_at: string;
+}
+
+interface DashboardHistoryResponse {
+  items: HistoryItem[];
 }
 
 interface AuthSession {
@@ -95,28 +105,73 @@ function DashboardPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyRetryKey, setHistoryRetryKey] = useState(0);
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [folderError, setFolderError] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+
+  const activeFolder = selectDashboardFolder(folders, activeFolderId);
+
+  const loadFolders = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folders?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tải được danh sách thư mục");
+      }
+      const nextFolders = normalizeDashboardFolders(body.folders);
+      setFolders(nextFolders);
+      setActiveFolderId((current) =>
+        selectDashboardFolder(nextFolders, current)?.id ?? null,
+      );
+      setFolderError("");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error
+          ? error.message
+          : "Không tải được danh sách thư mục",
+      );
+    } finally {
+      setFoldersLoaded(true);
+    }
+  }, [token]);
 
   useEffect(() => {
-    if (!user || !token) return;
+    if (user && token) void loadFolders();
+  }, [loadFolders, token, user]);
+
+  useEffect(() => {
+    if (!user || !token || !foldersLoaded) return;
     let active = true;
     const loadHistory = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/transcribe/history`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const body = (await response.json().catch(() => [])) as
-          | HistoryItem[]
+        const response = await fetch(
+          `${API_URL}${buildDashboardHistoryPath(activeFolder?.id ?? null)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as
+          | DashboardHistoryResponse
           | { error?: string };
-        if (!response.ok || !Array.isArray(body)) {
+        if (!response.ok || !("items" in body) || !Array.isArray(body.items)) {
           throw new Error(
-            !Array.isArray(body) && body.error
+            "error" in body && body.error
               ? body.error
               : "Không tải được lịch sử chuyển đổi",
           );
         }
         if (active) {
-          setHistory(body.slice(0, 3));
+          setHistory(body.items.slice(0, 3));
           setHistoryError("");
         }
       } catch (error) {
@@ -137,7 +192,7 @@ function DashboardPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [historyRetryKey, user, token]);
+  }, [activeFolder?.id, foldersLoaded, historyRetryKey, user, token]);
 
   // ── Edit profile state ──────────────────────────────────────────────
   const [editOpen, setEditOpen] = useState(false);
@@ -166,7 +221,7 @@ function DashboardPage() {
   const [sessionActionId, setSessionActionId] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
-  const [activeFolder, setActiveFolder] = useState("Dự án mới");
+  const [folderVisibility, setFolderVisibility] = useState<"private" | "team">("private");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -483,12 +538,47 @@ function DashboardPage() {
     }
   }
 
-  function handleCreateFolder() {
+  async function handleCreateFolder() {
     const name = folderName.trim();
-    if (!name) return;
-    setActiveFolder(name);
-    setFolderOpen(false);
-    setFolderName("Dự án mới");
+    if (!name || !token || creatingFolder) return;
+    setCreatingFolder(true);
+    setFolderError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          visibility: folderVisibility,
+          teamPermission: "edit",
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tạo được thư mục");
+      }
+      const created = normalizeDashboardFolders(
+        body.folder ? [body.folder] : [],
+      )[0];
+      if (!created) throw new Error("Dữ liệu thư mục trả về không hợp lệ");
+      setFolders((current) => [...current, created]);
+      setActiveFolderId(created.id);
+      setFolderOpen(false);
+      setFolderName("Dự án mới");
+      setFolderVisibility("private");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không tạo được thư mục",
+      );
+    } finally {
+      setCreatingFolder(false);
+    }
   }
 
   // ── Loading ──────────────────────────────────────────────────────────
@@ -617,16 +707,45 @@ function DashboardPage() {
                   <p className="text-xs font-black uppercase text-primary">
                     Tệp gần đây
                   </p>
-                  <div className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <label className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
-                    {activeFolder}
-                  </div>
+                    <span className="sr-only">Thư mục đang xem</span>
+                    <select
+                      value={activeFolder?.id ?? ""}
+                      onChange={(event) =>
+                        setActiveFolderId(Number(event.target.value) || null)
+                      }
+                      disabled={!folders.length}
+                      className="max-w-56 rounded-md border-0 bg-transparent py-1 pr-7 font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      {!folders.length && <option value="">Đang tải thư mục...</option>}
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name} ({folder.item_count})
+                          {folder.visibility === "team" ? " · Nhóm" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 <div className="rounded-md border border-border bg-[#f7f7fb] px-2.5 py-1 text-xs font-bold text-muted-foreground">
                   {history.length} tệp
                 </div>
               </div>
             </div>
+
+            {folderError && (
+              <div className="m-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:m-5">
+                <span>{folderError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadFolders()}
+                  className="shrink-0 rounded-md border border-destructive/30 bg-white px-3 py-1.5 text-xs font-bold"
+                >
+                  Tải lại
+                </button>
+              </div>
+            )}
 
             {historyError && (
               <div className="m-5 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -1160,6 +1279,17 @@ function DashboardPage() {
               className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
               placeholder="Tên folder"
             />
+            <label className="block text-sm font-bold">
+              Quyền truy cập
+              <select
+                value={folderVisibility}
+                onChange={(event) => setFolderVisibility(event.target.value as "private" | "team")}
+                className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+              >
+                <option value="private">Riêng tư · chỉ mình bạn</option>
+                <option value="team">Nhóm · thành viên có thể tải tệp vào</option>
+              </select>
+            </label>
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
@@ -1169,9 +1299,10 @@ function DashboardPage() {
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                disabled={!folderName.trim() || creatingFolder}
+                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Tạo folder
+                {creatingFolder ? "Đang tạo..." : "Tạo folder"}
               </button>
             </div>
           </div>

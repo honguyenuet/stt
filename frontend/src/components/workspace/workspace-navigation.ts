@@ -5,6 +5,8 @@ import {
   PlugZap,
   Radio,
   Upload,
+  Files,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +32,12 @@ export const DESKTOP_WORKSPACE_NAV_ITEMS: readonly WorkspaceNavItem[] = [
     icon: Upload,
   },
   {
+    to: "/batch",
+    label: "Xử lý hàng loạt",
+    shortLabel: "Hàng loạt",
+    icon: Files,
+  },
+  {
     to: "/record",
     label: "Ghi âm",
     shortLabel: "Ghi âm",
@@ -53,6 +61,12 @@ export const DESKTOP_WORKSPACE_NAV_ITEMS: readonly WorkspaceNavItem[] = [
     label: "Tích hợp API",
     shortLabel: "API",
     icon: PlugZap,
+  },
+  {
+    to: "/team",
+    label: "Nhóm làm việc",
+    shortLabel: "Nhóm",
+    icon: Users,
   },
 ];
 

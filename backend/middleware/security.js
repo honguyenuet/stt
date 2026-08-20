@@ -158,6 +158,12 @@ const webhookLimiter = limiter({
   windowMs: 60 * 1000,
   limit: 120,
 });
+const shareLimiter = limiter({
+  name: "transcript-share",
+  windowMs: 60 * 1000,
+  limit: 60,
+  message: "Liên kết chia sẻ đang nhận quá nhiều yêu cầu. Vui lòng thử lại sau.",
+});
 
 module.exports = {
   billingLimiter,
@@ -171,6 +177,7 @@ module.exports = {
   registrationLimiter,
   requestId,
   securityHeaders,
+  shareLimiter,
   supportLimiter,
   translationLimiter,
   uploadLimiter,

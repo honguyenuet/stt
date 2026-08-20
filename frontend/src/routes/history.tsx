@@ -34,6 +34,10 @@ import {
 } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  normalizeDashboardFolders,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -60,6 +64,9 @@ interface HistoryItem {
   job_id: number | null;
   folder_id?: number | null;
   folder_name?: string | null;
+  transcript_template?: string;
+  tags?: string[];
+  search_start_ms?: number | null;
   queue_position?: number;
   estimated_remaining_seconds?: number;
   created_at: string;
@@ -124,6 +131,12 @@ function HistoryPage() {
   const [editorText, setEditorText] = useState("");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [folderId, setFolderId] = useState("");
+  const [speakerFilter, setSpeakerFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [createdAfter, setCreatedAfter] = useState("");
+  const [createdBefore, setCreatedBefore] = useState("");
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -137,6 +150,27 @@ function HistoryPage() {
   const historyInFlightRef = useRef(false);
   const detailRequestRef = useRef<AbortController | null>(null);
   const audioRequestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void fetch(`${API_URL}/api/transcribe/folders`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as {
+          folders?: unknown;
+        };
+        if (active && response.ok) {
+          setFolders(normalizeDashboardFolders(body.folders));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [token]);
   const expandedSummary =
     expanded === null ? null : items.find((item) => item.id === expanded);
   const expandedItemStatus = expandedSummary?.status ?? null;
@@ -180,6 +214,11 @@ function HistoryPage() {
           limit: String(HISTORY_PAGE_SIZE),
         });
         if (debouncedSearch) query.set("q", debouncedSearch);
+        if (folderId) query.set("folderId", folderId);
+        if (speakerFilter.trim()) query.set("speaker", speakerFilter.trim());
+        if (tagFilter.trim()) query.set("tag", tagFilter.trim());
+        if (createdAfter) query.set("createdAfter", createdAfter);
+        if (createdBefore) query.set("createdBefore", createdBefore);
         const res = await fetch(
           `${API_URL}/api/transcribe/history?${query.toString()}`,
           {
@@ -225,7 +264,17 @@ function HistoryPage() {
         }
       }
     },
-    [debouncedSearch, page, token, user],
+    [
+      createdAfter,
+      createdBefore,
+      debouncedSearch,
+      folderId,
+      page,
+      speakerFilter,
+      tagFilter,
+      token,
+      user,
+    ],
   );
 
   useEffect(() => {
@@ -235,6 +284,10 @@ function HistoryPage() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [createdAfter, createdBefore, folderId, speakerFilter, tagFilter]);
 
   useEffect(() => {
     if (!isLoading && !user)
@@ -622,6 +675,60 @@ function HistoryPage() {
               </button>
             )}
           </div>
+          <div className="mt-2 grid max-w-4xl grid-cols-2 gap-2 md:grid-cols-5">
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Dự án
+              <select
+                value={folderId}
+                onChange={(event) => setFolderId(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              >
+                <option value="">Tất cả thư mục</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Người nói
+              <input
+                value={speakerFilter}
+                onChange={(event) => setSpeakerFilter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+                placeholder="VD: Lan"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Tag
+              <input
+                value={tagFilter}
+                onChange={(event) => setTagFilter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+                placeholder="VD: khách hàng"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Từ ngày
+              <input
+                type="date"
+                value={createdAfter}
+                onChange={(event) => setCreatedAfter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Đến ngày
+              <input
+                type="date"
+                value={createdBefore}
+                min={createdAfter || undefined}
+                onChange={(event) => setCreatedBefore(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              />
+            </label>
+          </div>
           {search && !loading && (
             <p className="mt-2 text-xs text-muted-foreground">
               Tìm thấy{" "}
@@ -772,6 +879,12 @@ function HistoryPage() {
                           ? void navigate({
                               to: "/transcript/$id",
                               params: { id: String(item.id) },
+                              search: {
+                                at:
+                                  Number(item.search_start_ms) >= 0
+                                    ? Number(item.search_start_ms)
+                                    : undefined,
+                              },
                             })
                           : setExpanded(isOpen ? null : item.id)
                       }
@@ -884,9 +997,10 @@ function HistoryPage() {
                         onClick={() =>
                           isCompleted
                             ? void navigate({
-                                to: "/transcript/$id",
-                                params: { id: String(item.id) },
-                              })
+                              to: "/transcript/$id",
+                              params: { id: String(item.id) },
+                              search: { at: undefined },
+                            })
                             : setExpanded(isOpen ? null : item.id)
                         }
                         title={

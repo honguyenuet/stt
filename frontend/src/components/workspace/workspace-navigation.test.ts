@@ -13,10 +13,12 @@ describe("workspace navigation", () => {
     expect(DESKTOP_WORKSPACE_NAV_ITEMS.map((item) => item.to)).toEqual([
       "/dashboard",
       "/upload",
+      "/batch",
       "/record",
       "/realtime",
       "/history",
       "/api",
+      "/team",
     ]);
     expect(PRIMARY_MOBILE_NAV_ITEMS).toHaveLength(4);
     expect(PRIMARY_MOBILE_NAV_ITEMS.map((item) => item.to)).toEqual([
@@ -26,8 +28,10 @@ describe("workspace navigation", () => {
       "/history",
     ]);
     expect(MOBILE_MORE_NAV_ITEMS.map((item) => item.to)).toEqual([
+      "/batch",
       "/realtime",
       "/api",
+      "/team",
     ]);
   });
 

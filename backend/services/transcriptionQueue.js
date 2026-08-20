@@ -133,16 +133,25 @@ async function cleanupExpiredAudioFiles({
        SELECT transcript.id, transcript.audio_filename
        FROM transcriptions transcript
        JOIN users account ON account.id = transcript.user_id
+       LEFT JOIN user_settings settings ON settings.user_id = transcript.user_id
        WHERE transcript.audio_filename IS NOT NULL
          AND transcript.status IN ('completed', 'failed', 'cancelled')
          AND transcript.created_at < NOW() - ((
-           CASE
-             WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
-             WHEN account.plan = 'business' THEN $4
-             WHEN account.plan IN ('special', 'premium') THEN $3
-             WHEN account.plan = 'standard' THEN $2
-             ELSE $1
-           END
+           LEAST(
+             CASE
+               WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
+               WHEN account.plan = 'business' THEN $4
+               WHEN account.plan IN ('special', 'premium') THEN $3
+               WHEN account.plan = 'standard' THEN $2
+               ELSE $1
+             END,
+             CASE
+               WHEN settings.privacy_settings->>'keepAudioAfterTranscription' = 'false' THEN 0
+               WHEN settings.privacy_settings->>'audioRetentionDays' IN ('0', '7', '30', '90', '365')
+                 THEN (settings.privacy_settings->>'audioRetentionDays')::integer
+               ELSE 36500
+             END
+           )
          )::integer * INTERVAL '1 day')
        FOR UPDATE OF transcript
      ), cleared_audio AS (
@@ -541,6 +550,7 @@ async function enqueueTranscriptionJob({
   customerWebhook = null,
   apiKeyId = null,
   uploadFingerprint = null,
+  transcriptTemplate = "meeting",
 }) {
   if (!file || (!file.buffer && !file.path)) {
     const error = new Error("Vui lòng chọn file âm thanh");
@@ -636,10 +646,10 @@ async function enqueueTranscriptionJob({
       `INSERT INTO transcriptions (
          user_id, folder_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         status, error_message
+         transcript_template, status, error_message
        )
-       VALUES ($1, $2, $3, $4, NULL, NULL, '', '[]'::jsonb, $5, $6, NULL, NULL, NULL, 'queued', NULL)
-       RETURNING id, folder_id, filename, file_size, audio_filename, created_at`,
+       VALUES ($1, $2, $3, $4, NULL, NULL, '', '[]'::jsonb, $5, $6, NULL, NULL, NULL, $7, 'queued', NULL)
+       RETURNING id, folder_id, filename, file_size, audio_filename, transcript_template, created_at`,
       [
         userId,
         folder.id,
@@ -647,6 +657,9 @@ async function enqueueTranscriptionJob({
         Number(file.size || file.buffer?.length || 0),
         storedFilename,
         language || "auto",
+        ["meeting", "interview", "podcast", "lecture"].includes(transcriptTemplate)
+          ? transcriptTemplate
+          : "meeting",
       ],
     );
 

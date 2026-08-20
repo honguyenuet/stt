@@ -6,6 +6,7 @@ import {
   LogOut,
   Pencil,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 
 import { AppIcon } from "@/components/ui/app-icon";
@@ -123,6 +124,18 @@ export function WorkspaceAccountMenu({
             <Link to="/pricing">
               <AppIcon icon={Crown} size="sm" />
               Gói cước và nâng cấp
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link to="/privacy">
+              <AppIcon icon={ShieldCheck} size="sm" />
+              Quyền riêng tư và dữ liệu
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild className="cursor-pointer gap-2">
+            <Link to="/team">
+              <AppIcon icon={Users} size="sm" />
+              Nhóm và hạn mức dùng chung
             </Link>
           </DropdownMenuItem>
           {canAccessCms && (
