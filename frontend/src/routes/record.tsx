@@ -31,6 +31,7 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { useAuth } from "@/context/AuthContext";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
+import { VbeePublicFooter } from "@/components/vbee-public-chrome";
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
@@ -208,7 +209,7 @@ function RecordPage() {
     async function loadJob() {
       try {
         const res = await fetch(`${API_URL}/api/transcribe/jobs/${queuedJobId}`, {
-          headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok || cancelled) return;
         const job = (await res.json()) as {
@@ -993,7 +994,7 @@ function RecordPage() {
         </section>
       </main>
 
-      <VbeeStyleFooter />
+      <VbeePublicFooter />
     </div>
   );
 }
@@ -1622,7 +1623,7 @@ function HelpHome({
           onClick={() => setView("chat")}
           className="flex w-full items-center justify-between rounded-xl border border-border bg-secondary px-5 py-4 text-left shadow-soft transition hover:border-primary/50"
         >
-            <span>
+          <span>
             <span className="block font-black">Gửi tin nhắn hỗ trợ</span>
             <span className="mt-1 block text-sm text-secondary-foreground/65">
               Vbee sẽ phản hồi trong thời gian sớm nhất
@@ -1850,22 +1851,5 @@ function HelpBottomNav({
         );
       })}
     </div>
-  );
-}
-
-function VbeeStyleFooter() {
-  return (
-    <footer className="mt-10 border-t border-border bg-white px-4 py-6 text-center text-sm text-muted-foreground">
-      <p>© 2026 Vbee Voice. Đã đăng ký bản quyền.</p>
-      <div className="mt-3 flex flex-wrap justify-center gap-x-6 gap-y-2 font-semibold text-primary">
-        <Link to="/">Vbee</Link>
-        <Link to="/pricing">Bảng giá</Link>
-        <Link to="/upload">Tải tệp</Link>
-        <Link to="/api">API</Link>
-      </div>
-      <p className="mt-5 inline-flex items-center justify-center gap-2">
-        Được phát triển cho trải nghiệm ghi âm và chuyển giọng nói thành văn bản.
-      </p>
-    </footer>
   );
 }
