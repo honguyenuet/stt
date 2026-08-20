@@ -83,9 +83,9 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
         data-desktop-workspace-rail
       >
         <Link
-          to="/dashboard"
+          to="/"
           className="flex h-16 items-center justify-center border-b border-white/10 px-3"
-          aria-label="Vbee AIVoice - Không gian làm việc"
+          aria-label="Về trang chủ Vbee"
         >
           <VbeeBrandLogo size="compact" className="h-8 max-w-[72px]" />
         </Link>
@@ -133,9 +133,9 @@ export function AuthenticatedHeader({ onEditProfile }: AuthenticatedHeaderProps 
         data-workspace-shell
       >
         <Link
-          to="/dashboard"
+          to="/"
           className="flex items-center lg:hidden"
-          aria-label="Về không gian làm việc"
+          aria-label="Về trang chủ Vbee"
         >
           <VbeeBrandLogo size="compact" className="h-8 max-w-[120px]" />
         </Link>
