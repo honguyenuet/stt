@@ -26,6 +26,10 @@ const {
   validateBeforeTranscription,
 } = require("./quotaService");
 const { recordApiUsage } = require("./apiUsageService");
+const {
+  generateTranscriptInsights,
+  normalizeTranscriptTemplate,
+} = require("./transcriptInsightsService");
 
 function getEnvInt(name, fallback) {
   const value = Number.parseInt(process.env[name] || "", 10);
@@ -877,6 +881,23 @@ async function completeJob(job, result) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const transcriptState = await client.query(
+      `SELECT transcript_template
+       FROM transcriptions
+       WHERE id = $1 AND user_id = $2
+       FOR UPDATE`,
+      [job.transcription_id, job.user_id],
+    );
+    if (!transcriptState.rows[0]) {
+      throw new Error(`Khong tim thay transcript cua job ${job.id}`);
+    }
+    const automaticInsights = generateTranscriptInsights({
+      text: result.text,
+      words: result.words || [],
+      template: normalizeTranscriptTemplate(
+        transcriptState.rows[0].transcript_template,
+      ),
+    });
     const finalizeJob = await client.query(
       `UPDATE transcription_jobs
        SET status = 'completed', progress = 100, locked_at = NULL, lock_token = NULL,
@@ -896,6 +917,7 @@ async function completeJob(job, result) {
             translation_provider = $11, translation_error = $12,
             transcription_provider = $13, provider_request_id = $14,
             provider_attempts = $15::jsonb,
+            insights = $16::jsonb, insights_updated_at = NOW(),
             status = 'completed', error_message = NULL
        WHERE id = $1 AND user_id = $2
        RETURNING id`,
@@ -916,6 +938,7 @@ async function completeJob(job, result) {
         result.provider || null,
         result.providerId || null,
         JSON.stringify(result.providerAttempts || []),
+        JSON.stringify(automaticInsights),
       ],
     );
 

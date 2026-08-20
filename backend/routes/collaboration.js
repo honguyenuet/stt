@@ -10,6 +10,9 @@ const {
   normalizeShareExpiry,
   normalizeSharePermission,
 } = require("../services/transcriptCollaborationService");
+const {
+  insertTranscriptVersion,
+} = require("../services/transcriptVersionService");
 
 const router = express.Router();
 
@@ -27,7 +30,7 @@ async function findActiveShare(token, { lock = false, db = pool } = {}) {
   if (!cleanToken(token)) return null;
   const { rows } = await db.query(
     `SELECT share.id AS share_id, share.permission, share.expires_at,
-            transcript.id, transcript.filename, transcript.text, transcript.words,
+            transcript.id, transcript.user_id, transcript.filename, transcript.text, transcript.words,
             transcript.speaker_names, transcript.duration, transcript.source_language,
             transcript.transcript_template, transcript.insights, transcript.tags
      FROM transcript_public_links share
@@ -139,7 +142,7 @@ router.post("/transcripts/:id/comments", requireAuth, async (req, res) => {
          transcription_id, user_id, content, position_ms,
          author_user_id, author_name, body, mentions, timestamp_ms
        )
-       SELECT transcript.id, $2, $4, $6, $2, $3, $4, $5::jsonb, $6
+       SELECT transcript.id, $2, $4, $6::bigint, $2, $3, $4, $5::jsonb, $6::integer
        FROM transcriptions transcript
        WHERE transcript.id = $1 AND transcript.user_id = $2
        RETURNING id, author_name, body, mentions, timestamp_ms, created_at`,
@@ -186,14 +189,11 @@ router.patch("/share/:token", shareLimiter, async (req, res) => {
       return res.status(403).json({ error: "Liên kết này chỉ có quyền xem" });
     }
     if (String(transcript.text || "") !== text) {
-      await client.query(
-        `INSERT INTO transcription_versions (
-           transcription_id, user_id, text, words, speaker_names, label
-         )
-         SELECT id, user_id, text, words, speaker_names, $2
-         FROM transcriptions WHERE id = $1`,
-        [transcript.id, `Chia sẻ: ${authorName}`.slice(0, 120)],
-      );
+      await insertTranscriptVersion(client, transcript, {
+        label: `Chia sẻ: ${authorName}`,
+        actorName: authorName,
+        source: "shared",
+      });
       await client.query("UPDATE transcriptions SET text = $1 WHERE id = $2", [text, transcript.id]);
     }
     await client.query("COMMIT");
@@ -216,7 +216,7 @@ router.post("/share/:token/comments", shareLimiter, async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO transcript_comments (
          transcription_id, content, position_ms, author_name, body, mentions, timestamp_ms
-       ) VALUES ($1, $3, $5, $2, $3, $4::jsonb, $5)
+       ) VALUES ($1, $3, $5::bigint, $2, $3, $4::jsonb, $5::integer)
        RETURNING id, author_name, body, mentions, timestamp_ms, created_at`,
       [transcript.id, authorName, comment.body, JSON.stringify(comment.mentions), comment.timestampMs],
     );

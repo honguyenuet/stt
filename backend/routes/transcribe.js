@@ -43,6 +43,7 @@ const {
 const {
   createUserFolder,
   listUserFolders,
+  normalizeFolderName,
 } = require("../services/workspaceFolderService");
 const {
   MULTITRACK_MAX_TRACKS,
@@ -66,9 +67,11 @@ const {
   normalizeTranscriptTemplate,
 } = require("../services/transcriptInsightsService");
 const { createTranscriptExport } = require("../services/transcriptExportService");
+const {
+  insertTranscriptVersion,
+} = require("../services/transcriptVersionService");
 
 const router = express.Router();
-const MAX_TRANSCRIPT_VERSIONS = 50;
 
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
@@ -150,38 +153,6 @@ async function validateUrlMetadataForUser(userId, metadata) {
   return quota;
 }
 
-async function insertTranscriptVersion(client, transcript, label = "Auto-save") {
-  await client.query(
-    `INSERT INTO transcription_versions (transcription_id, user_id, text, words, speaker_names, label)
-     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)`,
-    [
-      transcript.id,
-      transcript.user_id,
-      String(transcript.text || ""),
-      JSON.stringify(Array.isArray(transcript.words) ? transcript.words : []),
-      JSON.stringify(
-        transcript.speaker_names &&
-          typeof transcript.speaker_names === "object" &&
-          !Array.isArray(transcript.speaker_names)
-          ? transcript.speaker_names
-          : {},
-      ),
-      label,
-    ],
-  );
-  await client.query(
-    `DELETE FROM transcription_versions
-     WHERE id IN (
-       SELECT id
-       FROM transcription_versions
-       WHERE transcription_id = $1
-       ORDER BY created_at DESC, id DESC
-       OFFSET $2
-     )`,
-    [transcript.id, MAX_TRANSCRIPT_VERSIONS],
-  );
-}
-
 router.get("/folders", requireAuth, async (req, res) => {
   try {
     const folders = await listUserFolders(req.user.id);
@@ -212,19 +183,50 @@ router.patch("/folders/:id", requireAuth, async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: "ID thư mục không hợp lệ" });
   }
-  const visibility = req.body?.visibility === "team" ? "team" : "private";
-  const teamPermission = req.body?.teamPermission === "view" ? "view" : "edit";
+  const hasName = req.body?.name !== undefined;
+  const hasVisibility = req.body?.visibility !== undefined;
+  const hasTeamPermission = req.body?.teamPermission !== undefined;
+  if (!hasName && !hasVisibility && !hasTeamPermission) {
+    return res.status(400).json({ error: "Không có thay đổi để lưu" });
+  }
+  if (
+    hasVisibility &&
+    !["private", "team"].includes(req.body.visibility)
+  ) {
+    return res.status(400).json({ error: "Phạm vi thư mục không hợp lệ" });
+  }
+  if (
+    hasTeamPermission &&
+    !["view", "edit"].includes(req.body.teamPermission)
+  ) {
+    return res.status(400).json({ error: "Quyền thư mục không hợp lệ" });
+  }
+  let name = null;
+  try {
+    name = hasName ? normalizeFolderName(req.body.name) : null;
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ error: error.message });
+  }
+  const visibility = hasVisibility ? req.body.visibility : null;
+  const teamPermission = hasTeamPermission ? req.body.teamPermission : null;
   try {
     const { rows } = await pool.query(
       `UPDATE transcription_folders
-       SET visibility = $1, team_permission = $2, updated_at = NOW()
-       WHERE id = $3 AND user_id = $4
-       RETURNING id, name, visibility, team_permission, created_at, updated_at`,
-      [visibility, teamPermission, id, req.user.id],
+       SET name = COALESCE($1, name),
+           visibility = COALESCE($2, visibility),
+           team_permission = COALESCE($3, team_permission),
+           updated_at = NOW()
+       WHERE id = $4 AND user_id = $5
+       RETURNING id, user_id AS owner_user_id, name, visibility,
+                 team_permission, created_at, updated_at`,
+      [name, visibility, teamPermission, id, req.user.id],
     );
     if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy thư mục" });
     return res.json({ folder: rows[0] });
   } catch (error) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: "Tên thư mục đã tồn tại" });
+    }
     console.error("Update folder permission error:", error.message);
     return res.status(500).json({ error: "Không cập nhật được quyền thư mục" });
   }
@@ -1223,6 +1225,11 @@ router.post("/text", requireAuth, async (req, res) => {
     if (text.length > 500_000) {
       return res.status(413).json({ error: "Transcript realtime quá dài" });
     }
+    const automaticInsights = generateTranscriptInsights({
+      text,
+      words: [],
+      template: "meeting",
+    });
 
     const source = req.body.source === "manual" ? "manual" : "realtime";
     const realtimeSessionId = String(req.body.realtimeSessionId || "");
@@ -1300,12 +1307,12 @@ router.post("/text", requireAuth, async (req, res) => {
         `INSERT INTO transcriptions (
          user_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         translation_error
+         translation_error, insights, insights_updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13::jsonb, NOW())
        RETURNING id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         translation_error, created_at`,
+         translation_error, insights, insights_updated_at, created_at`,
         [
           req.user.id,
           filename,
@@ -1317,9 +1324,10 @@ router.post("/text", requireAuth, async (req, res) => {
           translation?.sourceLanguage || sourceLanguage,
           translation?.text || null,
            translation?.targetLanguage || targetLanguage || null,
-           translation?.provider || null,
-           translationError || null,
-        ],
+         translation?.provider || null,
+         translationError || null,
+         JSON.stringify(automaticInsights),
+       ],
       );
       savedTranscript = rows[0];
       await recordQuotaUsage({
@@ -1774,7 +1782,8 @@ router.get("/:id/versions", requireAuth, async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
   try {
     const { rows } = await pool.query(
-      `SELECT version.id, version.label, version.created_at,
+      `SELECT version.id, version.label, version.actor_name,
+              version.change_source, version.created_at,
               LENGTH(version.text)::integer AS text_length,
               COALESCE(jsonb_array_length(version.words), 0)::integer AS word_count
        FROM transcription_versions version
@@ -1788,6 +1797,49 @@ router.get("/:id/versions", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("List transcript versions error:", error.message);
     return res.status(500).json({ error: "Không tải được lịch sử phiên bản" });
+  }
+});
+
+router.get("/:id/versions/:versionId/compare", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const versionId = Number.parseInt(req.params.versionId, 10);
+  if (
+    !Number.isInteger(id) ||
+    id <= 0 ||
+    !Number.isInteger(versionId) ||
+    versionId <= 0
+  ) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT version.id, version.label, version.actor_name,
+              version.change_source, version.created_at, version.text,
+              transcript.text AS current_text
+       FROM transcription_versions version
+       JOIN transcriptions transcript ON transcript.id = version.transcription_id
+       WHERE version.id = $1 AND version.transcription_id = $2
+         AND transcript.user_id = $3`,
+      [versionId, id, req.user.id],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Không tìm thấy phiên bản" });
+    }
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.json({
+      version: {
+        id: rows[0].id,
+        label: rows[0].label,
+        actor_name: rows[0].actor_name,
+        change_source: rows[0].change_source,
+        created_at: rows[0].created_at,
+        text: rows[0].text,
+      },
+      current: { text: rows[0].current_text },
+    });
+  } catch (error) {
+    console.error("Compare transcript version error:", error.message);
+    return res.status(500).json({ error: "Không so sánh được phiên bản" });
   }
 });
 
@@ -1822,7 +1874,12 @@ router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) =>
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Không tìm thấy phiên bản" });
     }
-    await insertTranscriptVersion(client, transcript, "Trước khi khôi phục");
+    await insertTranscriptVersion(client, transcript, {
+      label: "Trước khi khôi phục",
+      actorUserId: req.user.id,
+      actorName: `${req.user.first_name || ""} ${req.user.last_name || ""}`,
+      source: "restore",
+    });
     const restored = await client.query(
       `UPDATE transcriptions
        SET text = $1,
@@ -1969,7 +2026,12 @@ router.patch("/:id", requireAuth, async (req, res) => {
         JSON.stringify(nextWords) ||
       JSON.stringify(currentSpeakerNames) !== JSON.stringify(nextSpeakerNames);
     if (changed) {
-      await insertTranscriptVersion(client, transcript, "Auto-save");
+      await insertTranscriptVersion(client, transcript, {
+        label: "Auto-save",
+        actorUserId: req.user.id,
+        actorName: `${req.user.first_name || ""} ${req.user.last_name || ""}`,
+        source: "owner",
+      });
     }
     const { rows } = await client.query(
       `UPDATE transcriptions

@@ -51,7 +51,7 @@ async function getOrCreateDefaultFolder(userId, { db = pool } = {}) {
     [userId, DEFAULT_FOLDER_NAME],
   );
   const { rows } = await db.query(
-    `SELECT id, name, visibility, team_permission, created_at, updated_at
+    `SELECT id, user_id AS owner_user_id, name, visibility, team_permission, created_at, updated_at
      FROM transcription_folders
      WHERE user_id = $1 AND LOWER(name) = LOWER($2)
      ORDER BY id ASC
@@ -106,7 +106,7 @@ async function createUserFolder(
     const { rows } = await db.query(
       `INSERT INTO transcription_folders (user_id, name, visibility, team_permission)
        VALUES ($1, $2, $3, $4)
-       RETURNING id, name, visibility, team_permission, created_at, updated_at`,
+       RETURNING id, user_id AS owner_user_id, name, visibility, team_permission, created_at, updated_at`,
       [userId, name, access.visibility, access.teamPermission],
     );
     return normalizeFolderRow(rows[0]);
@@ -121,7 +121,7 @@ async function createUserFolder(
 async function listUserFolders(userId, { db = pool } = {}) {
   await getOrCreateDefaultFolder(userId, { db });
   const { rows } = await db.query(
-    `SELECT folder.id, folder.name, folder.visibility, folder.team_permission,
+    `SELECT folder.id, folder.user_id AS owner_user_id, folder.name, folder.visibility, folder.team_permission,
             folder.created_at, folder.updated_at,
             COUNT(transcript.id) FILTER (WHERE transcript.user_id = $1)::integer AS item_count
      FROM transcription_folders folder

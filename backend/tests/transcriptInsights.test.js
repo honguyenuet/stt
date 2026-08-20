@@ -29,9 +29,14 @@ test("meeting insights extract summary, actions, decisions, chapters and keyword
 
   assert.equal(insights.template, "meeting");
   assert.match(insights.summary, /phát hành bản thử nghiệm/i);
+  assert.equal(insights.keyPoints.length >= 2, true);
   assert.equal(insights.actionItems.length >= 2, true);
   assert.equal(
     insights.actionItems.some((item) => item.owner === "Lan"),
+    true,
+  );
+  assert.equal(
+    insights.actionItems.some((item) => /23\/08\/2026/.test(item.deadline)),
     true,
   );
   assert.equal(

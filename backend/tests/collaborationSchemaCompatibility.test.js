@@ -33,3 +33,36 @@ test("public links stay separate from member grants and existing comments are mi
     /(?:FROM|INTO) transcript_comments\b/,
   );
 });
+
+test("transcript versions preserve the editor identity and expose a comparison endpoint", () => {
+  const initSource = fs.readFileSync(path.join(backendRoot, "initDb.js"), "utf8");
+  const transcriptRouteSource = fs.readFileSync(
+    path.join(backendRoot, "routes", "transcribe.js"),
+    "utf8",
+  );
+  const collaborationRouteSource = fs.readFileSync(
+    path.join(backendRoot, "routes", "collaboration.js"),
+    "utf8",
+  );
+
+  assert.match(initSource, /actor_user_id INTEGER REFERENCES users/);
+  assert.match(initSource, /actor_name VARCHAR\(100\)/);
+  assert.match(initSource, /change_source VARCHAR\(20\)/);
+  assert.match(
+    initSource,
+    /ADD CONSTRAINT transcription_versions_change_source_check/,
+  );
+  assert.match(transcriptRouteSource, /versions\/:versionId\/compare/);
+  assert.match(transcriptRouteSource, /actor_name/);
+  assert.match(collaborationRouteSource, /source:\s*"shared"/);
+  assert.match(
+    collaborationRouteSource,
+    /\$6::bigint[\s\S]*\$6::integer/,
+    "owner comments must cast the shared timestamp parameter for both legacy columns",
+  );
+  assert.match(
+    collaborationRouteSource,
+    /\$5::bigint[\s\S]*\$5::integer/,
+    "public comments must cast the shared timestamp parameter for both legacy columns",
+  );
+});

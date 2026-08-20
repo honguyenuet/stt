@@ -418,10 +418,52 @@ async function initDatabase() {
       words JSONB NOT NULL DEFAULT '[]'::jsonb,
       speaker_names JSONB NOT NULL DEFAULT '{}'::jsonb,
       label VARCHAR(120),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name VARCHAR(100) NOT NULL DEFAULT 'Người dùng',
+      change_source VARCHAR(20) NOT NULL DEFAULT 'owner'
+        CHECK (change_source IN ('owner', 'shared', 'restore')),
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
   await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS speaker_names JSONB NOT NULL DEFAULT '{}'::jsonb;`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS actor_name VARCHAR(100) NOT NULL DEFAULT 'Người dùng';`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS change_source VARCHAR(20) NOT NULL DEFAULT 'owner';`);
+  await pool.query(`
+    UPDATE transcription_versions
+    SET change_source = 'owner'
+    WHERE change_source NOT IN ('owner', 'shared', 'restore');
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'transcription_versions_change_source_check'
+          AND conrelid = 'transcription_versions'::regclass
+      ) THEN
+        ALTER TABLE transcription_versions
+        ADD CONSTRAINT transcription_versions_change_source_check
+        CHECK (change_source IN ('owner', 'shared', 'restore'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    UPDATE transcription_versions version
+    SET actor_user_id = COALESCE(version.actor_user_id, version.user_id),
+        actor_name = CASE
+          WHEN version.actor_name IS NULL
+            OR BTRIM(version.actor_name) = ''
+            OR version.actor_name = 'Người dùng'
+          THEN COALESCE(
+            NULLIF(BTRIM(CONCAT_WS(' ', account.first_name, account.last_name)), ''),
+            'Người dùng'
+          )
+          ELSE version.actor_name
+        END
+    FROM users account
+    WHERE account.id = version.user_id
+      AND (version.actor_user_id IS NULL OR version.actor_name = 'Người dùng');
+  `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_versions_transcription_created ON transcription_versions(transcription_id, created_at DESC);`);
 
   await pool.query(`
