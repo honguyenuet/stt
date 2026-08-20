@@ -30,7 +30,7 @@ async function findActiveShare(token, { lock = false, db = pool } = {}) {
             transcript.id, transcript.filename, transcript.text, transcript.words,
             transcript.speaker_names, transcript.duration, transcript.source_language,
             transcript.transcript_template, transcript.insights, transcript.tags
-     FROM transcript_shares share
+     FROM transcript_public_links share
      JOIN transcriptions transcript ON transcript.id = share.transcription_id
      WHERE share.token_hash = $1
        AND share.revoked_at IS NULL
@@ -48,7 +48,7 @@ router.get("/transcripts/:id/shares", requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT share.id, share.token_prefix, share.permission, share.expires_at,
               share.revoked_at, share.created_at
-       FROM transcript_shares share
+       FROM transcript_public_links share
        JOIN transcriptions transcript ON transcript.id = share.transcription_id
        WHERE share.transcription_id = $1 AND transcript.user_id = $2
        ORDER BY share.created_at DESC LIMIT 50`,
@@ -69,7 +69,7 @@ router.post("/transcripts/:id/shares", requireAuth, async (req, res) => {
   const token = createShareToken();
   try {
     const { rows } = await pool.query(
-      `INSERT INTO transcript_shares (
+      `INSERT INTO transcript_public_links (
          transcription_id, created_by, token_hash, token_prefix, permission, expires_at
        )
        SELECT transcript.id, $2, $3, $4, $5,
@@ -93,7 +93,7 @@ router.delete("/transcripts/:id/shares/:shareId", requireAuth, async (req, res) 
   if (!id || !shareId) return res.status(400).json({ error: "ID không hợp lệ" });
   try {
     const { rows } = await pool.query(
-      `UPDATE transcript_shares share SET revoked_at = NOW()
+      `UPDATE transcript_public_links share SET revoked_at = NOW()
        FROM transcriptions transcript
        WHERE share.id = $1 AND share.transcription_id = $2
          AND transcript.id = share.transcription_id AND transcript.user_id = $3
@@ -136,9 +136,10 @@ router.post("/transcripts/:id/comments", requireAuth, async (req, res) => {
     const authorName = normalizeAuthorName(`${req.user.first_name} ${req.user.last_name}`);
     const { rows } = await pool.query(
       `INSERT INTO transcript_comments (
-         transcription_id, author_user_id, author_name, body, mentions, timestamp_ms
+         transcription_id, user_id, content, position_ms,
+         author_user_id, author_name, body, mentions, timestamp_ms
        )
-       SELECT transcript.id, $2, $3, $4, $5::jsonb, $6
+       SELECT transcript.id, $2, $4, $6, $2, $3, $4, $5::jsonb, $6
        FROM transcriptions transcript
        WHERE transcript.id = $1 AND transcript.user_id = $2
        RETURNING id, author_name, body, mentions, timestamp_ms, created_at`,
@@ -214,8 +215,8 @@ router.post("/share/:token/comments", shareLimiter, async (req, res) => {
     const authorName = normalizeAuthorName(req.body.authorName);
     const { rows } = await pool.query(
       `INSERT INTO transcript_comments (
-         transcription_id, author_name, body, mentions, timestamp_ms
-       ) VALUES ($1, $2, $3, $4::jsonb, $5)
+         transcription_id, content, position_ms, author_name, body, mentions, timestamp_ms
+       ) VALUES ($1, $3, $5, $2, $3, $4::jsonb, $5)
        RETURNING id, author_name, body, mentions, timestamp_ms, created_at`,
       [transcript.id, authorName, comment.body, JSON.stringify(comment.mentions), comment.timestampMs],
     );

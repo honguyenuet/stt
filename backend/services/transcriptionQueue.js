@@ -139,11 +139,11 @@ async function cleanupExpiredAudioFiles({
          AND transcript.created_at < NOW() - ((
            LEAST(
              CASE
-               WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
-               WHEN account.plan = 'business' THEN $4
-               WHEN account.plan IN ('special', 'premium') THEN $3
-               WHEN account.plan = 'standard' THEN $2
-               ELSE $1
+               WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1::integer
+               WHEN account.plan = 'business' THEN $4::integer
+               WHEN account.plan IN ('special', 'premium') THEN $3::integer
+               WHEN account.plan = 'standard' THEN $2::integer
+               ELSE $1::integer
              END,
              CASE
                WHEN settings.privacy_settings->>'keepAudioAfterTranscription' = 'false' THEN 0

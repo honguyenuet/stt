@@ -425,33 +425,103 @@ async function initDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_versions_transcription_created ON transcription_versions(transcription_id, created_at DESC);`);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS transcript_shares (
+    CREATE TABLE IF NOT EXISTS transcript_public_links (
       id BIGSERIAL PRIMARY KEY,
       transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
-      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      token_hash VARCHAR(64) NOT NULL UNIQUE,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
       token_prefix VARCHAR(12) NOT NULL,
       permission VARCHAR(10) NOT NULL DEFAULT 'view' CHECK (permission IN ('view', 'edit')),
       expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
       revoked_at TIMESTAMP WITH TIME ZONE,
+      last_accessed_at TIMESTAMP WITH TIME ZONE,
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_shares_owner ON transcript_shares(created_by, transcription_id, created_at DESC);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_shares_token ON transcript_shares(token_hash) WHERE revoked_at IS NULL;`);
+  await pool.query(`ALTER TABLE transcript_public_links ADD COLUMN IF NOT EXISTS token_prefix VARCHAR(12);`);
+  await pool.query(`ALTER TABLE transcript_public_links ADD COLUMN IF NOT EXISTS permission VARCHAR(10) NOT NULL DEFAULT 'view';`);
+  await pool.query(`UPDATE transcript_public_links SET token_prefix = LEFT(token_hash, 10) WHERE token_prefix IS NULL;`);
+  await pool.query(`ALTER TABLE transcript_public_links ALTER COLUMN token_prefix SET NOT NULL;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_public_links_owner ON transcript_public_links(created_by, transcription_id, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_public_links_token ON transcript_public_links(token_hash) WHERE revoked_at IS NULL;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS transcript_comments (
       id BIGSERIAL PRIMARY KEY,
       transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      content TEXT,
+      position_ms BIGINT,
+      resolved_at TIMESTAMP WITH TIME ZONE,
+      resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       author_name VARCHAR(100) NOT NULL,
       body TEXT NOT NULL,
       mentions JSONB NOT NULL DEFAULT '[]'::jsonb,
       timestamp_ms INTEGER,
-      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS content TEXT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS position_ms BIGINT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS author_name VARCHAR(100);`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS body TEXT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS mentions JSONB NOT NULL DEFAULT '[]'::jsonb;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS timestamp_ms INTEGER;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN user_id DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN content DROP NOT NULL;`);
+  await pool.query(`
+    UPDATE transcript_comments comment
+    SET author_user_id = COALESCE(comment.author_user_id, comment.user_id),
+        author_name = COALESCE(
+          NULLIF(BTRIM(comment.author_name), ''),
+          NULLIF(BTRIM(CONCAT_WS(' ', account.first_name, account.last_name)), ''),
+          'Người dùng'
+        ),
+        body = COALESCE(comment.body, comment.content, ''),
+        content = COALESCE(comment.content, comment.body, ''),
+        timestamp_ms = COALESCE(
+          comment.timestamp_ms,
+          LEAST(GREATEST(comment.position_ms, 0), 86400000)::integer
+        ),
+        position_ms = COALESCE(comment.position_ms, comment.timestamp_ms)
+    FROM users account
+    WHERE account.id = comment.user_id
+      AND (
+        comment.author_user_id IS NULL
+        OR comment.author_name IS NULL
+        OR BTRIM(comment.author_name) = ''
+        OR comment.body IS NULL
+        OR comment.content IS NULL
+        OR (comment.timestamp_ms IS NULL AND comment.position_ms IS NOT NULL)
+        OR (comment.position_ms IS NULL AND comment.timestamp_ms IS NOT NULL)
+      );
+  `);
+  await pool.query(`
+    UPDATE transcript_comments
+    SET author_name = COALESCE(NULLIF(BTRIM(author_name), ''), 'Khách'),
+        body = COALESCE(body, content, ''),
+        content = COALESCE(content, body, ''),
+        timestamp_ms = COALESCE(
+          timestamp_ms,
+          LEAST(GREATEST(position_ms, 0), 86400000)::integer
+        ),
+        position_ms = COALESCE(position_ms, timestamp_ms)
+    WHERE author_name IS NULL
+       OR BTRIM(author_name) = ''
+       OR body IS NULL
+       OR content IS NULL
+       OR (timestamp_ms IS NULL AND position_ms IS NOT NULL)
+       OR (position_ms IS NULL AND timestamp_ms IS NOT NULL);
+  `);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN author_name SET NOT NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN body SET NOT NULL;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_comments_transcript ON transcript_comments(transcription_id, created_at ASC);`);
 
   await pool.query(`
