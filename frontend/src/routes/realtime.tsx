@@ -27,6 +27,7 @@ import {
   type TranslationResult,
 } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { getRealtimeRecoveryPlan } from "@/lib/realtime-recovery";
 
 const API_URL = getApiBaseUrl();
 
@@ -103,9 +104,17 @@ function RealtimePage() {
   const [translationError, setTranslationError] = useState("");
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+  const [connectionState, setConnectionState] = useState<
+    "idle" | "live" | "reconnecting" | "offline"
+  >("idle");
+  const [connectionNotice, setConnectionNotice] = useState("");
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldRestartRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastRecognitionErrorRef = useRef<string | null>(null);
+  const retryRecognitionRef = useRef<() => void>(() => {});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeSessionRef = useRef<string | null>(null);
   const tokenRef = useRef<string | null>(token);
@@ -141,10 +150,16 @@ function RealtimePage() {
   }, [quotaRefreshKey, token]);
 
   useEffect(() => {
+    const handleOnline = () => {
+      if (shouldRestartRef.current) retryRecognitionRef.current();
+    };
+    window.addEventListener("online", handleOnline);
     return () => {
       shouldRestartRef.current = false;
       recognitionRef.current?.abort();
       if (timerRef.current) clearInterval(timerRef.current);
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      window.removeEventListener("online", handleOnline);
       const sessionId = realtimeSessionRef.current;
       const activeToken = tokenRef.current;
       if (sessionId && activeToken) {
@@ -196,6 +211,7 @@ function RealtimePage() {
 
   async function startListening() {
     setError("");
+    setConnectionNotice("");
     setSavedId(null);
     setTranslation(null);
     setTranslationError("");
@@ -207,6 +223,22 @@ function RealtimePage() {
     if (!token) {
       setError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
       return;
+    }
+
+    try {
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({
+          name: "microphone" as PermissionName,
+        });
+        if (permission.state === "denied") {
+          setError(
+            "Micrô đang bị chặn. Hãy cấp quyền micrô trong trình duyệt rồi thử lại.",
+          );
+          return;
+        }
+      }
+    } catch {
+      // Một số trình duyệt không hỗ trợ truy vấn quyền micrô; SpeechRecognition sẽ tự xin quyền.
     }
 
     const SpeechRecognitionApi = getSpeechRecognition();
@@ -252,13 +284,69 @@ function RealtimePage() {
     }
 
     shouldRestartRef.current = true;
+    reconnectAttemptRef.current = 0;
+    lastRecognitionErrorRef.current = null;
     const recognition = new SpeechRecognitionApi();
     recognitionRef.current = recognition;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = getSpeechLang(language);
 
+    const scheduleRestart = () => {
+      if (!shouldRestartRef.current) return;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const plan = getRealtimeRecoveryPlan({
+        attempt: reconnectAttemptRef.current,
+        error: lastRecognitionErrorRef.current,
+        isOnline: navigator.onLine,
+      });
+      if (plan.action === "stop") {
+        shouldRestartRef.current = false;
+        setListening(false);
+        setConnectionState("idle");
+        stopTimer();
+        return;
+      }
+      if (plan.action === "wait-online") {
+        stopTimer();
+        setConnectionState("offline");
+        setConnectionNotice(
+          "Mất kết nối mạng. Realtime sẽ tự tiếp tục khi thiết bị online.",
+        );
+        return;
+      }
+      stopTimer();
+      setConnectionState("reconnecting");
+      setConnectionNotice(
+        `Đang kết nối lại${reconnectAttemptRef.current ? ` lần ${reconnectAttemptRef.current + 1}` : ""}…`,
+      );
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectTimeoutRef.current = null;
+        if (!shouldRestartRef.current) return;
+        try {
+          recognition.start();
+          reconnectAttemptRef.current += 1;
+          startTimer(serverMaxSeconds);
+        } catch {
+          shouldRestartRef.current = false;
+          setListening(false);
+          setConnectionState("idle");
+          setConnectionNotice("");
+          setError("Không thể kết nối lại realtime. Hãy bấm Bắt đầu để thử lại.");
+          stopTimer();
+        }
+      }, plan.delayMs);
+    };
+    retryRecognitionRef.current = scheduleRestart;
+
     recognition.onresult = (event) => {
+      reconnectAttemptRef.current = 0;
+      lastRecognitionErrorRef.current = null;
+      setConnectionState("live");
+      setConnectionNotice("");
       let finalText = "";
       let interimText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -277,24 +365,33 @@ function RealtimePage() {
 
     recognition.onerror = (event) => {
       if (event.error === "no-speech") return;
-      setError(`Realtime lỗi: ${event.error}`);
+      lastRecognitionErrorRef.current = event.error;
+      const plan = getRealtimeRecoveryPlan({
+        attempt: reconnectAttemptRef.current,
+        error: event.error,
+        isOnline: navigator.onLine,
+      });
+      if (plan.action === "stop") {
+        shouldRestartRef.current = false;
+        setListening(false);
+        setConnectionState("idle");
+        stopTimer();
+        setError(
+          event.error === "not-allowed" || event.error === "service-not-allowed"
+            ? "Trình duyệt chưa cấp quyền micrô cho Realtime."
+            : `Realtime không thể tiếp tục: ${event.error}`,
+        );
+      }
     };
 
     recognition.onend = () => {
-      if (shouldRestartRef.current) {
-        try {
-          recognition.start();
-        } catch {
-          shouldRestartRef.current = false;
-          setListening(false);
-          stopTimer();
-        }
-      }
+      if (shouldRestartRef.current) scheduleRestart();
     };
 
     try {
       recognition.start();
       setListening(true);
+      setConnectionState("live");
       startTimer(serverMaxSeconds);
     } catch {
       await cancelRealtimeSession();
@@ -306,8 +403,14 @@ function RealtimePage() {
 
   function stopListening() {
     shouldRestartRef.current = false;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     recognitionRef.current?.stop();
     setListening(false);
+    setConnectionState("idle");
+    setConnectionNotice("");
     setInterim("");
     stopTimer();
   }
@@ -462,7 +565,13 @@ function RealtimePage() {
                   <div>
                     <p className="text-xl font-black">{formatClock(elapsed)}</p>
                     <p className="text-sm font-semibold text-muted-foreground">
-                      {listening ? "Đang nghe..." : "Sẵn sàng nghe"}
+                      {connectionState === "reconnecting"
+                        ? "Đang kết nối lại…"
+                        : connectionState === "offline"
+                          ? "Đang chờ có mạng…"
+                          : listening
+                            ? "Đang nghe..."
+                            : "Sẵn sàng nghe"}
                     </p>
                   </div>
                 </div>
@@ -501,6 +610,16 @@ function RealtimePage() {
               <div className="mt-5 flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-4 text-sm font-semibold text-destructive">
                 <X className="mt-0.5 h-4 w-4 shrink-0" />
                 {error}
+              </div>
+            )}
+
+            {connectionNotice && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900"
+              >
+                {connectionNotice}
               </div>
             )}
 

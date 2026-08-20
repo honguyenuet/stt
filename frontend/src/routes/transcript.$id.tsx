@@ -18,6 +18,7 @@ import {
   FileAudio,
   FileText,
   Flag,
+  GitCompare,
   History,
   Languages,
   Pause,
@@ -50,6 +51,16 @@ import {
   replaceTimedWordInText,
 } from "@/lib/transcript-playback";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  compareTranscriptText,
+  type TranscriptTextComparison,
+} from "@/lib/transcript-version";
+import {
+  applyRememberedSpeakerLabels,
+  normalizeSpeakerMemory,
+  renameRememberedSpeakerLabel,
+} from "@/lib/speaker-memory";
+import { buildTemplateFrontMatter } from "@/lib/transcript-template-export";
 
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -133,9 +144,19 @@ interface IndexedWord extends TranscriptWord {
 interface TranscriptVersion {
   id: number;
   label: string | null;
+  actor_name: string;
+  change_source: "owner" | "shared" | "restore";
   created_at: string;
   text_length: number;
   word_count: number;
+}
+
+interface VersionComparison {
+  version: Pick<
+    TranscriptVersion,
+    "id" | "label" | "actor_name" | "change_source" | "created_at"
+  >;
+  comparison: TranscriptTextComparison;
 }
 
 interface EditorSnapshot {
@@ -449,6 +470,11 @@ function TranscriptEditorPage() {
   const [versions, setVersions] = useState<TranscriptVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [versionComparingId, setVersionComparingId] = useState<number | null>(
+    null,
+  );
+  const [versionComparison, setVersionComparison] =
+    useState<VersionComparison | null>(null);
   const [insightsGenerating, setInsightsGenerating] = useState(false);
   const [insightsError, setInsightsError] = useState("");
   const [tagDraft, setTagDraft] = useState("");
@@ -600,13 +626,10 @@ function TranscriptEditorPage() {
       const detail = body as TranscriptDetail;
       detail.words = normalizeWords(detail.words);
       try {
-        const remembered = JSON.parse(
-          window.localStorage.getItem("vbee-speaker-labels") || "{}",
-        ) as Record<string, string>;
-        detail.words = detail.words.map((word) => {
-          const key = String(word.speaker ?? "");
-          return key && remembered[key] ? { ...word, speaker: remembered[key] } : word;
-        });
+        const remembered = normalizeSpeakerMemory(
+          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+        );
+        detail.words = applyRememberedSpeakerLabels(detail.words, remembered);
       } catch {
         // Bộ nhớ trình duyệt có thể bị chặn; transcript vẫn hoạt động bình thường.
       }
@@ -1135,11 +1158,15 @@ function TranscriptEditorPage() {
     applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
     if (rememberSpeakerLabels) {
       try {
-        const remembered = JSON.parse(
-          window.localStorage.getItem("vbee-speaker-labels") || "{}",
-        ) as Record<string, string>;
-        remembered[previousSpeaker] = cleanSpeaker;
-        window.localStorage.setItem("vbee-speaker-labels", JSON.stringify(remembered));
+        const remembered = renameRememberedSpeakerLabel(
+          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+          previousSpeaker,
+          cleanSpeaker,
+        );
+        window.localStorage.setItem(
+          "vbee-speaker-labels",
+          JSON.stringify(remembered),
+        );
       } catch {
         // Không chặn thao tác đổi tên nếu bộ nhớ trình duyệt không khả dụng.
       }
@@ -1351,12 +1378,49 @@ function TranscriptEditorPage() {
       setSaveStatus("saved");
       setRedoStack([]);
       await loadVersions();
+      setVersionComparison(null);
     } catch (error) {
       setVersionError(
         error instanceof Error
           ? error.message
           : "Không khôi phục được phiên bản",
       );
+    }
+  }
+
+  async function compareVersion(versionId: number) {
+    if (!token || !activeTranscriptId) return;
+    setVersionComparingId(versionId);
+    setVersionError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}/versions/${versionId}/compare`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        version?: VersionComparison["version"] & { text: string };
+        current?: { text?: string };
+        error?: string;
+      };
+      if (!response.ok || !body.version) {
+        throw new Error(body.error || "Không so sánh được phiên bản");
+      }
+      setVersionComparison({
+        version: body.version,
+        comparison: compareTranscriptText(
+          body.version.text,
+          body.current?.text || "",
+        ),
+      });
+    } catch (error) {
+      setVersionError(
+        error instanceof Error ? error.message : "Không so sánh được phiên bản",
+      );
+    } finally {
+      setVersionComparingId(null);
     }
   }
 
@@ -1484,15 +1548,8 @@ function TranscriptEditorPage() {
     });
   }
 
-  function buildExportTextContent() {
-    const options = effectiveExportOptions();
-    const title =
-      options.translationMode === "translation"
-        ? "BẢN DỊCH"
-        : options.translationMode === "bilingual"
-          ? "TRANSCRIPT SONG NGỮ"
-          : "TRANSCRIPT";
-    const body =
+  function buildExportBodyContent(options: ExportOptions) {
+    return (
       options.layout === "segments"
         ? buildExportSegmentLines(options).join("\n\n")
         : options.translationMode === "translation"
@@ -1506,8 +1563,31 @@ function TranscriptEditorPage() {
               ]
                 .filter(Boolean)
                 .join("\n\n")
-            : editorText.trim();
-    return [title, ...exportMetadataLines(), "", body].join("\n");
+            : editorText.trim()
+    );
+  }
+
+  function buildExportTextContent() {
+    const options = effectiveExportOptions();
+    const title =
+      options.translationMode === "translation"
+        ? "BẢN DỊCH"
+        : options.translationMode === "bilingual"
+          ? "TRANSCRIPT SONG NGỮ"
+          : "TRANSCRIPT";
+    const frontMatter = buildTemplateFrontMatter(
+      transcript?.transcript_template || "meeting",
+      transcript?.insights ?? null,
+    );
+    return [
+      title,
+      ...exportMetadataLines(),
+      "",
+      ...(frontMatter
+        ? [frontMatter, "", "NỘI DUNG TRANSCRIPT", ""]
+        : []),
+      buildExportBodyContent(options),
+    ].join("\n");
   }
 
   function exportText() {
@@ -1543,6 +1623,35 @@ function TranscriptEditorPage() {
       new Paragraph({ children: [new TextRun({ text: "" })] }),
     ];
 
+    const frontMatter = buildTemplateFrontMatter(
+      transcript?.transcript_template || "meeting",
+      transcript?.insights ?? null,
+    );
+    if (frontMatter) {
+      frontMatter.split("\n").forEach((line) => {
+        const isHeading = line && line === line.toLocaleUpperCase("vi-VN");
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: line,
+                bold: Boolean(isHeading),
+                size: isHeading ? 24 : 21,
+                color: isHeading ? "21104A" : "4E4168",
+              }),
+            ],
+          }),
+        );
+      });
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: "NỘI DUNG TRANSCRIPT", bold: true, size: 24 }),
+          ],
+        }),
+      );
+    }
+
     if (options.layout === "segments") {
       buildExportSegmentLines(options).forEach((segmentBlock, index) => {
         const [firstLine, ...bodyLines] = segmentBlock.split("\n");
@@ -1573,9 +1682,8 @@ function TranscriptEditorPage() {
         }
       });
     } else {
-      buildExportTextContent()
+      buildExportBodyContent(options)
         .split("\n")
-        .slice(exportMetadataLines().length + 2)
         .forEach((line) => {
           paragraphs.push(
             new Paragraph({
@@ -1679,7 +1787,7 @@ function TranscriptEditorPage() {
     <div className="min-h-screen bg-[#f8f7fb] text-[#21104a] print:bg-white">
       <AuthenticatedHeader />
 
-      <main className="mx-auto max-w-7xl px-4 py-5 md:px-6">
+      <main className="mx-auto max-w-7xl px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -1739,7 +1847,7 @@ function TranscriptEditorPage() {
 
         <section
           data-testid="transcript-audio-player"
-          className="sticky top-[61px] z-30 mb-4 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-4 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] print:hidden"
+          className="sticky top-14 z-30 mb-3 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-3 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] sm:top-[61px] sm:mb-4 sm:p-4 print:hidden"
         >
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
@@ -1933,9 +2041,10 @@ function TranscriptEditorPage() {
                   <Redo2 className="h-3.5 w-3.5" /> Redo
                 </button>
               </div>
-              <div className="flex min-w-0 flex-1 items-center gap-2 md:max-w-md">
+              <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-2 md:max-w-md md:flex-nowrap">
                 <Search className="h-4 w-4 shrink-0 text-[#8067aa]" />
                 <input
+                  aria-label="Tìm trong transcript"
                   value={searchQuery}
                   onChange={(event) => {
                     setSearchQuery(event.target.value);
@@ -1948,7 +2057,7 @@ function TranscriptEditorPage() {
                     }
                   }}
                   placeholder="Tìm trong transcript"
-                  className="h-9 min-w-0 flex-1 rounded-md border border-[#ded5e9] bg-white px-3 text-sm outline-none focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
+                  className="h-9 min-w-0 basis-40 flex-1 rounded-md border border-[#ded5e9] bg-white px-3 text-sm outline-none focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
                 />
                 <span className="min-w-16 text-center text-xs font-bold text-[#756894]">
                   {searchMatches.length && searchIndex >= 0
@@ -1977,7 +2086,7 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
-                className="max-h-[calc(100dvh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
+                className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 scroll-smooth sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
               >
                 <div className="mx-auto max-w-3xl space-y-6">
                   {segments.map((segment, segmentIndex) => (
@@ -2013,8 +2122,8 @@ function TranscriptEditorPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-[620px] flex-col p-4 md:p-6 lg:min-h-0 lg:flex-1">
-                <div className="relative min-h-[560px] lg:min-h-0 lg:flex-1">
+              <div className="flex min-h-[420px] flex-col p-3 sm:min-h-[520px] sm:p-4 md:p-6 lg:min-h-0 lg:flex-1">
+                <div className="relative min-h-[360px] sm:min-h-[460px] lg:min-h-0 lg:flex-1">
                   {syncAvailable && (
                     <div
                       aria-hidden="true"
@@ -2041,7 +2150,7 @@ function TranscriptEditorPage() {
                     }}
                     aria-label="Nội dung transcript"
                     spellCheck
-                    className={`relative h-full min-h-[560px] w-full resize-y rounded-lg border border-[#ded5e9] px-5 py-4 text-[15px] leading-8 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 lg:min-h-0 lg:resize-none ${
+                    className={`relative h-full min-h-[360px] w-full resize-y rounded-lg border border-[#ded5e9] px-4 py-3 text-[15px] leading-7 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:min-h-[460px] sm:px-5 sm:py-4 sm:leading-8 lg:min-h-0 lg:resize-none ${
                       syncAvailable
                         ? "bg-transparent text-transparent caret-[#21104a] selection:bg-[#8067aa]/20"
                         : "bg-[#fbfaf7] text-[#342752]"
@@ -2191,6 +2300,16 @@ function TranscriptEditorPage() {
                     <p className="font-black text-[#21104a]">Tóm tắt</p>
                     <p className="mt-1">{transcript.insights.summary}</p>
                   </div>
+                  {transcript.insights.keyPoints.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Ý chính</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.keyPoints.map((point) => (
+                          <li key={point}>{point}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {transcript.insights.actionItems.length > 0 && (
                     <div>
                       <p className="font-black text-[#21104a]">Việc cần làm</p>
@@ -2565,6 +2684,59 @@ function TranscriptEditorPage() {
                   {versionError}
                 </p>
               )}
+              {versionComparison && (
+                <div className="mt-3 rounded-lg border border-[#d8d0e7] bg-white p-3 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-black text-[#21104a]">
+                        So sánh với bản hiện tại
+                      </p>
+                      <p className="mt-1 text-[11px] text-[#756894]">
+                        {versionComparison.version.actor_name} ·{" "}
+                        {new Date(
+                          versionComparison.version.created_at,
+                        ).toLocaleString("vi-VN")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Đóng so sánh phiên bản"
+                      onClick={() => setVersionComparison(null)}
+                      className="rounded-md px-2 py-1 font-black text-[#756894] hover:bg-[#f3f0f8]"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                  {versionComparison.comparison.hasChanges ? (
+                    <div className="mt-3 space-y-2 break-words leading-5">
+                      {versionComparison.comparison.prefix && (
+                        <p className="text-[#756894]">
+                          …{versionComparison.comparison.prefix.slice(-140)}
+                        </p>
+                      )}
+                      {versionComparison.comparison.removed && (
+                        <p className="rounded-md bg-red-50 p-2 text-red-800 line-through">
+                          − {versionComparison.comparison.removed}
+                        </p>
+                      )}
+                      {versionComparison.comparison.added && (
+                        <p className="rounded-md bg-emerald-50 p-2 text-emerald-800">
+                          + {versionComparison.comparison.added}
+                        </p>
+                      )}
+                      {versionComparison.comparison.suffix && (
+                        <p className="text-[#756894]">
+                          {versionComparison.comparison.suffix.slice(0, 140)}…
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-3 rounded-md bg-emerald-50 p-2 font-bold text-emerald-800">
+                      Phiên bản này giống nội dung hiện tại.
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                 {versionsLoading ? (
                   <p className="text-xs text-[#8a7da1]">Đang tải phiên bản...</p>
@@ -2582,13 +2754,34 @@ function TranscriptEditorPage() {
                         {version.text_length.toLocaleString("vi-VN")} ký tự,{" "}
                         {version.word_count.toLocaleString("vi-VN")} từ
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => void restoreVersion(version.id)}
-                        className="mt-2 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05]"
-                      >
-                        Khôi phục
-                      </button>
+                      <p className="mt-1 text-[11px] font-bold text-[#5f4c82]">
+                        {version.actor_name || "Người dùng"}
+                        {version.change_source === "shared"
+                          ? " · Liên kết chia sẻ"
+                          : version.change_source === "restore"
+                            ? " · Khôi phục"
+                            : " · Trình chỉnh sửa"}
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void compareVersion(version.id)}
+                          disabled={versionComparingId !== null}
+                          className="inline-flex items-center justify-center gap-1 rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05] disabled:opacity-50"
+                        >
+                          <GitCompare className="h-3.5 w-3.5" />
+                          {versionComparingId === version.id
+                            ? "Đang so sánh"
+                            : "So sánh"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void restoreVersion(version.id)}
+                          className="rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05]"
+                        >
+                          Khôi phục
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (

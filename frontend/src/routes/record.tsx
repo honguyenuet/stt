@@ -1087,6 +1087,15 @@ function RecorderReadinessPanel({
       : micStatus === "blocked" || micStatus === "unsupported"
         ? "text-destructive"
         : "text-muted-foreground";
+  const waveformHeights = Array.from({ length: 18 }, (_, index) => {
+    if (!isLive) return 8;
+    const centerEnvelope = 1 - Math.abs(index - 8.5) / 13;
+    const alternatingEnergy = 0.58 + (index % 4) * 0.11;
+    return Math.max(
+      10,
+      Math.min(100, Math.round(audioLevel * centerEnvelope * alternatingEnergy)),
+    );
+  });
 
   return (
     <div className="rounded-lg border border-border bg-white p-2.5 shadow-soft">
@@ -1131,13 +1140,24 @@ function RecorderReadinessPanel({
           <p className="text-[11px] font-black uppercase text-muted-foreground">
             Âm lượng realtime
           </p>
-          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className={`h-full rounded-full ${
-                audioWarning && isLive ? "bg-destructive" : "bg-primary"
-              }`}
-              style={{ width: `${isLive ? Math.max(audioLevel, 2) : 0}%` }}
-            />
+          <div
+            role="meter"
+            aria-label="Mức âm micrô"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={isLive ? audioLevel : 0}
+            className="mt-1.5 flex h-8 items-center justify-center gap-0.5 rounded-md bg-muted/70 px-1.5"
+          >
+            {waveformHeights.map((height, index) => (
+              <span
+                key={index}
+                aria-hidden="true"
+                className={`w-1 rounded-full transition-[height] duration-100 ${
+                  audioWarning && isLive ? "bg-destructive" : "bg-primary"
+                }`}
+                style={{ height: `${height}%` }}
+              />
+            ))}
           </div>
           <p className="mt-1 text-[11px] font-semibold leading-4 text-muted-foreground">
             {isLive

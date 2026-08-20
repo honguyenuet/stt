@@ -172,6 +172,7 @@ function LoginPage() {
                   <input
                     name="email"
                     type="email"
+                    autoComplete="email"
                     value={form.email}
                     onChange={handleChange}
                     required
@@ -197,6 +198,7 @@ function LoginPage() {
                   <input
                     name="password"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
                     value={form.password}
                     onChange={handleChange}
                     required

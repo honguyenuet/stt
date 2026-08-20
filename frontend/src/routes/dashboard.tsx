@@ -222,6 +222,18 @@ function DashboardPage() {
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
   const [folderVisibility, setFolderVisibility] = useState<"private" | "team">("private");
+  const [folderTeamPermission, setFolderTeamPermission] = useState<
+    "view" | "edit"
+  >("edit");
+  const [folderSettingsOpen, setFolderSettingsOpen] = useState(false);
+  const [folderSettingsName, setFolderSettingsName] = useState("");
+  const [folderSettingsVisibility, setFolderSettingsVisibility] = useState<
+    "private" | "team"
+  >("private");
+  const [folderSettingsPermission, setFolderSettingsPermission] = useState<
+    "view" | "edit"
+  >("edit");
+  const [savingFolderSettings, setSavingFolderSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -553,7 +565,7 @@ function DashboardPage() {
         body: JSON.stringify({
           name,
           visibility: folderVisibility,
-          teamPermission: "edit",
+          teamPermission: folderTeamPermission,
         }),
       });
       const body = (await response.json().catch(() => ({}))) as {
@@ -572,12 +584,69 @@ function DashboardPage() {
       setFolderOpen(false);
       setFolderName("Dự án mới");
       setFolderVisibility("private");
+      setFolderTeamPermission("edit");
     } catch (error) {
       setFolderError(
         error instanceof Error ? error.message : "Không tạo được thư mục",
       );
     } finally {
       setCreatingFolder(false);
+    }
+  }
+
+  function openFolderSettings() {
+    if (!activeFolder) return;
+    setFolderSettingsName(activeFolder.name);
+    setFolderSettingsVisibility(activeFolder.visibility);
+    setFolderSettingsPermission(activeFolder.team_permission);
+    setFolderSettingsOpen(true);
+  }
+
+  async function saveFolderSettings() {
+    if (!activeFolder || !token || savingFolderSettings) return;
+    const name = folderSettingsName.trim();
+    if (!name) return;
+    setSavingFolderSettings(true);
+    setFolderError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/folders/${activeFolder.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name,
+            visibility: folderSettingsVisibility,
+            teamPermission: folderSettingsPermission,
+          }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không cập nhật được thư mục");
+      }
+      const updated = normalizeDashboardFolders(body.folder ? [body.folder] : [])[0];
+      if (!updated) throw new Error("Dữ liệu thư mục trả về không hợp lệ");
+      setFolders((current) =>
+        current.map((folder) =>
+          folder.id === updated.id
+            ? { ...updated, item_count: folder.item_count }
+            : folder,
+        ),
+      );
+      setFolderSettingsOpen(false);
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không cập nhật được thư mục",
+      );
+    } finally {
+      setSavingFolderSettings(false);
     }
   }
 
@@ -707,7 +776,8 @@ function DashboardPage() {
                   <p className="text-xs font-black uppercase text-primary">
                     Tệp gần đây
                   </p>
-                  <label className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <div className="mt-1 flex items-center gap-1">
+                  <label className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
                     <span className="sr-only">Thư mục đang xem</span>
                     <select
@@ -727,6 +797,19 @@ function DashboardPage() {
                       ))}
                     </select>
                   </label>
+                  {activeFolder &&
+                    Number(activeFolder.owner_user_id) === Number(user?.id) && (
+                      <button
+                        type="button"
+                        onClick={openFolderSettings}
+                        aria-label="Cài đặt thư mục"
+                        title="Cài đặt tên và quyền thư mục"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-primary/5 hover:text-primary"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="rounded-md border border-border bg-[#f7f7fb] px-2.5 py-1 text-xs font-bold text-muted-foreground">
                   {history.length} tệp
@@ -1290,6 +1373,21 @@ function DashboardPage() {
                 <option value="team">Nhóm · thành viên có thể tải tệp vào</option>
               </select>
             </label>
+            {folderVisibility === "team" && (
+              <label className="block text-sm font-bold">
+                Quyền của thành viên
+                <select
+                  value={folderTeamPermission}
+                  onChange={(event) =>
+                    setFolderTeamPermission(event.target.value as "view" | "edit")
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+                >
+                  <option value="view">Chỉ xem transcript</option>
+                  <option value="edit">Được tải tệp và chỉnh sửa</option>
+                </select>
+              </label>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
@@ -1305,6 +1403,61 @@ function DashboardPage() {
                 {creatingFolder ? "Đang tạo..." : "Tạo folder"}
               </button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={folderSettingsOpen} onOpenChange={setFolderSettingsOpen}>
+        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cài đặt thư mục</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="block text-sm font-bold">
+              Tên dự án hoặc khách hàng
+              <input
+                value={folderSettingsName}
+                onChange={(event) => setFolderSettingsName(event.target.value)}
+                maxLength={160}
+                className="mt-2 w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
+              />
+            </label>
+            <label className="block text-sm font-bold">
+              Phạm vi truy cập
+              <select
+                value={folderSettingsVisibility}
+                onChange={(event) =>
+                  setFolderSettingsVisibility(event.target.value as "private" | "team")
+                }
+                className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+              >
+                <option value="private">Riêng tư · chỉ chủ sở hữu</option>
+                <option value="team">Chia sẻ với workspace</option>
+              </select>
+            </label>
+            {folderSettingsVisibility === "team" && (
+              <label className="block text-sm font-bold">
+                Quyền thành viên
+                <select
+                  value={folderSettingsPermission}
+                  onChange={(event) =>
+                    setFolderSettingsPermission(event.target.value as "view" | "edit")
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+                >
+                  <option value="view">Chỉ xem</option>
+                  <option value="edit">Xem, tải tệp và chỉnh sửa</option>
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => void saveFolderSettings()}
+              disabled={!folderSettingsName.trim() || savingFolderSettings}
+              className="w-full rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground disabled:opacity-50"
+            >
+              {savingFolderSettings ? "Đang lưu…" : "Lưu cài đặt thư mục"}
+            </button>
           </div>
         </DialogContent>
       </Dialog>
