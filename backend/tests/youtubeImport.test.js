@@ -208,3 +208,41 @@ test("retries a blocked anonymous request with the configured public client", as
     "youtube:player_client=android_vr",
   ]);
 });
+
+test("retries YouTube HTTP 403 downloads with public clients", async (t) => {
+  const previousCookies = process.env.YOUTUBE_COOKIES_FILE;
+  const previousClients = process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS;
+  delete process.env.YOUTUBE_COOKIES_FILE;
+  process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS =
+    "android_vr,web_embedded";
+  t.after(() => {
+    if (previousCookies === undefined) delete process.env.YOUTUBE_COOKIES_FILE;
+    else process.env.YOUTUBE_COOKIES_FILE = previousCookies;
+    if (previousClients === undefined) {
+      delete process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS;
+    } else {
+      process.env.YOUTUBE_FALLBACK_PLAYER_CLIENTS = previousClients;
+    }
+  });
+
+  const attempts = [];
+  const result = await runYoutubeDlWithFallback(async (flags) => {
+    const profile = flags.extractorArgs || "default";
+    attempts.push(profile);
+    if (profile !== "youtube:player_client=web_embedded") {
+      const error = new Error(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+      );
+      error.stderr = error.message;
+      throw error;
+    }
+    return "audio";
+  });
+
+  assert.equal(result, "audio");
+  assert.deepEqual(attempts, [
+    "default",
+    "youtube:player_client=android_vr",
+    "youtube:player_client=web_embedded",
+  ]);
+});
