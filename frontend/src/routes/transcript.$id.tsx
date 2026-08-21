@@ -44,13 +44,16 @@ import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import {
+  canUseSyncEditor,
   clampSeekTime,
   createApproximateTimedWords,
   findActiveWordIndex,
-  findTimedWordTextRange,
   formatPlaybackTime,
+  indexTimedWordTextRanges,
+  MAX_EDITABLE_TIMED_WORDS,
   replaceTimedWordInText,
 } from "@/lib/transcript-playback";
+import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   compareTranscriptText,
@@ -66,9 +69,11 @@ import { buildTemplateFrontMatter } from "@/lib/transcript-template-export";
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 12_000;
 const AUTO_SAVE_DELAY_MS = 1_200;
-const MAX_SYNC_WORDS = 5_000;
 const MAX_LOCAL_HISTORY = 80;
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
+const VIRTUAL_SEGMENT_ESTIMATED_SIZE = 176;
+const VIRTUAL_SEGMENT_GAP = 24;
+const VIRTUAL_SEGMENT_OVERSCAN = 3;
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 type EditorMode = "sync" | "edit";
@@ -185,16 +190,33 @@ const EditableTimedWord = memo(function EditableTimedWord({
 }) {
   const [value, setValue] = useState(word.text);
   const inputRef = useRef<HTMLInputElement>(null);
+  const valueRef = useRef(word.text);
+  const wordRef = useRef(word);
+  const onCommitRef = useRef(onCommit);
   const isLowConfidence =
     typeof word.confidence === "number" &&
     word.confidence > 0 &&
     word.confidence < LOW_CONFIDENCE_THRESHOLD;
 
   useEffect(() => {
+    wordRef.current = word;
+    onCommitRef.current = onCommit;
     if (document.activeElement !== inputRef.current) {
       setValue(word.text);
+      valueRef.current = word.text;
     }
-  }, [word.text]);
+  }, [onCommit, word]);
+
+  useEffect(
+    () => () => {
+      const currentWord = wordRef.current;
+      const nextValue = valueRef.current.trim();
+      if (nextValue && nextValue !== currentWord.text) {
+        onCommitRef.current(currentWord.index, nextValue);
+      }
+    },
+    [],
+  );
 
   function commit() {
     const nextValue = value.trim();
@@ -213,7 +235,10 @@ const EditableTimedWord = memo(function EditableTimedWord({
       data-word-index={word.index}
       aria-current={active ? "true" : undefined}
       aria-label={`Chỉnh sửa từ ${word.text}`}
-      onChange={(event) => setValue(event.target.value)}
+      onChange={(event) => {
+        valueRef.current = event.target.value;
+        setValue(event.target.value);
+      }}
       onClick={() => onSeek(word.start)}
       onBlur={commit}
       onKeyDown={(event) => {
@@ -222,6 +247,7 @@ const EditableTimedWord = memo(function EditableTimedWord({
           event.currentTarget.blur();
         }
         if (event.key === "Escape") {
+          valueRef.current = word.text;
           setValue(word.text);
           event.currentTarget.blur();
         }
@@ -237,6 +263,74 @@ const EditableTimedWord = memo(function EditableTimedWord({
           : "bg-transparent text-[#342752] hover:bg-[#fff3bb] focus:bg-white focus:ring-2 focus:ring-[#ffcb05]"
       }`}
     />
+  );
+});
+
+const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
+  segment,
+  segmentIndex,
+  start,
+  activeWordIndex,
+  onCommit,
+  onSeek,
+  onMeasure,
+}: {
+  segment: TranscriptSegment;
+  segmentIndex: number;
+  start: number;
+  activeWordIndex: number;
+  onCommit: (index: number, text: string) => void;
+  onSeek: (milliseconds: number) => void;
+  onMeasure: (index: number, size: number) => void;
+}) {
+  const articleRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+    const measure = () =>
+      onMeasure(
+        segmentIndex,
+        Math.ceil(article.getBoundingClientRect().height) + VIRTUAL_SEGMENT_GAP,
+      );
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(article);
+    return () => observer.disconnect();
+  }, [onMeasure, segmentIndex]);
+
+  return (
+    <article
+      ref={articleRef}
+      data-segment-index={segmentIndex}
+      style={{ transform: `translateY(${start}px)` }}
+      className="absolute inset-x-0 top-0 grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
+    >
+      <div className="flex items-center gap-2 sm:block">
+        <button
+          type="button"
+          onClick={() => onSeek(segment.start)}
+          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
+        >
+          {formatClock(segment.start)}
+        </button>
+        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
+          {speakerLabel(segment.speaker)}
+        </p>
+      </div>
+      <p className="text-[15px] leading-8 text-[#342752]">
+        {segment.words.map((word) => (
+          <EditableTimedWord
+            key={`${word.start}-${word.index}`}
+            word={word}
+            active={activeWordIndex === word.index}
+            onCommit={onCommit}
+            onSeek={onSeek}
+          />
+        ))}
+      </p>
+    </article>
   );
 });
 
@@ -327,6 +421,25 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
   });
 
   return segments;
+}
+
+function findSegmentIndexForWord(
+  segments: TranscriptSegment[],
+  wordIndex: number,
+) {
+  if (wordIndex < 0) return -1;
+  let low = 0;
+  let high = segments.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const segmentWords = segments[middle].words;
+    const firstWordIndex = segmentWords[0]?.index ?? -1;
+    const lastWordIndex = segmentWords.at(-1)?.index ?? -1;
+    if (wordIndex < firstWordIndex) high = middle - 1;
+    else if (wordIndex > lastWordIndex) low = middle + 1;
+    else return middle;
+  }
+  return -1;
 }
 
 function buildTextFromTimedWords(words: TranscriptWord[]) {
@@ -484,6 +597,11 @@ function TranscriptEditorPage() {
   const [rememberSpeakerLabels, setRememberSpeakerLabels] = useState(true);
   const [timelineIsEstimated, setTimelineIsEstimated] = useState(false);
   const [timelineIsTooLarge, setTimelineIsTooLarge] = useState(false);
+  const [syncScrollOffset, setSyncScrollOffset] = useState(0);
+  const [syncViewportSize, setSyncViewportSize] = useState(600);
+  const [segmentSizes, setSegmentSizes] = useState(
+    () => new Map<number, number>(),
+  );
   const [exportOptions, setExportOptions] = useState<ExportOptions>({
     includeSpeakers: true,
     includeTimestamps: true,
@@ -503,22 +621,61 @@ function TranscriptEditorPage() {
   const savedTextRef = useRef("");
   const wordsRef = useRef<TranscriptWord[]>([]);
   const historyPushRef = useRef(0);
+  const syncScrollFrameRef = useRef<number | null>(null);
 
   const words = useMemo(() => transcript?.words ?? [], [transcript?.words]);
   const activeTranscriptId = transcript?.id ?? null;
-  const syncAvailable = words.length > 0 && words.length <= MAX_SYNC_WORDS;
+  const syncAvailable = canUseSyncEditor(words.length);
   const segments = useMemo(() => buildSegments(words), [words]);
+  const activeSegmentIndex = useMemo(
+    () => findSegmentIndexForWord(segments, activeWordIndex),
+    [activeWordIndex, segments],
+  );
+  const virtualSegmentLayout = useMemo(
+    () =>
+      getVirtualLayout({
+        itemCount: segments.length,
+        estimatedItemSize: VIRTUAL_SEGMENT_ESTIMATED_SIZE,
+        measuredItemSizes: segmentSizes,
+      }),
+    [segmentSizes, segments.length],
+  );
+  const virtualSegments = useMemo(
+    () =>
+      getVirtualWindow({
+        layout: virtualSegmentLayout,
+        scrollOffset: syncScrollOffset,
+        viewportSize: syncViewportSize,
+        overscan: VIRTUAL_SEGMENT_OVERSCAN,
+      }),
+    [syncScrollOffset, syncViewportSize, virtualSegmentLayout],
+  );
+  const firstVirtualSegment = virtualSegments.items[0]?.index ?? -1;
+  const lastVirtualSegment = virtualSegments.items.at(-1)?.index ?? -1;
+  const activeSegmentStart =
+    activeSegmentIndex >= 0
+      ? (virtualSegments.offsets[activeSegmentIndex] ?? 0)
+      : 0;
+  const activeSegmentSize =
+    activeSegmentIndex >= 0
+      ? (segmentSizes.get(activeSegmentIndex) ??
+        VIRTUAL_SEGMENT_ESTIMATED_SIZE)
+      : 0;
   const translationSegments = useMemo(
     () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
     [segments.length, transcript?.translated_text],
   );
-  const plainTextActiveRange = useMemo(
+  const plainTextWordRanges = useMemo(
     () =>
-      syncAvailable && activeWordIndex >= 0
-        ? findTimedWordTextRange(editorText, words, activeWordIndex)
-        : null,
-    [activeWordIndex, editorText, syncAvailable, words],
+      editorMode === "edit" && syncAvailable
+        ? indexTimedWordTextRanges(editorText, words)
+        : [],
+    [editorMode, editorText, syncAvailable, words],
   );
+  const plainTextActiveRange =
+    activeWordIndex >= 0
+      ? (plainTextWordRanges[activeWordIndex] ?? null)
+      : null;
   const speakers = useMemo(
     () =>
       Array.from(
@@ -563,6 +720,61 @@ function TranscriptEditorPage() {
   useEffect(() => {
     if (searchIndex >= searchMatches.length) setSearchIndex(-1);
   }, [searchIndex, searchMatches.length]);
+
+  const handleSegmentMeasure = useCallback((index: number, size: number) => {
+    setSegmentSizes((current) => {
+      const previousSize = current.get(index);
+      if (previousSize !== undefined && Math.abs(previousSize - size) < 1) {
+        return current;
+      }
+      const next = new Map(current);
+      next.set(index, size);
+      return next;
+    });
+  }, []);
+
+  const handleSyncScroll = useCallback((scrollOffset: number) => {
+    if (syncScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(syncScrollFrameRef.current);
+    }
+    syncScrollFrameRef.current = window.requestAnimationFrame(() => {
+      syncScrollFrameRef.current = null;
+      setSyncScrollOffset(scrollOffset);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (syncScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(syncScrollFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    setSegmentSizes(new Map());
+    setSyncScrollOffset(0);
+    if (syncScrollRef.current) syncScrollRef.current.scrollTop = 0;
+  }, [activeTranscriptId]);
+
+  useEffect(() => {
+    if (editorMode !== "sync" || !syncAvailable) return;
+    const container = syncScrollRef.current;
+    if (!container) return;
+    const updateViewport = () => {
+      setSyncViewportSize(Math.max(1, container.clientHeight));
+      setSyncScrollOffset(container.scrollTop);
+    };
+    updateViewport();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateViewport);
+      return () => window.removeEventListener("resize", updateViewport);
+    }
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [editorMode, segments.length, syncAvailable]);
 
   useEffect(() => {
     if (transcript?.translated_text) return;
@@ -633,7 +845,7 @@ function TranscriptEditorPage() {
         : createApproximateTimedWords(
             detail.text,
             detail.duration,
-            MAX_SYNC_WORDS,
+            MAX_EDITABLE_TIMED_WORDS,
           );
       detail.words = providerWords.length
         ? providerWords
@@ -688,7 +900,7 @@ function TranscriptEditorPage() {
       setInsightsError("");
       setTagDraft(detail.tags.join(", "));
       setEditorMode(
-        detail.words.length > 0 && detail.words.length <= MAX_SYNC_WORDS
+        canUseSyncEditor(detail.words.length)
           ? "sync"
           : "edit",
       );
@@ -770,21 +982,53 @@ function TranscriptEditorPage() {
   }, [requestedStartMs, transcript?.audio_filename, transcript?.id]);
 
   useEffect(() => {
-    if (editorMode !== "sync" || activeWordIndex < 0) return;
-    const container = syncScrollRef.current;
-    const activeWord = container?.querySelector<HTMLElement>(
-      `[data-word-index="${activeWordIndex}"]`,
-    );
-    if (!container || !activeWord) return;
-    const containerRect = container.getBoundingClientRect();
-    const wordRect = activeWord.getBoundingClientRect();
-    const isOutsideViewport =
-      wordRect.top < containerRect.top + 64 ||
-      wordRect.bottom > containerRect.bottom - 64;
-    if (isOutsideViewport) {
-      activeWord.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (
+      editorMode !== "sync" ||
+      activeWordIndex < 0 ||
+      activeSegmentIndex < 0
+    ) {
+      return;
     }
-  }, [activeWordIndex, editorMode]);
+    const container = syncScrollRef.current;
+    if (!container) return;
+    const segmentIsRendered =
+      activeSegmentIndex >= firstVirtualSegment &&
+      activeSegmentIndex <= lastVirtualSegment;
+    if (!segmentIsRendered) {
+      const nextScrollTop = Math.max(
+        0,
+        activeSegmentStart -
+          Math.max(0, container.clientHeight - activeSegmentSize) / 2,
+      );
+      container.scrollTop = nextScrollTop;
+      setSyncScrollOffset(nextScrollTop);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeWord = container.querySelector<HTMLElement>(
+        `[data-word-index="${activeWordIndex}"]`,
+      );
+      if (!activeWord) return;
+      const containerRect = container.getBoundingClientRect();
+      const wordRect = activeWord.getBoundingClientRect();
+      const isOutsideViewport =
+        wordRect.top < containerRect.top + 64 ||
+        wordRect.bottom > containerRect.bottom - 64;
+      if (isOutsideViewport) {
+        activeWord.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeSegmentIndex,
+    activeSegmentSize,
+    activeSegmentStart,
+    activeWordIndex,
+    editorMode,
+    firstVirtualSegment,
+    lastVirtualSegment,
+  ]);
 
   useEffect(() => {
     if (editorMode !== "edit" || !plainTextActiveRange) return;
@@ -1389,7 +1633,7 @@ function TranscriptEditorPage() {
         : createApproximateTimedWords(
             body.text,
             transcript?.duration,
-            MAX_SYNC_WORDS,
+            MAX_EDITABLE_TIMED_WORDS,
           );
       const restoredWords = normalizedRestoredWords.length
         ? normalizedRestoredWords
@@ -2048,8 +2292,8 @@ function TranscriptEditorPage() {
                 </button>
               </div>
               <p className="text-xs text-[#8a7da1]">
-                {timelineIsTooLarge || words.length > MAX_SYNC_WORDS
-                  ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
+                {timelineIsTooLarge || words.length > MAX_EDITABLE_TIMED_WORDS
+                  ? "Transcript vượt giới hạn 100.000 từ có timestamp; bạn vẫn có thể dùng chế độ văn bản thuần."
                   : timelineIsEstimated
                     ? "Mốc thời gian gần đúng được tạo từ văn bản; bạn vẫn có thể nghe và chỉnh sửa từng từ."
                     : syncAvailable
@@ -2125,39 +2369,34 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
+                onScroll={(event) =>
+                  handleSyncScroll(event.currentTarget.scrollTop)
+                }
+                data-testid="virtual-transcript-scroll"
+                data-segment-count={segments.length}
+                data-rendered-segment-count={virtualSegments.items.length}
                 className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 scroll-smooth sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
               >
-                <div className="mx-auto max-w-3xl space-y-6">
-                  {segments.map((segment, segmentIndex) => (
-                    <article
-                      key={`${segment.start}-${segmentIndex}`}
-                      className="grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
-                    >
-                      <div className="flex items-center gap-2 sm:block">
-                        <button
-                          type="button"
-                          onClick={() => seekTo(segment.start)}
-                          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
-                        >
-                          {formatClock(segment.start)}
-                        </button>
-                        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
-                          {speakerLabel(segment.speaker)}
-                        </p>
-                      </div>
-                      <p className="text-[15px] leading-8 text-[#342752]">
-                        {segment.words.map((word) => (
-                          <EditableTimedWord
-                            key={`${word.start}-${word.index}`}
-                            word={word}
-                            active={activeWordIndex === word.index}
-                            onCommit={commitTimedWord}
-                            onSeek={seekTo}
-                          />
-                        ))}
-                      </p>
-                    </article>
-                  ))}
+                <div
+                  className="relative mx-auto max-w-3xl"
+                  style={{ height: `${virtualSegments.totalSize}px` }}
+                >
+                  {virtualSegments.items.map((virtualSegment) => {
+                    const segment = segments[virtualSegment.index];
+                    if (!segment) return null;
+                    return (
+                      <VirtualTranscriptSegment
+                        key={`${segment.start}-${virtualSegment.index}`}
+                        segment={segment}
+                        segmentIndex={virtualSegment.index}
+                        start={virtualSegment.start}
+                        activeWordIndex={activeWordIndex}
+                        onCommit={commitTimedWord}
+                        onSeek={seekTo}
+                        onMeasure={handleSegmentMeasure}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             ) : (

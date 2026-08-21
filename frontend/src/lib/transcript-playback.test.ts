@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  canUseSyncEditor,
   clampSeekTime,
   confidenceLevel,
   createApproximateTimedWords,
   findActiveWordIndex,
   findTimedWordTextRange,
   formatPlaybackTime,
+  indexTimedWordTextRanges,
   summarizeConfidence,
   replaceTimedWordInText,
 } from "./transcript-playback";
@@ -17,6 +19,17 @@ const words = [
 ];
 
 describe("transcript playback helpers", () => {
+  it("keeps synchronization enabled for transcripts longer than 5,000 words", () => {
+    expect(canUseSyncEditor(5_001)).toBe(true);
+    expect(canUseSyncEditor(50_000)).toBe(true);
+  });
+
+  it("respects the backend safety limit for editable timed words", () => {
+    expect(canUseSyncEditor(0)).toBe(false);
+    expect(canUseSyncEditor(100_000)).toBe(true);
+    expect(canUseSyncEditor(100_001)).toBe(false);
+  });
+
   it("creates an editable timeline when history only contains transcript text", () => {
     expect(createApproximateTimedWords("Xin chào bạn", 3)).toEqual([
       { text: "Xin", start: 0, end: 1_000, speaker: null },
@@ -43,6 +56,18 @@ describe("transcript playback helpers", () => {
 
   it("does not build an oversized fallback timeline in the browser", () => {
     expect(createApproximateTimedWords("một hai ba", 3, 2)).toEqual([]);
+  });
+
+  it("builds an editable fallback timeline beyond the previous 5,000-word cap", () => {
+    const text = Array.from(
+      { length: 6_000 },
+      (_, index) => `từ-${index}`,
+    ).join(" ");
+    const timeline = createApproximateTimedWords(text, 2_400, 100_000);
+
+    expect(timeline).toHaveLength(6_000);
+    expect(timeline.at(-1)?.end).toBe(2_400_000);
+    expect(canUseSyncEditor(timeline.length)).toBe(true);
   });
 
   it("finds only the word that is currently being spoken", () => {
@@ -89,6 +114,20 @@ describe("transcript playback helpers", () => {
     expect(
       findTimedWordTextRange("Speaker 0: Hello world.", editableWords, 1),
     ).toEqual({ start: 17, end: 23 });
+  });
+
+  it("indexes all timed-word text ranges once for long-text playback", () => {
+    const editableWords = [
+      { text: "xin", start: 0, end: 500 },
+      { text: "chào", start: 500, end: 1_000 },
+      { text: "xin", start: 1_000, end: 1_500 },
+    ];
+
+    expect(indexTimedWordTextRanges("xin chào xin", editableWords)).toEqual([
+      { start: 0, end: 3 },
+      { start: 4, end: 8 },
+      { start: 9, end: 12 },
+    ]);
   });
 
   it("returns null when the timed word cannot be mapped safely", () => {

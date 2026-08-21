@@ -8,6 +8,15 @@ type EditableTimedWord = TimedWord & {
 };
 
 const ESTIMATED_WORDS_PER_SECOND = 2.5;
+export const MAX_EDITABLE_TIMED_WORDS = 100_000;
+
+export function canUseSyncEditor(wordCount: number) {
+  return (
+    Number.isFinite(wordCount) &&
+    wordCount > 0 &&
+    wordCount <= MAX_EDITABLE_TIMED_WORDS
+  );
+}
 
 export function createApproximateTimedWords(
   transcriptText: string,
@@ -44,7 +53,9 @@ export function createApproximateTimedWords(
 
 export type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
 
-export function confidenceLevel(value: number | null | undefined): ConfidenceLevel {
+export function confidenceLevel(
+  value: number | null | undefined,
+): ConfidenceLevel {
   if (value === null || value === undefined) return "unknown";
   const confidence = Number(value);
   if (!Number.isFinite(confidence)) return "unknown";
@@ -57,9 +68,7 @@ export function summarizeConfidence(
   words: Array<{ confidence?: number | null }>,
 ) {
   const values = words
-    .filter(
-      (word) => word.confidence !== null && word.confidence !== undefined,
-    )
+    .filter((word) => word.confidence !== null && word.confidence !== undefined)
     .map((word) => Number(word.confidence))
     .filter((value) => Number.isFinite(value));
   if (!values.length) {
@@ -72,10 +81,7 @@ export function summarizeConfidence(
   };
 }
 
-export function findActiveWordIndex(
-  words: TimedWord[],
-  milliseconds: number,
-) {
+export function findActiveWordIndex(words: TimedWord[], milliseconds: number) {
   let low = 0;
   let high = words.length - 1;
   let candidate = -1;
@@ -149,10 +155,7 @@ export function findTimedWordTextRange(
   let cursor = 0;
   for (let index = 0; index <= wordIndex; index += 1) {
     const wordText = String(words[index]?.text || "");
-    const foundAt = sourceLower.indexOf(
-      wordText.toLocaleLowerCase(),
-      cursor,
-    );
+    const foundAt = sourceLower.indexOf(wordText.toLocaleLowerCase(), cursor);
     if (foundAt < 0) return null;
     if (index === wordIndex) {
       return { start: foundAt, end: foundAt + wordText.length };
@@ -160,4 +163,22 @@ export function findTimedWordTextRange(
     cursor = foundAt + wordText.length;
   }
   return null;
+}
+
+export function indexTimedWordTextRanges(
+  transcriptText: string,
+  words: EditableTimedWord[],
+) {
+  const source = String(transcriptText || "");
+  const sourceLower = source.toLocaleLowerCase();
+  let cursor = 0;
+  return words.map((word) => {
+    const wordText = String(word?.text || "");
+    if (!wordText) return null;
+    const start = sourceLower.indexOf(wordText.toLocaleLowerCase(), cursor);
+    if (start < 0) return null;
+    const end = start + wordText.length;
+    cursor = end;
+    return { start, end };
+  });
 }
