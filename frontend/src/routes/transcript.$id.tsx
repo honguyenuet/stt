@@ -44,14 +44,19 @@ import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import {
+  audioAccessNeedsRefresh,
+  audioRecoveryMadeProgress,
   canUseSyncEditor,
   clampSeekTime,
+  createAudioRecoveryPlan,
   createApproximateTimedWords,
   findActiveWordIndex,
   formatPlaybackTime,
   indexTimedWordTextRanges,
   MAX_EDITABLE_TIMED_WORDS,
+  nextTranscriptFollowMode,
   replaceTimedWordInText,
+  type TranscriptFollowMode,
 } from "@/lib/transcript-playback";
 import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
 import { buildTranscriptSavePayload } from "@/lib/transcript-save";
@@ -563,6 +568,9 @@ function TranscriptEditorPage() {
   const [loadError, setLoadError] = useState("");
   const [retryKey, setRetryKey] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioAccessExpiresAt, setAudioAccessExpiresAt] = useState<
+    number | null
+  >(null);
   const [audioError, setAudioError] = useState("");
   const [audioLoading, setAudioLoading] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("sync");
@@ -600,6 +608,8 @@ function TranscriptEditorPage() {
   const [timelineIsTooLarge, setTimelineIsTooLarge] = useState(false);
   const [syncScrollOffset, setSyncScrollOffset] = useState(0);
   const [syncViewportSize, setSyncViewportSize] = useState(600);
+  const [transcriptFollowMode, setTranscriptFollowMode] =
+    useState<TranscriptFollowMode>("following");
   const [segmentSizes, setSegmentSizes] = useState(
     () => new Map<number, number>(),
   );
@@ -615,7 +625,11 @@ function TranscriptEditorPage() {
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
   const plainTextMirrorRef = useRef<HTMLDivElement>(null);
   const playWhenReadyRef = useRef(false);
+  const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
+  const audioLoadingRef = useRef(false);
+  const audioRecoveryAttemptsRef = useRef(0);
+  const audioRecoveryCheckpointRef = useRef<number | null>(null);
   const loadRequestRef = useRef<AbortController | null>(null);
   const saveRequestRef = useRef<AbortController | null>(null);
   const editorTextRef = useRef("");
@@ -971,6 +985,7 @@ function TranscriptEditorPage() {
   useEffect(() => {
     audioRef.current?.pause();
     setAudioUrl(null);
+    setAudioAccessExpiresAt(null);
     setAudioError("");
     setAudioLoading(false);
     setIsPlaying(false);
@@ -978,6 +993,11 @@ function TranscriptEditorPage() {
     setAudioDurationSeconds(0);
     setActiveWordIndex(-1);
     playWhenReadyRef.current = false;
+    playbackRequestedRef.current = false;
+    audioLoadingRef.current = false;
+    audioRecoveryAttemptsRef.current = 0;
+    audioRecoveryCheckpointRef.current = null;
+    setTranscriptFollowMode("following");
     pendingSeekMillisecondsRef.current = requestedStartMs ?? null;
     if (requestedStartMs !== undefined) {
       setPlaybackSeconds(requestedStartMs / 1000);
@@ -990,6 +1010,7 @@ function TranscriptEditorPage() {
   useEffect(() => {
     if (
       editorMode !== "sync" ||
+      transcriptFollowMode !== "following" ||
       activeWordIndex < 0 ||
       activeSegmentIndex < 0
     ) {
@@ -1022,7 +1043,7 @@ function TranscriptEditorPage() {
         wordRect.top < containerRect.top + 64 ||
         wordRect.bottom > containerRect.bottom - 64;
       if (isOutsideViewport) {
-        activeWord.scrollIntoView({ block: "center", behavior: "smooth" });
+        activeWord.scrollIntoView({ block: "center", behavior: "auto" });
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -1034,10 +1055,17 @@ function TranscriptEditorPage() {
     editorMode,
     firstVirtualSegment,
     lastVirtualSegment,
+    transcriptFollowMode,
   ]);
 
   useEffect(() => {
-    if (editorMode !== "edit" || !plainTextActiveRange) return;
+    if (
+      editorMode !== "edit" ||
+      transcriptFollowMode !== "following" ||
+      !plainTextActiveRange
+    ) {
+      return;
+    }
     const textarea = plainTextAreaRef.current;
     const mirror = plainTextMirrorRef.current;
     const activeWord = mirror?.querySelector<HTMLElement>(
@@ -1058,40 +1086,63 @@ function TranscriptEditorPage() {
       textarea.scrollTop = nextScrollTop;
       mirror.style.transform = `translateY(-${nextScrollTop}px)`;
     }
-  }, [editorMode, plainTextActiveRange]);
+  }, [editorMode, plainTextActiveRange, transcriptFollowMode]);
 
-  const loadAudio = useCallback(async (playWhenReady = false) => {
-    if (!token || !transcript?.audio_filename || audioLoading) return;
-    playWhenReadyRef.current = playWhenReady;
-    setAudioLoading(true);
-    setAudioError("");
-    try {
-      const response = await fetch(
-        `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        url?: string;
-        error?: string;
-      };
-      if (!response.ok || !body.url) {
-        throw new Error(body.error || "Không tạo được đường dẫn audio");
+  const loadAudio = useCallback(
+    async (playWhenReady = false, seekMilliseconds: number | null = null) => {
+      if (
+        !token ||
+        !transcript?.audio_filename ||
+        audioLoadingRef.current
+      ) {
+        return;
       }
-      setAudioUrl(
-        body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
-      );
-    } catch (error) {
-      playWhenReadyRef.current = false;
-      setAudioError(
-        error instanceof Error ? error.message : "Không tải được audio gốc",
-      );
-    } finally {
-      setAudioLoading(false);
-    }
-  }, [audioLoading, token, transcript?.audio_filename, transcript?.id]);
+      if (seekMilliseconds !== null) {
+        pendingSeekMillisecondsRef.current = Math.max(0, seekMilliseconds);
+      }
+      playWhenReadyRef.current = playWhenReady;
+      playbackRequestedRef.current = playWhenReady;
+      audioLoadingRef.current = true;
+      setAudioLoading(true);
+      setAudioError("");
+      try {
+        const response = await fetch(
+          `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          url?: string;
+          expiresAt?: string;
+          error?: string;
+        };
+        if (!response.ok || !body.url) {
+          throw new Error(body.error || "Không tạo được đường dẫn audio");
+        }
+        const expiresAt = body.expiresAt ? Date.parse(body.expiresAt) : NaN;
+        setAudioAccessExpiresAt(
+          Number.isFinite(expiresAt) ? expiresAt : null,
+        );
+        const resolvedUrl = body.url.startsWith("http")
+          ? body.url
+          : `${API_URL}${body.url}`;
+        const separator = resolvedUrl.includes("?") ? "&" : "?";
+        setAudioUrl(`${resolvedUrl}${separator}refresh=${Date.now()}`);
+      } catch (error) {
+        playWhenReadyRef.current = false;
+        playbackRequestedRef.current = false;
+        setAudioError(
+          error instanceof Error ? error.message : "Không tải được audio gốc",
+        );
+      } finally {
+        audioLoadingRef.current = false;
+        setAudioLoading(false);
+      }
+    },
+    [token, transcript?.audio_filename, transcript?.id],
+  );
 
   const pushUndoSnapshot = useCallback((force = false) => {
     const now = Date.now();
@@ -1309,9 +1360,30 @@ function TranscriptEditorPage() {
 
   function handleTimeUpdate() {
     const currentSeconds = audioRef.current?.currentTime || 0;
+    if (
+      audioRecoveryMadeProgress(
+        audioRecoveryCheckpointRef.current,
+        currentSeconds,
+      )
+    ) {
+      audioRecoveryAttemptsRef.current = 0;
+      audioRecoveryCheckpointRef.current = null;
+    }
     setPlaybackSeconds(currentSeconds);
     setActiveWordIndex(findActiveWordIndex(words, currentSeconds * 1000));
   }
+
+  const pauseTranscriptFollow = useCallback(() => {
+    setTranscriptFollowMode((current) =>
+      nextTranscriptFollowMode(current, "user-scroll"),
+    );
+  }, []);
+
+  const resumeTranscriptFollow = useCallback(() => {
+    setTranscriptFollowMode((current) =>
+      nextTranscriptFollowMode(current, "resume"),
+    );
+  }, []);
 
   function handleAudioReady() {
     const audio = audioRef.current;
@@ -1330,16 +1402,61 @@ function TranscriptEditorPage() {
     if (playWhenReadyRef.current) {
       playWhenReadyRef.current = false;
       void audio.play().catch(() => {
+        playbackRequestedRef.current = false;
         setIsPlaying(false);
         setAudioError("Trình duyệt đã chặn tự phát. Hãy nhấn Phát.");
       });
     }
   }
 
+  function handleAudioPlaying() {
+    playbackRequestedRef.current = true;
+    setIsPlaying(true);
+    setAudioError("");
+  }
+
+  function handleAudioEnded() {
+    playbackRequestedRef.current = false;
+    audioRecoveryAttemptsRef.current = 0;
+    audioRecoveryCheckpointRef.current = null;
+    setIsPlaying(false);
+    setActiveWordIndex(-1);
+  }
+
+  function handleAudioError() {
+    const currentSeconds =
+      audioRef.current?.currentTime || playbackSeconds || 0;
+    const recovery = createAudioRecoveryPlan(
+      currentSeconds,
+      playbackRequestedRef.current,
+      audioRecoveryAttemptsRef.current,
+    );
+    setIsPlaying(false);
+    if (!recovery) {
+      playbackRequestedRef.current = false;
+      audioRecoveryCheckpointRef.current = null;
+      setAudioError(
+        "Không thể phát audio. Hãy nhấn Phát để kết nối lại và nghe tiếp.",
+      );
+      return;
+    }
+    audioRecoveryAttemptsRef.current += 1;
+    audioRecoveryCheckpointRef.current = currentSeconds;
+    setAudioError("Đang kết nối lại audio...");
+    void loadAudio(recovery.playWhenReady, recovery.seekMilliseconds);
+  }
+
   function handlePlayPause() {
     const audio = audioRef.current;
-    if (!audioUrl || !audio) {
-      void loadAudio(true);
+    if (
+      !audioUrl ||
+      !audio ||
+      audioError ||
+      audioAccessNeedsRefresh(audioAccessExpiresAt)
+    ) {
+      audioRecoveryAttemptsRef.current = 0;
+      audioRecoveryCheckpointRef.current = null;
+      void loadAudio(true, Math.round(playbackSeconds * 1_000));
       return;
     }
     if (audio.paused) {
@@ -1350,10 +1467,13 @@ function TranscriptEditorPage() {
         audio.currentTime = 0;
         setPlaybackSeconds(0);
       }
+      playbackRequestedRef.current = true;
       void audio.play().catch(() => {
+        playbackRequestedRef.current = false;
         setAudioError("Không thể phát audio. Vui lòng thử tải lại trang.");
       });
     } else {
+      playbackRequestedRef.current = false;
       audio.pause();
     }
   }
@@ -1370,6 +1490,13 @@ function TranscriptEditorPage() {
       deltaSeconds,
       duration,
     );
+    if (audioAccessNeedsRefresh(audioAccessExpiresAt)) {
+      void loadAudio(
+        playbackRequestedRef.current,
+        Math.round(nextTime * 1_000),
+      );
+      return;
+    }
     audio.currentTime = nextTime;
     setPlaybackSeconds(nextTime);
     setActiveWordIndex(findActiveWordIndex(words, nextTime * 1000));
@@ -1378,6 +1505,13 @@ function TranscriptEditorPage() {
   function seekFromProgress(nextSeconds: number) {
     const audio = audioRef.current;
     if (!audio) return;
+    if (audioAccessNeedsRefresh(audioAccessExpiresAt)) {
+      void loadAudio(
+        playbackRequestedRef.current,
+        Math.round(nextSeconds * 1_000),
+      );
+      return;
+    }
     audio.currentTime = nextSeconds;
     setPlaybackSeconds(nextSeconds);
     setActiveWordIndex(findActiveWordIndex(words, nextSeconds * 1000));
@@ -1385,15 +1519,24 @@ function TranscriptEditorPage() {
 
   const seekTo = useCallback(
     (milliseconds: number) => {
-      if (!audioRef.current || !audioUrl) {
+      resumeTranscriptFollow();
+      if (
+        !audioRef.current ||
+        !audioUrl ||
+        audioAccessNeedsRefresh(audioAccessExpiresAt)
+      ) {
         pendingSeekMillisecondsRef.current = milliseconds;
-        void loadAudio(true);
+        void loadAudio(true, milliseconds);
         return;
       }
+      playbackRequestedRef.current = true;
       audioRef.current.currentTime = milliseconds / 1000;
-      void audioRef.current.play();
+      void audioRef.current.play().catch(() => {
+        playbackRequestedRef.current = false;
+        setAudioError("Không thể phát audio. Hãy nhấn Phát để thử lại.");
+      });
     },
-    [audioUrl, loadAudio],
+    [audioAccessExpiresAt, audioUrl, loadAudio, resumeTranscriptFollow],
   );
 
   function undoEdit() {
@@ -2193,18 +2336,10 @@ function TranscriptEditorPage() {
                   preload="metadata"
                   onLoadedMetadata={handleAudioReady}
                   onTimeUpdate={handleTimeUpdate}
-                  onPlay={() => setIsPlaying(true)}
+                  onPlaying={handleAudioPlaying}
                   onPause={() => setIsPlaying(false)}
-                  onEnded={() => {
-                    setIsPlaying(false);
-                    setActiveWordIndex(-1);
-                  }}
-                  onError={() => {
-                    setIsPlaying(false);
-                    setAudioError(
-                      "Không phát được audio. Vui lòng tải lại trang và thử lại.",
-                    );
-                  }}
+                  onEnded={handleAudioEnded}
+                  onError={handleAudioError}
                   className="hidden"
                 />
               )}
@@ -2334,15 +2469,26 @@ function TranscriptEditorPage() {
                   <Pencil className="h-3.5 w-3.5" /> Văn bản thuần
                 </button>
               </div>
-              <p className="text-xs text-[#8a7da1]">
-                {timelineIsTooLarge || words.length > MAX_EDITABLE_TIMED_WORDS
-                  ? "Transcript vượt giới hạn 100.000 từ có timestamp; bạn vẫn có thể dùng chế độ văn bản thuần."
-                  : timelineIsEstimated
-                    ? "Mốc thời gian gần đúng được tạo từ văn bản; bạn vẫn có thể nghe và chỉnh sửa từng từ."
-                    : syncAvailable
-                    ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
-                    : "Bản ghi chưa có timestamp theo từng từ."}
-              </p>
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-[#8a7da1]">
+                <p>
+                  {timelineIsTooLarge || words.length > MAX_EDITABLE_TIMED_WORDS
+                    ? "Transcript vượt giới hạn 100.000 từ có timestamp; bạn vẫn có thể dùng chế độ văn bản thuần."
+                    : timelineIsEstimated
+                      ? "Mốc thời gian gần đúng được tạo từ văn bản; bạn vẫn có thể nghe và chỉnh sửa từng từ."
+                      : syncAvailable
+                        ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
+                        : "Bản ghi chưa có timestamp theo từng từ."}
+                </p>
+                {transcriptFollowMode === "manual" && activeWordIndex >= 0 && (
+                  <button
+                    type="button"
+                    onClick={resumeTranscriptFollow}
+                    className="rounded-full border border-[#d9c96a] bg-[#fff9d8] px-3 py-1.5 font-black text-[#4b3b00] transition hover:bg-[#fff2a8]"
+                  >
+                    Theo dõi vị trí đang đọc
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] bg-[#fbfaf7] px-4 py-3 md:flex-row md:items-center md:justify-between">
               <div className="flex flex-wrap gap-2">
@@ -2412,13 +2558,33 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
+                tabIndex={0}
+                aria-label="Nội dung transcript đồng bộ"
+                onWheel={pauseTranscriptFollow}
+                onTouchStart={pauseTranscriptFollow}
+                onPointerDown={pauseTranscriptFollow}
+                onKeyDown={(event) => {
+                  if (
+                    [
+                      "ArrowDown",
+                      "ArrowUp",
+                      "End",
+                      "Home",
+                      "PageDown",
+                      "PageUp",
+                      " ",
+                    ].includes(event.key)
+                  ) {
+                    pauseTranscriptFollow();
+                  }
+                }}
                 onScroll={(event) =>
                   handleSyncScroll(event.currentTarget.scrollTop)
                 }
                 data-testid="virtual-transcript-scroll"
                 data-segment-count={segments.length}
                 data-rendered-segment-count={virtualSegments.items.length}
-                className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 scroll-smooth sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
+                className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
               >
                 <div
                   className="relative mx-auto max-w-3xl"
@@ -2461,6 +2627,9 @@ function TranscriptEditorPage() {
                   <textarea
                     ref={plainTextAreaRef}
                     value={editorText}
+                    onWheel={pauseTranscriptFollow}
+                    onTouchStart={pauseTranscriptFollow}
+                    onPointerDown={pauseTranscriptFollow}
                     onChange={(event) =>
                       applyEditorChange(event.target.value, wordsRef.current, true)
                     }

@@ -8,7 +8,65 @@ type EditableTimedWord = TimedWord & {
 };
 
 const ESTIMATED_WORDS_PER_SECOND = 2.5;
+const AUDIO_ACCESS_REFRESH_MARGIN_MS = 15_000;
+const MAX_AUTOMATIC_AUDIO_RECOVERY_ATTEMPTS = 1;
+const AUDIO_RECOVERY_PROGRESS_SECONDS = 2;
 export const MAX_EDITABLE_TIMED_WORDS = 100_000;
+
+export type TranscriptFollowMode = "following" | "manual";
+export type TranscriptFollowEvent =
+  | "playback-position"
+  | "user-scroll"
+  | "resume";
+
+export function audioAccessNeedsRefresh(
+  expiresAtMilliseconds: number | null,
+  nowMilliseconds = Date.now(),
+) {
+  return (
+    expiresAtMilliseconds !== null &&
+    Number.isFinite(expiresAtMilliseconds) &&
+    expiresAtMilliseconds <= nowMilliseconds + AUDIO_ACCESS_REFRESH_MARGIN_MS
+  );
+}
+
+export function createAudioRecoveryPlan(
+  currentTimeSeconds: number,
+  playbackWasRequested: boolean,
+  recoveryAttempts: number,
+) {
+  if (recoveryAttempts >= MAX_AUTOMATIC_AUDIO_RECOVERY_ATTEMPTS) return null;
+  const safeCurrentTimeSeconds =
+    Number.isFinite(currentTimeSeconds) && currentTimeSeconds > 0
+      ? currentTimeSeconds
+      : 0;
+  return {
+    playWhenReady: playbackWasRequested,
+    seekMilliseconds: Math.round(safeCurrentTimeSeconds * 1_000),
+  };
+}
+
+export function audioRecoveryMadeProgress(
+  recoveryStartSeconds: number | null,
+  currentTimeSeconds: number,
+) {
+  return (
+    recoveryStartSeconds !== null &&
+    Number.isFinite(recoveryStartSeconds) &&
+    Number.isFinite(currentTimeSeconds) &&
+    currentTimeSeconds >=
+      recoveryStartSeconds + AUDIO_RECOVERY_PROGRESS_SECONDS
+  );
+}
+
+export function nextTranscriptFollowMode(
+  currentMode: TranscriptFollowMode,
+  event: TranscriptFollowEvent,
+): TranscriptFollowMode {
+  if (event === "user-scroll") return "manual";
+  if (event === "resume") return "following";
+  return currentMode;
+}
 
 export function canUseSyncEditor(wordCount: number) {
   return (
