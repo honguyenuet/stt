@@ -14,6 +14,7 @@ import {
   Folder,
   FolderPlus,
   HardDrive,
+  Home,
   Info,
   Languages,
   ListChecks,
@@ -1731,6 +1732,7 @@ function UploadPage() {
                           <Link
                             to="/transcript/$id"
                             params={{ id: String(completedTranscriptId) }}
+                            search={{ at: undefined }}
                             className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90"
                           >
                             Chỉnh sửa chi tiết
@@ -2364,6 +2366,7 @@ function VbeeFileCard({
             <Link
               to="/transcript/$id"
               params={{ id: String(transcriptId) }}
+              search={{ at: undefined }}
               className="flex min-w-0 items-center gap-2 font-semibold text-primary hover:underline"
             >
               <Icon className="h-4 w-4 shrink-0" />

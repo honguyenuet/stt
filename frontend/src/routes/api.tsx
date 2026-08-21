@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   BarChart3,
+  ArrowRight,
   Check,
   Clipboard,
   Code2,
@@ -10,6 +11,8 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  FileAudio,
+  PlugZap,
   RefreshCw,
   ShieldCheck,
   Trash2,

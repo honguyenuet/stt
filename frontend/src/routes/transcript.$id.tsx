@@ -744,6 +744,7 @@ function TranscriptEditorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const plainTextMirrorRef = useRef<HTMLDivElement>(null);
   const playWhenReadyRef = useRef(false);
   const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);

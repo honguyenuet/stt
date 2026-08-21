@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useRef } from "react";
+import type { ComponentType } from "react";
 import {
   AudioLines,
   AlertCircle,
@@ -12,10 +13,14 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileAudio,
   Folder,
   FolderPlus,
+  Gift,
   Heart,
+  Home,
   KeyRound,
+  Languages,
   MessageCircle,
   Mic,
   MonitorSmartphone,
@@ -23,6 +28,7 @@ import {
   RefreshCw,
   Settings,
   ShieldAlert,
+  SlidersHorizontal,
   Trash2,
   Upload,
   UploadCloud,
@@ -37,6 +43,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PhilosophyQuoteCard } from "@/components/philosophy-quote-card";
+import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
 import {
   formatMediaDuration as formatDuration,
   sumMediaDurations,
@@ -315,6 +323,9 @@ function DashboardPage() {
     "view" | "edit"
   >("edit");
   const [savingFolderSettings, setSavingFolderSettings] = useState(false);
+  const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1127,6 +1138,68 @@ function DashboardPage() {
   }
 
   // ── Loading ──────────────────────────────────────────────────────────
+  function openFeature(label: string) {
+    const normalized = label.toLowerCase();
+    if (
+      normalized.includes("transcription") ||
+      normalized.includes("chuyển giọng nói")
+    ) {
+      void navigate({ to: "/transcription-settings" });
+      return;
+    }
+    if (normalized.includes("dictionary") || normalized.includes("từ điển")) {
+      void navigate({ to: "/custom-dictionary" });
+      return;
+    }
+    if (normalized.includes("upload") || normalized.includes("tải lên")) {
+      void navigate({ to: "/upload" });
+      return;
+    }
+    if (
+      normalized.includes("zoom") ||
+      normalized.includes("teams") ||
+      normalized.includes("zapier")
+    ) {
+      setActionDialog({
+        title: label,
+        description:
+          "Phần tích hợp này sẽ dùng API key và webhook. Mở trang API để tạo key, test endpoint và chuẩn bị tích hợp giống Sonix.",
+        ctaLabel: "Mở trang API",
+        to: "/api",
+      });
+      return;
+    }
+    if (normalized.includes("analysis") || normalized.includes("phân tích")) {
+      setActionDialog({
+        title: label,
+        description:
+          "Phân tích AI sẽ dùng bản chép lời đã tạo để tóm tắt, trích ý chính và tìm chủ đề. Trước mắt bạn có thể mở lịch sử để chọn bản chép lời cần phân tích.",
+        ctaLabel: "Mở lịch sử",
+        to: "/history",
+      });
+      return;
+    }
+    if (
+      normalized.includes("help") ||
+      normalized.includes("video") ||
+      normalized.includes("hỗ trợ")
+    ) {
+      setActionDialog({
+        title: label,
+        description:
+          "Bạn có thể dùng trang ghi âm để mở bảng trợ giúp, hoặc quay lại tải file hoặc ghi âm để bắt đầu.",
+        ctaLabel: "Mở ghi âm",
+        to: "/record",
+      });
+      return;
+    }
+    setActionDialog({
+      title: label,
+      description:
+        "Thiết lập này đã có điểm bấm và sẽ được nối sâu hơn khi có màn cấu hình riêng.",
+    });
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
