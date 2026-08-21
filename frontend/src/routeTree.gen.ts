@@ -19,7 +19,6 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ReferralRouteImport } from './routes/referral'
 import { Route as RecordRouteImport } from './routes/record'
 import { Route as RealtimeRouteImport } from './routes/realtime'
-import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as LoginRouteImport } from './routes/login'
@@ -97,11 +96,6 @@ const RecordRoute = RecordRouteImport.update({
 const RealtimeRoute = RealtimeRouteImport.update({
   id: '/realtime',
   path: '/realtime',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: '/privacy',
-  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PricingRoute = PricingRouteImport.update({
@@ -259,7 +253,6 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
-  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
@@ -299,7 +292,6 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
-  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
@@ -341,7 +333,6 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
-  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
@@ -384,7 +375,6 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
-    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
@@ -424,7 +414,6 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
-    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
@@ -465,7 +454,6 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
-    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
@@ -507,7 +495,6 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   OnboardingRoute: typeof OnboardingRoute
   PricingRoute: typeof PricingRoute
-  PrivacyRoute: typeof PrivacyRoute
   RealtimeRoute: typeof RealtimeRoute
   RecordRoute: typeof RecordRoute
   ReferralRoute: typeof ReferralRoute
@@ -593,13 +580,6 @@ declare module '@tanstack/react-router' {
       path: '/realtime'
       fullPath: '/realtime'
       preLoaderRoute: typeof RealtimeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy': {
-      id: '/privacy'
-      path: '/privacy'
-      fullPath: '/privacy'
-      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pricing': {
@@ -847,7 +827,6 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   OnboardingRoute: OnboardingRoute,
   PricingRoute: PricingRoute,
-  PrivacyRoute: PrivacyRoute,
   RealtimeRoute: RealtimeRoute,
   RecordRoute: RecordRoute,
   ReferralRoute: ReferralRoute,

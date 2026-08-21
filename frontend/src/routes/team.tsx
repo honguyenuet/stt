@@ -1,6 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Crown, FileText, Loader2, Plus, Save, Trash2, Users } from "lucide-react";
+import {
+  Building2,
+  Crown,
+  FileText,
+  Loader2,
+  Plus,
+  Save,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
 import { useAuth } from "@/context/AuthContext";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -29,11 +38,26 @@ type Invoice = {
 };
 
 type TeamPayload = {
-  workspace: { id: number; name: string; owner_user_id: number; role: TeamMember["role"] };
+  workspace: {
+    id: number;
+    name: string;
+    owner_user_id: number;
+    role: TeamMember["role"];
+    plan?: string;
+    invoiceProfile?: InvoiceProfile;
+  };
   members: TeamMember[];
   seatLimit: number;
   quota: { usedSeconds: number; quotaSeconds: number; remainingSeconds: number; plan: string };
   error?: string;
+};
+
+type InvoiceProfile = {
+  companyName: string;
+  taxCode: string;
+  address: string;
+  invoiceEmail: string;
+  billingContactEmail: string;
 };
 
 export const Route = createFileRoute("/team")({ component: TeamPage });
@@ -49,6 +73,13 @@ function TeamPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [invoiceProfile, setInvoiceProfile] = useState<InvoiceProfile>({
+    companyName: "",
+    taxCode: "",
+    address: "",
+    invoiceEmail: "",
+    billingContactEmail: "",
+  });
 
   useEffect(() => {
     if (!isLoading && !user) void navigate({ to: "/login", search: { from: "/team", error: undefined } });
@@ -70,6 +101,15 @@ function TeamPage() {
       if (!invoiceResponse.ok) throw new Error(invoiceData.error || "Không tải được hóa đơn");
       setTeam(teamData);
       setName(teamData.workspace.name);
+      setInvoiceProfile(
+        teamData.workspace.invoiceProfile || {
+          companyName: "",
+          taxCode: "",
+          address: "",
+          invoiceEmail: "",
+          billingContactEmail: "",
+        },
+      );
       setInvoices(invoiceData.invoices || []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không tải được nhóm");
@@ -99,6 +139,28 @@ function TeamPage() {
     try { await api("/api/team/members", { method: "POST", body: JSON.stringify({ email, role }) }); setEmail(""); setMessage("Đã thêm thành viên vào nhóm"); await load(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Không thêm được thành viên"); }
     finally { setBusy(""); }
+  }
+
+  async function saveInvoiceProfile() {
+    setBusy("invoice");
+    setError("");
+    setMessage("");
+    try {
+      await api("/api/workspace/invoice-profile", {
+        method: "PATCH",
+        body: JSON.stringify({ invoiceProfile }),
+      });
+      setMessage("Đã lưu thông tin billing");
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Không lưu được thông tin billing",
+      );
+    } finally {
+      setBusy("");
+    }
   }
 
   async function updateRole(memberId: number, nextRole: "admin" | "member") {
@@ -135,6 +197,60 @@ function TeamPage() {
         </div>
         <aside className="space-y-4 self-start">
           <section className="rounded-xl border border-border bg-white p-5"><h2 className="font-black">Quota dùng chung</h2><p className="mt-1 text-xs text-muted-foreground">Mọi tác vụ của {team.members.length} thành viên cùng trừ vào hạn mức này.</p><p className="mt-4 text-2xl font-black">{Math.floor(team.quota.remainingSeconds / 60).toLocaleString("vi-VN")} phút còn lại</p><div className="mt-3 h-2 overflow-hidden rounded-full bg-primary/10"><div className="h-full rounded-full bg-[#ffcb05]" style={{ width: `${usedPercent}%` }} /></div><p className="mt-2 text-xs text-muted-foreground">Đã dùng {Math.floor(team.quota.usedSeconds / 60).toLocaleString("vi-VN")} / {Math.floor(team.quota.quotaSeconds / 60).toLocaleString("vi-VN")} phút · gói {team.quota.plan}</p></section>
+          <section className="rounded-xl border border-border bg-white p-5">
+            <h2 className="flex items-center gap-2 font-black">
+              <Building2 className="h-4 w-4" /> Thông tin billing
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Gói {team.quota.plan} quyết định quota và chính sách lưu trữ media.
+            </p>
+            <div className="mt-3 space-y-2">
+              {[
+                ["companyName", "Tên công ty"],
+                ["taxCode", "Mã số thuế"],
+                ["invoiceEmail", "Email nhận hóa đơn"],
+                ["billingContactEmail", "Email phụ trách billing"],
+              ].map(([key, label]) => (
+                <input
+                  key={key}
+                  value={invoiceProfile[key as keyof InvoiceProfile]}
+                  onChange={(event) =>
+                    setInvoiceProfile((current) => ({
+                      ...current,
+                      [key]: event.target.value,
+                    }))
+                  }
+                  disabled={!canManage || busy !== ""}
+                  placeholder={label}
+                  className="h-9 w-full rounded-lg border border-border px-3 text-xs font-semibold disabled:bg-muted"
+                />
+              ))}
+              <textarea
+                value={invoiceProfile.address}
+                onChange={(event) =>
+                  setInvoiceProfile((current) => ({
+                    ...current,
+                    address: event.target.value,
+                  }))
+                }
+                disabled={!canManage || busy !== ""}
+                placeholder="Địa chỉ xuất hóa đơn"
+                rows={2}
+                className="w-full rounded-lg border border-border px-3 py-2 text-xs font-semibold disabled:bg-muted"
+              />
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => void saveInvoiceProfile()}
+                  disabled={busy !== ""}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 text-xs font-black text-primary-foreground disabled:opacity-40"
+                >
+                  {busy === "invoice" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Lưu thông tin billing
+                </button>
+              )}
+            </div>
+          </section>
           <section className="rounded-xl border border-border bg-white p-5"><h2 className="flex items-center gap-2 font-black"><FileText className="h-4 w-4" /> Hóa đơn nhóm</h2><div className="mt-3 space-y-2">{invoices.slice(0, 10).map((invoice) => <div key={invoice.id} className="rounded-lg bg-muted/50 p-3"><div className="flex justify-between gap-2 text-xs font-black"><span>{invoice.product_code || invoice.plan}</span><span>{Number(invoice.amount).toLocaleString("vi-VN")} {invoice.currency}</span></div><p className="mt-1 text-[11px] text-muted-foreground">{new Date(invoice.created_at).toLocaleDateString("vi-VN")} · {invoice.status}</p></div>)}{!invoices.length && <p className="text-xs text-muted-foreground">Chưa có hóa đơn.</p>}</div></section>
         </aside>
       </div>}

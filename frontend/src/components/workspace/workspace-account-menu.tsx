@@ -127,12 +127,6 @@ export function WorkspaceAccountMenu({
             </Link>
           </DropdownMenuItem>
           <DropdownMenuItem asChild className="cursor-pointer gap-2">
-            <Link to="/privacy">
-              <AppIcon icon={ShieldCheck} size="sm" />
-              Quyền riêng tư và dữ liệu
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild className="cursor-pointer gap-2">
             <Link to="/team">
               <AppIcon icon={Users} size="sm" />
               Nhóm và hạn mức dùng chung

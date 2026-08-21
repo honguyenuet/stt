@@ -13,6 +13,16 @@ const router = express.Router();
 async function loadMembership(userId, db = pool) {
   const workspace = await ensureUserWorkspace(userId, db);
   if (!workspace) return null;
+  const workspaceDetails = await db.query(
+    `SELECT plan, quota_seconds, quota_alert_seconds, plan_started_at,
+            plan_expires_at, plan_cancel_at_period_end,
+            plan_cancellation_requested_at, invoice_company_name,
+            invoice_tax_code, invoice_address, invoice_email,
+            billing_contact_email
+     FROM workspaces
+     WHERE id = $1`,
+    [workspace.id],
+  );
   const members = await db.query(
     `SELECT member.user_id AS id, member.role, member.joined_at,
             account.first_name, account.last_name, account.email, account.avatar,
@@ -24,7 +34,21 @@ async function loadMembership(userId, db = pool) {
               member.joined_at ASC`,
     [workspace.id],
   );
-  return { workspace, members: members.rows };
+  const details = workspaceDetails.rows[0] || {};
+  return {
+    workspace: {
+      ...workspace,
+      ...details,
+      invoiceProfile: {
+        companyName: details.invoice_company_name || "",
+        taxCode: details.invoice_tax_code || "",
+        address: details.invoice_address || "",
+        invoiceEmail: details.invoice_email || "",
+        billingContactEmail: details.billing_contact_email || "",
+      },
+    },
+    members: members.rows,
+  };
 }
 
 router.get("/", requireAuth, async (req, res) => {

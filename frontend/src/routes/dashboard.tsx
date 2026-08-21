@@ -303,11 +303,6 @@ function DashboardPage() {
     billingContactEmail: "",
   });
   const [workspaceSaving, setWorkspaceSaving] = useState(false);
-  const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
-  const [privacyLoading, setPrivacyLoading] = useState(false);
-  const [privacySaving, setPrivacySaving] = useState(false);
-  const [privacyError, setPrivacyError] = useState("");
-  const [privacyMessage, setPrivacyMessage] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
   const [folderVisibility, setFolderVisibility] = useState<"private" | "team">("private");
@@ -341,209 +336,6 @@ function DashboardPage() {
     if (user)
       setEditForm({ firstName: user.firstName, lastName: user.lastName });
   }, [user]);
-
-  const loadWorkspace = useCallback(async () => {
-    if (!token) return;
-    setWorkspaceLoading(true);
-    setWorkspaceError("");
-    try {
-      const response = await fetch(`${API_URL}/api/workspace`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        workspace?: WorkspaceSummary;
-        error?: string;
-      };
-      if (!response.ok || !data.workspace) {
-        throw new Error(data.error || "Không tải được workspace");
-      }
-      setWorkspace(data.workspace);
-      setWorkspaceName(data.workspace.name);
-      setInvoiceProfile({
-        companyName: data.workspace.invoiceProfile?.companyName || "",
-        taxCode: data.workspace.invoiceProfile?.taxCode || "",
-        address: data.workspace.invoiceProfile?.address || "",
-        invoiceEmail: data.workspace.invoiceProfile?.invoiceEmail || "",
-        billingContactEmail:
-          data.workspace.invoiceProfile?.billingContactEmail || "",
-      });
-    } catch (error) {
-      setWorkspaceError(
-        error instanceof Error ? error.message : "Không tải được workspace",
-      );
-    } finally {
-      setWorkspaceLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (token) void loadWorkspace();
-  }, [loadWorkspace, token]);
-
-  const loadPrivacy = useCallback(async () => {
-    if (!token) return;
-    setPrivacyLoading(true);
-    setPrivacyError("");
-    try {
-      const response = await fetch(`${API_URL}/api/settings/privacy`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        privacy?: PrivacySettings;
-        error?: string;
-      };
-      if (!response.ok || !data.privacy) {
-        throw new Error(data.error || "Không tải được privacy center");
-      }
-      setPrivacy(data.privacy);
-    } catch (error) {
-      setPrivacyError(
-        error instanceof Error ? error.message : "Không tải được privacy center",
-      );
-    } finally {
-      setPrivacyLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (token) void loadPrivacy();
-  }, [loadPrivacy, token]);
-
-  async function savePrivacy() {
-    if (!token || !privacy) return;
-    setPrivacySaving(true);
-    setPrivacyError("");
-    setPrivacyMessage("");
-    try {
-      const response = await fetch(`${API_URL}/api/settings/privacy`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(privacy),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        privacy?: PrivacySettings;
-        error?: string;
-      };
-      if (!response.ok || !data.privacy) {
-        throw new Error(data.error || "Không lưu được privacy center");
-      }
-      setPrivacy(data.privacy);
-      setPrivacyMessage("Đã lưu chính sách dữ liệu.");
-    } catch (error) {
-      setPrivacyError(
-        error instanceof Error ? error.message : "Không lưu được privacy center",
-      );
-    } finally {
-      setPrivacySaving(false);
-    }
-  }
-
-  async function exportPrivacyData() {
-    if (!token) return;
-    setPrivacyError("");
-    try {
-      const response = await fetch(`${API_URL}/api/settings/privacy/export`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(data.error || "Không export được dữ liệu");
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `vbee-data-export-${Date.now()}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      setPrivacyMessage("Đã tạo file export dữ liệu.");
-    } catch (error) {
-      setPrivacyError(
-        error instanceof Error ? error.message : "Không export được dữ liệu",
-      );
-    }
-  }
-
-  async function deletePrivacyMedia() {
-    if (!token) return;
-    if (!window.confirm("Xóa toàn bộ file media/audio đã lưu? Transcript vẫn được giữ lại.")) {
-      return;
-    }
-    setPrivacySaving(true);
-    setPrivacyError("");
-    setPrivacyMessage("");
-    try {
-      const response = await fetch(`${API_URL}/api/settings/privacy/media`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        affectedRecords?: number;
-        deletedFiles?: number;
-        error?: string;
-      };
-      if (!response.ok) throw new Error(data.error || "Không xóa được media");
-      setPrivacyMessage(
-        `Đã xóa media khỏi ${data.affectedRecords || 0} transcript.`,
-      );
-    } catch (error) {
-      setPrivacyError(
-        error instanceof Error ? error.message : "Không xóa được media",
-      );
-    } finally {
-      setPrivacySaving(false);
-    }
-  }
-
-  async function deletePrivacyTranscripts() {
-    if (!token) return;
-    if (
-      window.prompt(
-        "Nhập DELETE để xóa vĩnh viễn toàn bộ transcript và media của bạn.",
-      ) !== "DELETE"
-    ) {
-      return;
-    }
-    setPrivacySaving(true);
-    setPrivacyError("");
-    setPrivacyMessage("");
-    try {
-      const response = await fetch(`${API_URL}/api/settings/privacy/transcripts`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ confirmation: "DELETE" }),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        deletedTranscripts?: number;
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(data.error || "Không xóa được dữ liệu");
-      }
-      setPrivacyMessage(
-        `Đã xóa ${data.deletedTranscripts || 0} transcript vĩnh viễn.`,
-      );
-      setHistoryRetryKey((value) => value + 1);
-    } catch (error) {
-      setPrivacyError(
-        error instanceof Error ? error.message : "Không xóa được dữ liệu",
-      );
-    } finally {
-      setPrivacySaving(false);
-    }
-  }
 
   const loadSessions = useCallback(async () => {
     if (!token) return;
@@ -1277,17 +1069,17 @@ function DashboardPage() {
                 to="/record"
                 className="inline-flex h-12 w-12 items-center justify-center rounded-md border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
                 title="Ghi âm nhanh"
+                aria-label="Ghi âm nhanh"
               >
                 <Mic className="h-4 w-4" />
-                <span>Ghi âm</span>
               </Link>
               <Link
                 to="/realtime"
                 className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-border bg-white text-[#756894] shadow-sm transition hover:border-primary/50 hover:text-primary"
                 title="Realtime"
+                aria-label="Mở ghi âm trực tiếp"
               >
                 <Radio className="h-4 w-4" />
-                <span>Trực tiếp</span>
               </Link>
             </div>
 
@@ -1485,42 +1277,6 @@ function DashboardPage() {
           <VbeeAccountUsageCard
             firstName={user.firstName}
             showReferral={false}
-          />
-
-          <WorkspaceBillingPanel
-            workspace={workspace}
-            loading={workspaceLoading}
-            error={workspaceError}
-            name={workspaceName}
-            memberEmail={memberEmail}
-            memberRole={memberRole}
-            invoiceProfile={invoiceProfile}
-            saving={workspaceSaving}
-            onNameChange={setWorkspaceName}
-            onMemberEmailChange={setMemberEmail}
-            onMemberRoleChange={setMemberRole}
-            onInvoiceProfileChange={setInvoiceProfile}
-            onSaveName={() => void saveWorkspaceName()}
-            onAddMember={() => void addMember()}
-            onUpdateMember={(memberId, role) => void updateMember(memberId, role)}
-            onTransferOwner={(memberId) => void transferOwner(memberId)}
-            onSaveInvoiceProfile={() => void saveInvoiceProfile()}
-            onRemoveMember={(memberId) => void removeMember(memberId)}
-            onRetry={() => void loadWorkspace()}
-          />
-
-          <PrivacyCenterPanel
-            privacy={privacy}
-            loading={privacyLoading}
-            saving={privacySaving}
-            error={privacyError}
-            message={privacyMessage}
-            onChange={setPrivacy}
-            onSave={() => void savePrivacy()}
-            onExport={() => void exportPrivacyData()}
-            onDeleteMedia={() => void deletePrivacyMedia()}
-            onDeleteTranscripts={() => void deletePrivacyTranscripts()}
-            onRetry={() => void loadPrivacy()}
           />
 
           <div className="rounded-2xl border border-border bg-white p-6 shadow-soft">
