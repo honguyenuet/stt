@@ -58,6 +58,11 @@ import {
   replaceTimedWordInText,
   type TranscriptFollowMode,
 } from "@/lib/transcript-playback";
+import {
+  EDITABLE_TIMED_WORD_CLASS_NAME,
+  TRANSCRIPT_WORD_FLOW_CLASS_NAME,
+  editableTimedWordWidthCh,
+} from "@/lib/transcript-typography";
 import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
 import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
@@ -259,9 +264,9 @@ const EditableTimedWord = memo(function EditableTimedWord({
         }
       }}
       style={{
-        width: `${Math.max(1.2, Math.min(36, value.length + 0.35))}ch`,
+        width: `${editableTimedWordWidthCh(value)}ch`,
       }}
-      className={`mr-0.5 inline-block h-7 min-w-0 rounded border-0 px-px align-middle text-[15px] leading-7 outline-none transition-colors duration-150 ${
+      className={`${EDITABLE_TIMED_WORD_CLASS_NAME} ${
         active
           ? "bg-[#ffcb05] font-black text-[#21104a] shadow-[0_0_0_3px_rgba(255,203,5,.22)]"
           : isLowConfidence
@@ -325,7 +330,7 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
           {speakerLabel(segment.speaker)}
         </p>
       </div>
-      <p className="text-[15px] leading-8 text-[#342752]">
+      <p className={TRANSCRIPT_WORD_FLOW_CLASS_NAME}>
         {segment.words.map((word) => (
           <EditableTimedWord
             key={`${word.start}-${word.index}`}
