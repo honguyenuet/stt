@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampSeekTime,
   confidenceLevel,
+  createApproximateTimedWords,
   findActiveWordIndex,
   findTimedWordTextRange,
   formatPlaybackTime,
@@ -16,6 +17,34 @@ const words = [
 ];
 
 describe("transcript playback helpers", () => {
+  it("creates an editable timeline when history only contains transcript text", () => {
+    expect(createApproximateTimedWords("Xin chào bạn", 3)).toEqual([
+      { text: "Xin", start: 0, end: 1_000, speaker: null },
+      { text: "chào", start: 1_000, end: 2_000, speaker: null },
+      { text: "bạn", start: 2_000, end: 3_000, speaker: null },
+    ]);
+  });
+
+  it("estimates a safe timeline when an older transcript has no duration", () => {
+    const timeline = createApproximateTimedWords("Bản ghi cũ", null);
+
+    expect(timeline).toHaveLength(3);
+    expect(timeline[0].start).toBe(0);
+    expect(timeline.at(-1)?.end).toBe(1_200);
+  });
+
+  it("keeps text-only history transcripts editable word by word", () => {
+    const timeline = createApproximateTimedWords("Xin chào bạn", 3);
+
+    expect(replaceTimedWordInText("Xin chào bạn", timeline, 1, "mừng")).toBe(
+      "Xin mừng bạn",
+    );
+  });
+
+  it("does not build an oversized fallback timeline in the browser", () => {
+    expect(createApproximateTimedWords("một hai ba", 3, 2)).toEqual([]);
+  });
+
   it("finds only the word that is currently being spoken", () => {
     expect(findActiveWordIndex(words, 300)).toBe(-1);
     expect(findActiveWordIndex(words, 700)).toBe(0);

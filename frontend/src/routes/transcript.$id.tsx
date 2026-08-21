@@ -45,6 +45,7 @@ import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import {
   clampSeekTime,
+  createApproximateTimedWords,
   findActiveWordIndex,
   findTimedWordTextRange,
   formatPlaybackTime,
@@ -481,6 +482,8 @@ function TranscriptEditorPage() {
   const [speakerMergeSource, setSpeakerMergeSource] = useState("");
   const [speakerMergeTarget, setSpeakerMergeTarget] = useState("");
   const [rememberSpeakerLabels, setRememberSpeakerLabels] = useState(true);
+  const [timelineIsEstimated, setTimelineIsEstimated] = useState(false);
+  const [timelineIsTooLarge, setTimelineIsTooLarge] = useState(false);
   const [exportOptions, setExportOptions] = useState<ExportOptions>({
     includeSpeakers: true,
     includeTimestamps: true,
@@ -624,7 +627,23 @@ function TranscriptEditorPage() {
         );
       }
       const detail = body as TranscriptDetail;
-      detail.words = normalizeWords(detail.words);
+      const providerWords = normalizeWords(detail.words);
+      const estimatedWords = providerWords.length
+        ? []
+        : createApproximateTimedWords(
+            detail.text,
+            detail.duration,
+            MAX_SYNC_WORDS,
+          );
+      detail.words = providerWords.length
+        ? providerWords
+        : estimatedWords;
+      setTimelineIsEstimated(!providerWords.length && detail.words.length > 0);
+      setTimelineIsTooLarge(
+        !providerWords.length &&
+          Boolean(String(detail.text || "").trim()) &&
+          !estimatedWords.length,
+      );
       try {
         const remembered = normalizeSpeakerMemory(
           JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
@@ -1364,7 +1383,25 @@ function TranscriptEditorPage() {
             : "Không khôi phục được phiên bản",
         );
       }
-      const restoredWords = normalizeWords(body.words);
+      const normalizedRestoredWords = normalizeWords(body.words);
+      const estimatedRestoredWords = normalizedRestoredWords.length
+        ? []
+        : createApproximateTimedWords(
+            body.text,
+            transcript?.duration,
+            MAX_SYNC_WORDS,
+          );
+      const restoredWords = normalizedRestoredWords.length
+        ? normalizedRestoredWords
+        : estimatedRestoredWords;
+      setTimelineIsEstimated(
+        !normalizedRestoredWords.length && restoredWords.length > 0,
+      );
+      setTimelineIsTooLarge(
+        !normalizedRestoredWords.length &&
+          Boolean(String(body.text || "").trim()) &&
+          !estimatedRestoredWords.length,
+      );
       wordsRef.current = restoredWords;
       editorTextRef.current = String(body.text || "");
       setEditorText(String(body.text || ""));
@@ -2011,9 +2048,11 @@ function TranscriptEditorPage() {
                 </button>
               </div>
               <p className="text-xs text-[#8a7da1]">
-                {words.length > MAX_SYNC_WORDS
+                {timelineIsTooLarge || words.length > MAX_SYNC_WORDS
                   ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
-                  : syncAvailable
+                  : timelineIsEstimated
+                    ? "Mốc thời gian gần đúng được tạo từ văn bản; bạn vẫn có thể nghe và chỉnh sửa từng từ."
+                    : syncAvailable
                     ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
                     : "Bản ghi chưa có timestamp theo từng từ."}
               </p>

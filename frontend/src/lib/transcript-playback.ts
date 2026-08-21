@@ -7,6 +7,41 @@ type EditableTimedWord = TimedWord & {
   text: string;
 };
 
+const ESTIMATED_WORDS_PER_SECOND = 2.5;
+
+export function createApproximateTimedWords(
+  transcriptText: string,
+  durationSeconds: number | null | undefined,
+  maxWords = Number.POSITIVE_INFINITY,
+) {
+  const source = String(transcriptText || "").trim();
+  const safeMaxWords =
+    Number.isSafeInteger(maxWords) && maxWords > 0
+      ? maxWords
+      : Number.POSITIVE_INFINITY;
+  const tokens: string[] = [];
+  for (const match of source.matchAll(/\S+/g)) {
+    if (tokens.length >= safeMaxWords) return [];
+    tokens.push(match[0]);
+  }
+  if (!tokens.length) return [];
+
+  const providedDuration = Number(durationSeconds);
+  const timelineDurationSeconds =
+    Number.isFinite(providedDuration) && providedDuration > 0
+      ? providedDuration
+      : Math.max(1, tokens.length / ESTIMATED_WORDS_PER_SECOND);
+  const wordDurationMilliseconds =
+    (timelineDurationSeconds * 1_000) / tokens.length;
+
+  return tokens.map((text, index) => ({
+    text,
+    start: Math.round(wordDurationMilliseconds * index),
+    end: Math.round(wordDurationMilliseconds * (index + 1)),
+    speaker: null,
+  }));
+}
+
 export type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
 
 export function confidenceLevel(value: number | null | undefined): ConfidenceLevel {

@@ -34,6 +34,7 @@ import {
 } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { canOpenTranscriptEditor } from "@/lib/transcript-history";
 import {
   normalizeDashboardFolders,
   type DashboardFolder,
@@ -846,6 +847,7 @@ function HistoryPage() {
             {filtered.map((item) => {
               const isOpen = expanded === item.id;
               const isCompleted = item.status === "completed";
+              const canOpenEditor = canOpenTranscriptEditor(item);
               const isActive =
                 item.status === "queued" || item.status === "processing";
               const statusLabel =
@@ -875,7 +877,7 @@ function HistoryPage() {
                   <div className="relative flex items-center gap-3 px-4 py-3">
                     <button
                       onClick={() =>
-                        isCompleted
+                        canOpenEditor
                           ? void navigate({
                               to: "/transcript/$id",
                               params: { id: String(item.id) },
@@ -995,7 +997,7 @@ function HistoryPage() {
                       )}
                       <button
                         onClick={() =>
-                          isCompleted
+                          canOpenEditor
                             ? void navigate({
                               to: "/transcript/$id",
                               params: { id: String(item.id) },
@@ -1004,11 +1006,11 @@ function HistoryPage() {
                             : setExpanded(isOpen ? null : item.id)
                         }
                         title={
-                          isCompleted ? "Mở trình biên tập" : "Xem trạng thái"
+                          canOpenEditor ? "Mở trình biên tập" : "Xem trạng thái"
                         }
                         className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-card transition"
                       >
-                        {isCompleted ? (
+                        {canOpenEditor ? (
                           <ArrowRight className="h-4 w-4" />
                         ) : isOpen ? (
                           <ChevronUp className="h-4 w-4" />
