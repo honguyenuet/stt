@@ -247,13 +247,13 @@ async function getUsageSeconds(userId, db = pool, memberIds = [userId]) {
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(usage.seconds), 0)::float AS used_seconds
      FROM quota_usage_ledger usage
-     JOIN workspaces workspace ON workspace.id = $2
+     JOIN workspaces workspace ON workspace.id = $1
      WHERE (
-        usage.workspace_id = $2
-        OR (usage.workspace_id IS NULL AND usage.user_id = ANY($3::int[]))
+        usage.workspace_id = $1
+        OR (usage.workspace_id IS NULL AND usage.user_id = ANY($2::int[]))
        )
        AND usage.period_started_at = workspace.plan_started_at`,
-    [userId, workspace.id, memberIds],
+    [workspace.id, memberIds],
   );
   return Math.max(0, Math.round(Number(rows[0]?.used_seconds || 0)));
 }

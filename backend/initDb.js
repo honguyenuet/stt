@@ -1083,6 +1083,9 @@ async function initDatabase() {
       PRIMARY KEY (workspace_id, user_id)
     );
   `);
+  await pool.query(
+    `ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`,
+  );
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id, joined_at);`);
 
   await pool.query(`

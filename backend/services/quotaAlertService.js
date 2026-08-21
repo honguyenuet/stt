@@ -314,7 +314,7 @@ async function reconcileQuotaAlerts() {
     `SELECT id FROM users
      WHERE account_status = 'active'
      ORDER BY id ASC
-     LIMIT $1`,
+     LIMIT $1::integer`,
     [limit],
   );
   const { getQuotaStatus } = require("./quotaService");
