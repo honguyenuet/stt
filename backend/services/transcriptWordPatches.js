@@ -1,5 +1,6 @@
 const MAX_TRANSCRIPT_WORD_PATCHES = 100_000;
 const WORD_PATCH_FIELDS = new Set(["index", "text", "speaker"]);
+const ESTIMATED_WORDS_PER_SECOND = 2.5;
 
 function invalidWordPatch(message) {
   const error = new Error(message);
@@ -91,8 +92,34 @@ function applyTranscriptWordPatches(words, patches) {
   return nextWords;
 }
 
+function createApproximateTranscriptWords(transcriptText, durationSeconds) {
+  const source = String(transcriptText || "").trim();
+  const tokens = [];
+  for (const match of source.matchAll(/\S+/g)) {
+    if (tokens.length >= MAX_TRANSCRIPT_WORD_PATCHES) return [];
+    tokens.push(match[0]);
+  }
+  if (!tokens.length) return [];
+
+  const providedDuration = Number(durationSeconds);
+  const timelineDurationSeconds =
+    Number.isFinite(providedDuration) && providedDuration > 0
+      ? providedDuration
+      : Math.max(1, tokens.length / ESTIMATED_WORDS_PER_SECOND);
+  const wordDurationMilliseconds =
+    (timelineDurationSeconds * 1_000) / tokens.length;
+  return tokens.map((text, index) => ({
+    text,
+    start: Math.round(wordDurationMilliseconds * index),
+    end: Math.round(wordDurationMilliseconds * (index + 1)),
+    speaker: null,
+    confidence: null,
+  }));
+}
+
 module.exports = {
   MAX_TRANSCRIPT_WORD_PATCHES,
   applyTranscriptWordPatches,
+  createApproximateTranscriptWords,
   normalizeTranscriptWordPatches,
 };

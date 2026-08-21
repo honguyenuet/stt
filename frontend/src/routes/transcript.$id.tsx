@@ -54,6 +54,7 @@ import {
   replaceTimedWordInText,
 } from "@/lib/transcript-playback";
 import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
+import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
   compareTranscriptText,
@@ -620,6 +621,8 @@ function TranscriptEditorPage() {
   const editorTextRef = useRef("");
   const savedTextRef = useRef("");
   const wordsRef = useRef<TranscriptWord[]>([]);
+  const savedWordsRef = useRef<TranscriptWord[]>([]);
+  const timelineNeedsInitializationRef = useRef(false);
   const historyPushRef = useRef(0);
   const syncScrollFrameRef = useRef<number | null>(null);
 
@@ -850,6 +853,9 @@ function TranscriptEditorPage() {
       detail.words = providerWords.length
         ? providerWords
         : estimatedWords;
+      savedWordsRef.current = providerWords.map((word) => ({ ...word }));
+      timelineNeedsInitializationRef.current =
+        !providerWords.length && estimatedWords.length > 0;
       setTimelineIsEstimated(!providerWords.length && detail.words.length > 0);
       setTimelineIsTooLarge(
         !providerWords.length &&
@@ -1091,16 +1097,18 @@ function TranscriptEditorPage() {
     const now = Date.now();
     if (!force && now - historyPushRef.current < 700) return;
     historyPushRef.current = now;
+    // Word arrays are replaced, never mutated, so long-text snapshots can share
+    // the immutable timeline instead of cloning thousands of objects per keypress.
     const snapshot = {
       text: editorTextRef.current,
-      words: wordsRef.current.map((word) => ({ ...word })),
+      words: wordsRef.current,
     };
     setUndoStack((current) => {
       const last = current[current.length - 1];
       if (
         last &&
         last.text === snapshot.text &&
-        JSON.stringify(last.words) === JSON.stringify(snapshot.words)
+        last.words === snapshot.words
       ) {
         return current;
       }
@@ -1129,12 +1137,16 @@ function TranscriptEditorPage() {
   const applyEditorChange = useCallback(
     (text: string, nextWords = wordsRef.current, trackHistory = true) => {
       if (trackHistory) pushUndoSnapshot();
-      const cleanWords = nextWords.map((word) => ({ ...word }));
-      wordsRef.current = cleanWords;
+      const wordsChanged = nextWords !== wordsRef.current;
+      wordsRef.current = nextWords;
       editorTextRef.current = text;
       setEditorText(text);
       setTranscript((current) =>
-        current ? { ...current, text, words: cleanWords } : current,
+        current
+          ? wordsChanged
+            ? { ...current, text, words: nextWords }
+            : { ...current, text }
+          : current,
       );
       setDirtyRevision((value) => value + 1);
       setSaveStatus("unsaved");
@@ -1177,6 +1189,14 @@ function TranscriptEditorPage() {
       }, REQUEST_TIMEOUT_MS);
       setSaveStatus("saving");
       setSaveError("");
+      const payload = buildTranscriptSavePayload(
+        text,
+        timedWords,
+        savedWordsRef.current,
+        {
+          initializeWordTimeline: timelineNeedsInitializationRef.current,
+        },
+      );
       try {
         const response = await fetch(
           `${API_URL}/api/transcribe/${activeTranscriptId}`,
@@ -1186,22 +1206,34 @@ function TranscriptEditorPage() {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ text, words: timedWords }),
+            body: JSON.stringify(payload),
             signal: controller.signal,
           },
         );
         const body = (await response.json().catch(() => ({}))) as {
           error?: string;
+          words?: unknown;
         };
         if (!response.ok) {
           throw new Error(body.error || "Không thể lưu thay đổi");
         }
+        const returnedWords = Array.isArray(body.words)
+          ? normalizeWords(body.words)
+          : null;
+        const persistedWords = returnedWords ?? timedWords;
+        const saveIsCurrent =
+          editorTextRef.current === text && wordsRef.current === timedWords;
         setSavedText(text);
-        setTranscript((previous) =>
-          previous ? { ...previous, text, words: timedWords } : previous,
-        );
-        setDirtyRevision(0);
-        setSaveStatus(editorTextRef.current === text ? "saved" : "unsaved");
+        savedWordsRef.current = persistedWords.map((word) => ({ ...word }));
+        timelineNeedsInitializationRef.current = false;
+        if (saveIsCurrent) {
+          wordsRef.current = persistedWords;
+          setTranscript((previous) =>
+            previous ? { ...previous, text, words: persistedWords } : previous,
+          );
+          setDirtyRevision(0);
+        }
+        setSaveStatus(saveIsCurrent ? "saved" : "unsaved");
         void loadVersions();
       } catch (error) {
         if (controller.signal.aborted && !timedOut) return;
@@ -1251,10 +1283,16 @@ function TranscriptEditorPage() {
         Number.isFinite(transcriptId) &&
         (pendingText !== savedTextRef.current || dirtyRevision > 0)
       ) {
-        const payload = JSON.stringify({
-          text: pendingText,
-          words: wordsRef.current,
-        });
+        const payload = JSON.stringify(
+          buildTranscriptSavePayload(
+            pendingText,
+            wordsRef.current,
+            savedWordsRef.current,
+            {
+              initializeWordTimeline: timelineNeedsInitializationRef.current,
+            },
+          ),
+        );
         void fetch(`${API_URL}/api/transcribe/${transcriptId}`, {
           method: "PATCH",
           headers: {
@@ -1646,6 +1684,11 @@ function TranscriptEditorPage() {
           Boolean(String(body.text || "").trim()) &&
           !estimatedRestoredWords.length,
       );
+      savedWordsRef.current = normalizedRestoredWords.map((word) => ({
+        ...word,
+      }));
+      timelineNeedsInitializationRef.current =
+        !normalizedRestoredWords.length && estimatedRestoredWords.length > 0;
       wordsRef.current = restoredWords;
       editorTextRef.current = String(body.text || "");
       setEditorText(String(body.text || ""));

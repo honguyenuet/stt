@@ -72,6 +72,7 @@ const {
 } = require("../services/transcriptVersionService");
 const {
   applyTranscriptWordPatches,
+  createApproximateTranscriptWords,
   normalizeTranscriptWordPatches,
 } = require("../services/transcriptWordPatches");
 
@@ -1920,11 +1921,18 @@ router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) =>
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
-  const { text, words, wordPatches, speakerNames } = req.body;
+  const {
+    text,
+    words,
+    wordPatches,
+    initializeWordTimeline,
+    speakerNames,
+  } = req.body;
   if (
     text === undefined &&
     words === undefined &&
     wordPatches === undefined &&
+    initializeWordTimeline === undefined &&
     speakerNames === undefined
   ) {
     return res.status(400).json({ error: "Không có thay đổi để lưu" });
@@ -1938,6 +1946,14 @@ router.patch("/:id", requireAuth, async (req, res) => {
   if (words !== undefined && wordPatches !== undefined) {
     return res.status(400).json({
       error: "Chỉ gửi danh sách timestamp hoặc thay đổi từ, không gửi đồng thời",
+    });
+  }
+  if (
+    initializeWordTimeline !== undefined &&
+    initializeWordTimeline !== true
+  ) {
+    return res.status(400).json({
+      error: "Yêu cầu tạo timestamp từ văn bản không hợp lệ",
     });
   }
   let normalizedWords = null;
@@ -2012,7 +2028,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
   try {
     await client.query("BEGIN");
     const current = await client.query(
-      `SELECT id, user_id, text, words, speaker_names
+      `SELECT id, user_id, text, words, speaker_names, duration
        FROM transcriptions
        WHERE id = $1 AND user_id = $2
        FOR UPDATE`,
@@ -2030,10 +2046,19 @@ router.patch("/:id", requireAuth, async (req, res) => {
           ? transcript.words
           : []
         : normalizedWords;
+    if (initializeWordTimeline === true && nextWords.length === 0) {
+      nextWords = createApproximateTranscriptWords(nextText, transcript.duration);
+      if (String(nextText || "").trim() && nextWords.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "Văn bản vượt giới hạn 100.000 từ có timestamp",
+        });
+      }
+    }
     if (normalizedWordPatches !== null) {
       try {
         nextWords = applyTranscriptWordPatches(
-          transcript.words,
+          nextWords,
           normalizedWordPatches,
         );
       } catch (error) {

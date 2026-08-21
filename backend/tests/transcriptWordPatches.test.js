@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   applyTranscriptWordPatches,
+  createApproximateTranscriptWords,
   normalizeTranscriptWordPatches,
 } = require("../services/transcriptWordPatches");
 
@@ -41,6 +42,14 @@ test("updates only changed word fields and preserves timestamps", () => {
   ]);
   assert.equal(result[1].start, 400);
   assert.equal(result[1].end, 900);
+});
+
+test("creates a server-side timeline when history contains only text", () => {
+  assert.deepEqual(createApproximateTranscriptWords("Xin chào bạn", 3), [
+    { text: "Xin", start: 0, end: 1_000, speaker: null, confidence: null },
+    { text: "chào", start: 1_000, end: 2_000, speaker: null, confidence: null },
+    { text: "bạn", start: 2_000, end: 3_000, speaker: null, confidence: null },
+  ]);
 });
 
 test("rejects ambiguous or out-of-range word patches", () => {
