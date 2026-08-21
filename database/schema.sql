@@ -23,6 +23,41 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
+CREATE TABLE IF NOT EXISTS workspaces (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(160) NOT NULL,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan VARCHAR(20) NOT NULL DEFAULT 'free',
+  quota_seconds INTEGER NOT NULL DEFAULT 1800,
+  quota_alert_seconds INTEGER NOT NULL DEFAULT 300,
+  plan_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  plan_expires_at TIMESTAMP WITH TIME ZONE,
+  plan_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+  plan_cancellation_requested_at TIMESTAMP WITH TIME ZONE,
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+  id BIGSERIAL PRIMARY KEY,
+  workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role VARCHAR(20) NOT NULL DEFAULT 'member'
+    CHECK (role IN ('owner', 'admin', 'member')),
+  status VARCHAR(20) NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'removed')),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  UNIQUE (workspace_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user_active
+ON workspace_members(user_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_active
+ON workspace_members(workspace_id, status);
+
 CREATE TABLE IF NOT EXISTS user_auth_identities (
   id BIGSERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -226,6 +261,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   custom_dictionary TEXT NOT NULL DEFAULT '',
   transcription_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  privacy_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -258,6 +294,26 @@ CREATE TABLE IF NOT EXISTS api_key_usage_events (
   status             VARCHAR(20),
   created_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS http_request_logs (
+  id BIGSERIAL PRIMARY KEY,
+  request_id VARCHAR(100) NOT NULL,
+  method VARCHAR(12) NOT NULL,
+  path TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+  ip_hash VARCHAR(64),
+  user_agent VARCHAR(500),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_http_request_logs_created
+ON http_request_logs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_http_request_logs_status_created
+ON http_request_logs(status_code, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_api_key_usage_key_created
 ON api_key_usage_events(api_key_id, created_at DESC);

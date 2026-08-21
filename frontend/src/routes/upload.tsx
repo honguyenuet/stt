@@ -134,6 +134,17 @@ interface UploadQueueResponse {
   quota?: QuotaStatus;
   message?: string;
   reused?: boolean;
+  batchId?: string;
+  jobs?: Array<{
+    id: number;
+    jobId: number;
+    status?: "queued" | "processing" | "completed" | "failed";
+    progress?: number;
+    expectedDurationSeconds?: number;
+    filename?: string;
+    createdAt?: string;
+  }>;
+  rejected?: Array<{ filename: string; error: string }>;
 }
 
 type UploadStatus =
@@ -254,6 +265,9 @@ function UploadPage() {
   const navigate = useNavigate();
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchJobs, setBatchJobs] = useState<NonNullable<UploadQueueResponse["jobs"]>>([]);
+  const [batchRejected, setBatchRejected] = useState<NonNullable<UploadQueueResponse["rejected"]>>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
   const [transcription, setTranscription] = useState("");
@@ -269,6 +283,7 @@ function UploadPage() {
   );
   const [translationError, setTranslationError] = useState("");
   const [words, setWords] = useState<Word[]>([]);
+  const [completedTranscriptId, setCompletedTranscriptId] = useState<number | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -309,9 +324,6 @@ function UploadPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const editRef = useRef<HTMLDivElement>(null);
-  const spanRefs = useRef<HTMLSpanElement[]>([]);
-  const activeIdxRef = useRef(-1);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -366,31 +378,6 @@ function UploadPage() {
   }, [historyRetryKey, user, token]);
 
   useEffect(() => {
-    const div = editRef.current;
-    if (!div) return;
-    div.innerHTML = "";
-    spanRefs.current = [];
-    activeIdxRef.current = -1;
-    if (words.length === 0) return;
-
-    words.forEach((w, i) => {
-      const span = document.createElement("span");
-      span.className =
-        "cursor-pointer rounded px-0.5 transition-colors duration-100 hover:bg-primary/15";
-      span.textContent = w.text;
-      span.onclick = () => {
-        if (audioRef.current) {
-          audioRef.current.currentTime = w.start / 1000;
-          void audioRef.current.play();
-        }
-      };
-      div.appendChild(span);
-      if (i < words.length - 1) div.appendChild(document.createTextNode(" "));
-      spanRefs.current.push(span);
-    });
-  }, [words]);
-
-  useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
@@ -405,11 +392,15 @@ function UploadPage() {
     return historySeconds + (normalizeMediaDuration(duration) ?? 0);
   }, [duration, history]);
 
-  const hasSelectedSource = Boolean(uploadFile || youtubeMetadata);
+  const hasSelectedSource = Boolean(uploadFile || youtubeMetadata || batchFiles.length);
   const selectedFilename =
-    uploadFile?.name ?? youtubeMetadata?.filename ?? "transcript";
+    batchFiles.length > 0
+      ? `${batchFiles.length} file batch`
+      : uploadFile?.name ?? youtubeMetadata?.filename ?? "transcript";
   const selectedFileSize =
-    uploadFile?.size ?? youtubeMetadata?.approximateBytes ?? undefined;
+    batchFiles.length > 0
+      ? batchFiles.reduce((sum, file) => sum + file.size, 0)
+      : uploadFile?.size ?? youtubeMetadata?.approximateBytes ?? undefined;
 
   const normalizedExpectedDuration = normalizeMediaDuration(expectedDuration);
   const pendingUploadSeconds =
@@ -421,35 +412,6 @@ function UploadPage() {
   const projectedRemainingSeconds = quota
     ? Math.max(0, quota.remainingSeconds - pendingUploadSeconds)
     : null;
-
-  function handleTimeUpdate() {
-    if (!audioRef.current || spanRefs.current.length === 0) return;
-    const ms = audioRef.current.currentTime * 1000;
-    let newIdx = -1;
-    for (let i = 0; i < words.length; i++) {
-      if (words[i].start <= ms) newIdx = i;
-      else break;
-    }
-    if (newIdx === activeIdxRef.current) return;
-
-    const prev = spanRefs.current[activeIdxRef.current];
-    if (prev) {
-      prev.classList.remove(
-        "bg-primary",
-        "text-primary-foreground",
-        "font-medium",
-      );
-      prev.classList.add("hover:bg-primary/15");
-    }
-
-    const cur = spanRefs.current[newIdx];
-    if (cur) {
-      cur.classList.add("bg-primary", "text-primary-foreground", "font-medium");
-      cur.classList.remove("hover:bg-primary/15");
-      cur.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-    activeIdxRef.current = newIdx;
-  }
 
   const rememberActiveJob = useCallback((jobId: number, filename: string) => {
     window.localStorage.setItem(
@@ -500,6 +462,7 @@ function UploadPage() {
       clearRememberedJob();
       setUploadStatus("done");
       setQueuedJob(null);
+      setCompletedTranscriptId(job.transcription_id);
       setTranscription(job.text || "");
       setWords(Array.isArray(job.words) ? job.words : []);
       setDuration(normalizeMediaDuration(job.duration));
@@ -555,10 +518,10 @@ function UploadPage() {
     return data;
   }, [token]);
 
-  function uploadFileWithProgress(formData: FormData) {
+  function uploadFileWithProgress(formData: FormData, endpoint = "/api/transcribe") {
     return new Promise<UploadQueueResponse>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_URL}/api/transcribe`);
+      xhr.open("POST", `${API_URL}${endpoint}`);
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
@@ -682,18 +645,57 @@ function UploadPage() {
     setWords([]);
   }
 
+  async function handleBatchFileSelect(files: File[]) {
+    const selected = files.slice(0, 8);
+    if (selected.length < 2) {
+      setUploadError("Batch upload cần chọn ít nhất 2 file.");
+      return;
+    }
+    const maxMb = quota?.limits.maxUploadMb ?? MAX_MB;
+    for (const file of selected) {
+      if (!/\.(mp3|wav|m4a|ogg|flac|aac|mp4|webm)$/i.test(file.name)) {
+        setUploadError(`File ${file.name} không đúng định dạng hỗ trợ.`);
+        return;
+      }
+      if (file.size > maxMb * 1024 * 1024) {
+        setUploadError(`File ${file.name} vượt giới hạn ${maxMb}MB.`);
+        return;
+      }
+    }
+    setBatchFiles(selected);
+    setUploadFile(null);
+    setYoutubeMetadata(null);
+    setExpectedDuration(null);
+    setBatchJobs([]);
+    setBatchRejected([]);
+    setUploadStatus("idle");
+    setUploadError("");
+    setTranscription("");
+    setCompletedTranscriptId(null);
+    setTranslation(null);
+    setTranslationError("");
+    setDuration(null);
+    setWords([]);
+  }
+
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
+    const files = Array.from(e.dataTransfer.files || []);
+    if (uploadMode === "multi") {
+      void handleBatchFileSelect(files);
+      return;
+    }
+    const file = files[0];
     if (file) void handleFileSelect(file);
   }
 
   async function handleUpload() {
-    if (!uploadFile && !youtubeMetadata) return;
+    if (!uploadFile && !youtubeMetadata && batchFiles.length === 0) return;
     setUploadStatus("uploading");
     setUploadError("");
     setUploadProgress(0);
+    setCompletedTranscriptId(null);
     const uploadFingerprint = makeUploadFingerprint({
       file: uploadFile,
       youtube: youtubeMetadata,
@@ -705,7 +707,18 @@ function UploadPage() {
     });
     try {
       let data: UploadQueueResponse;
-      if (uploadFile) {
+      if (batchFiles.length > 0) {
+        const formData = new FormData();
+        for (const file of batchFiles) formData.append("audio", file);
+        formData.append("speakerLabels", String(speakerLabels));
+        formData.append("source", "upload");
+        formData.append("audioMode", audioMode);
+        formData.append("language", transcriptionLanguage);
+        formData.append("translateTo", translateTo);
+        data = await uploadFileWithProgress(formData, "/api/transcribe/batch");
+        setBatchJobs(data.jobs || []);
+        setBatchRejected(data.rejected || []);
+      } else if (uploadFile) {
         const formData = new FormData();
         formData.append("audio", uploadFile);
         formData.append("speakerLabels", String(speakerLabels));
@@ -748,7 +761,10 @@ function UploadPage() {
         }
       }
       setUploadStatus("queued");
-      if (data.jobId) {
+      if (data.jobs?.length) {
+        setQueuedJob(null);
+        clearRememberedJob();
+      } else if (data.jobId) {
         setQueuedJob({
           id: data.jobId,
           status: data.status,
@@ -768,7 +784,24 @@ function UploadPage() {
       }
       setQuotaRefreshKey((key) => key + 1);
       if (data.quota) setQuota(data.quota);
-      if (data.id) {
+      if (data.jobs?.length) {
+        setHistory((prev) =>
+          [
+            ...data.jobs!.map((job) => ({
+              id: job.id,
+              filename: job.filename ?? `batch-${job.id}`,
+              file_size: undefined,
+              duration: normalizeMediaDuration(job.expectedDurationSeconds),
+              text: "",
+              status: job.status ?? "queued",
+              progress: job.progress ?? 0,
+              job_id: job.jobId,
+              created_at: job.createdAt ?? new Date().toISOString(),
+            })),
+            ...prev,
+          ].slice(0, 4),
+        );
+      } else if (data.id) {
         setHistory((prev) =>
           [
             {
@@ -854,14 +887,13 @@ function UploadPage() {
   }
 
   async function handleCopy() {
-    const text = editRef.current?.textContent ?? transcription;
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(transcription);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   async function handleDownload() {
-    const text = editRef.current?.textContent ?? transcription;
+    const text = transcription;
     const translated = translation?.text?.trim();
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const lines = translated
@@ -898,7 +930,7 @@ function UploadPage() {
   }
 
   function handleDownloadTxt() {
-    const text = editRef.current?.textContent ?? transcription;
+    const text = transcription;
     const translated = translation?.text?.trim();
     const translationTargetLanguage = translation?.targetLanguage ?? "auto";
     const content = translated
@@ -927,12 +959,16 @@ function UploadPage() {
     setAudioUrl(null);
     setWords([]);
     setUploadFile(null);
+    setBatchFiles([]);
+    setBatchJobs([]);
+    setBatchRejected([]);
     setYoutubeMetadata(null);
     setVideoLink("");
     setLinkRightsAccepted(false);
     setLinkMetadataLoading(false);
     setUploadStatus("idle");
     setTranscription("");
+    setCompletedTranscriptId(null);
     setTranslation(null);
     setTranslationError("");
     setUploadError("");
@@ -998,6 +1034,7 @@ function UploadPage() {
       setExpectedDuration(data.metadata.durationSeconds);
       setUploadStatus("idle");
       setTranscription("");
+      setCompletedTranscriptId(null);
       setTranslation(null);
       setTranslationError("");
       setDuration(null);
@@ -1016,7 +1053,7 @@ function UploadPage() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center bg-white">
         <span className="h-10 w-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
       </div>
     );
@@ -1024,16 +1061,22 @@ function UploadPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-white text-foreground">
       <AuthenticatedHeader />
 
       <input
         ref={fileInputRef}
         type="file"
         accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.webm,audio/*"
+        multiple={uploadMode === "multi"}
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const files = Array.from(e.target.files || []);
+          if (uploadMode === "multi") {
+            void handleBatchFileSelect(files);
+            return;
+          }
+          const f = files[0];
           if (f) void handleFileSelect(f);
         }}
       />
@@ -1050,7 +1093,7 @@ function UploadPage() {
 
             <Link
               to="/dashboard"
-              className="mb-3 flex items-center justify-center rounded-md border border-border bg-card/75 px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
+              className="mb-3 flex items-center justify-center rounded-md border border-border bg-white px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:text-primary"
             >
               <Home className="mr-2 h-4 w-4 text-primary" />
               Không gian làm việc
@@ -1059,7 +1102,7 @@ function UploadPage() {
             <div className="grid grid-cols-[1fr_1fr_44px] gap-2 sm:flex">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90"
               >
                 <Upload className="h-4 w-4" />
                 TẢI FILE
@@ -1099,7 +1142,7 @@ function UploadPage() {
           </div>
 
           <div className="overflow-hidden rounded-lg border border-border bg-white shadow-soft">
-            <div className="border-b border-border bg-[#fbf8ef] px-5 py-4">
+            <div className="border-b border-border bg-white px-5 py-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
@@ -1110,7 +1153,7 @@ function UploadPage() {
                     {activeFolder}
                   </div>
                 </div>
-                <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
+                <div className="rounded-full border border-border bg-white px-3 py-1 text-xs font-bold text-primary">
                   {history.length + (hasSelectedSource ? 1 : 0)} items
                 </div>
               </div>
@@ -1135,7 +1178,7 @@ function UploadPage() {
 
             {!hasSelectedSource && (
               <div className="m-4 space-y-4">
-                <section className="rounded-xl border border-border bg-[#fbf8ef] p-4">
+                <section className="rounded-xl border border-border bg-white p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-black text-foreground">
@@ -1201,6 +1244,11 @@ function UploadPage() {
                 date={new Date().toISOString()}
                 error={uploadError}
                 onClear={reset}
+                transcriptId={
+                  uploadStatus === "done" && completedTranscriptId
+                    ? completedTranscriptId
+                    : undefined
+                }
               >
                 {uploadStatus !== "done" && (
                   <UploadTimeEstimatePanel
@@ -1215,9 +1263,31 @@ function UploadPage() {
 
                 {uploadStatus === "idle" && (
                   <div className="space-y-4">
-                    <div className="rounded-xl border border-border bg-background/45 p-4">
+                    {batchFiles.length > 0 && (
+                      <div className="rounded-xl border border-border bg-white p-4">
+                        <p className="text-sm font-black">
+                          Batch upload: {batchFiles.length} file
+                        </p>
+                        <div className="mt-3 space-y-2">
+                          {batchFiles.map((file) => (
+                            <div
+                              key={`${file.name}-${file.size}-${file.lastModified}`}
+                              className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-xs"
+                            >
+                              <span className="truncate font-bold">
+                                {file.name}
+                              </span>
+                              <span className="shrink-0 text-muted-foreground">
+                                {formatBytes(file.size)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="rounded-xl border border-border bg-white p-4">
                       <div className="flex items-start gap-3">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-primary">
                           <SlidersHorizontal className="h-4 w-4" />
                         </span>
                         <div>
@@ -1250,8 +1320,8 @@ function UploadPage() {
                             onClick={() => setAudioMode(item.value)}
                             className={`rounded-lg border px-3 py-3 text-left transition ${
                               audioMode === item.value
-                                ? "border-primary bg-primary/10 text-primary"
-                                : "border-border bg-background/40 hover:border-primary/40"
+                                ? "border-primary bg-white text-primary"
+                                : "border-border bg-white hover:border-primary/40"
                             }`}
                           >
                             <span className="block text-xs font-black">
@@ -1264,14 +1334,14 @@ function UploadPage() {
                         ))}
                       </div>
                       {audioMode === "song" && (
-                        <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-primary">
+                        <p className="mt-3 rounded-lg border border-primary/20 bg-white px-3 py-2 text-xs leading-5 text-primary">
                           Backend tách stem vocal bằng Demucs; nếu Demucs không
                           khả dụng, hệ thống tự dùng ffmpeg để làm rõ giọng hát.
                         </p>
                       )}
                     </div>
 
-                    <label className="flex items-center justify-between rounded-xl border border-border bg-background/45 px-4 py-3">
+                    <label className="flex items-center justify-between rounded-xl border border-border bg-white px-4 py-3">
                       <div>
                         <p className="text-sm font-bold">Gắn nhãn người nói</p>
                         <p className="text-xs text-muted-foreground">
@@ -1297,7 +1367,7 @@ function UploadPage() {
                       </span>
                     </label>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
+                      <label className="rounded-xl border border-border bg-white px-4 py-3 text-left">
                         <span className="text-sm font-bold">
                           Ngôn ngữ âm thanh
                         </span>
@@ -1306,7 +1376,7 @@ function UploadPage() {
                           onChange={(e) =>
                             setTranscriptionLanguage(e.target.value)
                           }
-                          className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
+                          className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
                         >
                           {UPLOAD_LANGUAGE_OPTIONS.map((item) => (
                             <option key={item.value} value={item.value}>
@@ -1320,14 +1390,14 @@ function UploadPage() {
                             : "Chọn đúng ngôn ngữ chính để tăng độ chính xác; chỉ dùng tự nhận diện khi chưa biết ngôn ngữ của file."}
                         </span>
                       </label>
-                      <label className="rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
+                      <label className="rounded-xl border border-border bg-white px-4 py-3 text-left">
                         <span className="text-sm font-bold">
                           Dịch văn bản sang
                         </span>
                         <select
                           value={translateTo}
                           onChange={(e) => setTranslateTo(e.target.value)}
-                          className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
+                          className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
                         >
                           {TRANSLATION_LANGUAGE_OPTIONS.map((item) => (
                             <option key={item.value} value={item.value}>
@@ -1337,14 +1407,14 @@ function UploadPage() {
                         </select>
                       </label>
                     </div>
-                    <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                    <p className="rounded-lg border border-primary/20 bg-white px-3 py-2 text-xs leading-5 text-muted-foreground">
                       Bản dịch được thực hiện sau khi transcript gốc đã tạo
                       xong. Chọn “Tự nhận diện nhiều ngôn ngữ” khi một file có
                       từ hai ngôn ngữ trở lên.
                     </p>
                     <button
                       onClick={() => void handleUpload()}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
                     >
                       <Zap className="h-4 w-4" />
                       Bắt đầu chuyển đổi
@@ -1361,7 +1431,7 @@ function UploadPage() {
                 )}
 
                 {uploadStatus === "queued" && (
-                  <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
+                  <div className="space-y-3 rounded-xl border border-primary/25 bg-white p-4">
                     <div className="flex items-start gap-3">
                       <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-primary/35 border-t-primary animate-spin" />
                       <div>
@@ -1398,9 +1468,43 @@ function UploadPage() {
                         </p>
                       </div>
                     </div>
+                    {batchJobs.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-black text-primary">
+                          Trạng thái từng file
+                        </p>
+                        {batchJobs.map((job) => (
+                          <div
+                            key={job.jobId}
+                            className="rounded-lg border border-border bg-white px-3 py-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate font-black">
+                                {job.filename}
+                              </span>
+                              <span className="shrink-0 rounded-md bg-primary/10 px-2 py-1 font-bold text-primary">
+                                Job #{job.jobId}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-muted-foreground">
+                              {job.status || "queued"} · {job.progress || 0}%
+                            </p>
+                          </div>
+                        ))}
+                        {batchRejected.map((item) => (
+                          <div
+                            key={`${item.filename}-${item.error}`}
+                            className="rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                          >
+                            <span className="font-black">{item.filename}</span>
+                            <span> · {item.error}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <Link
                       to="/history"
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
                     >
                       Xem tiến độ trong Lịch sử
                       <ArrowRight className="h-4 w-4" />
@@ -1408,7 +1512,7 @@ function UploadPage() {
                     <button
                       type="button"
                       onClick={() => void handleCancelQueuedJob()}
-                      className="inline-flex w-full items-center justify-center rounded-xl border border-primary/25 px-4 py-2.5 text-xs font-black text-primary transition hover:bg-primary/10"
+                      className="inline-flex w-full items-center justify-center rounded-xl border border-primary/25 bg-white px-4 py-2.5 text-xs font-black text-primary transition hover:border-primary/50"
                     >
                       Hủy xử lý
                     </button>
@@ -1430,7 +1534,7 @@ function UploadPage() {
                     {queuedJob?.status === "failed" && (
                       <button
                         onClick={() => void handleRetryQueuedJob()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
                       >
                         <RefreshCw className="h-4 w-4" />
                         Thử lại job này
@@ -1439,7 +1543,7 @@ function UploadPage() {
                     {(uploadFile || youtubeMetadata) && queuedJob?.status !== "failed" && (
                       <button
                         onClick={() => void handleUpload()}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
                       >
                         <RefreshCw className="h-4 w-4" />
                         Gửi lại upload
@@ -1447,7 +1551,7 @@ function UploadPage() {
                     )}
                     <button
                       onClick={reset}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-3 text-sm font-bold transition hover:bg-card"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 py-3 text-sm font-bold transition hover:border-primary/50"
                     >
                       <RotateCcw className="h-4 w-4" />
                       Thử lại
@@ -1458,51 +1562,49 @@ function UploadPage() {
                 {uploadStatus === "done" && (
                   <div className="space-y-4">
                     {audioUrl && (
-                      <div className="rounded-xl border border-border bg-background/45 p-4">
+                      <div className="rounded-xl border border-border bg-white p-4">
                         <p className="mb-3 text-xs font-semibold text-muted-foreground">
-                          Nghe lại - từ đang phát sẽ được highlight, nhấn vào từ
-                          để tua
+                          Nghe lại audio trước khi mở trình biên tập chi tiết
                         </p>
                         <audio
                           ref={audioRef}
                           src={audioUrl}
                           controls
-                          onTimeUpdate={handleTimeUpdate}
                           className="w-full"
                         />
                       </div>
                     )}
 
-                    {words.length > 0 ? (
-                      <div className="rounded-xl border border-border bg-background/45 px-5 py-4">
-                        <p className="mb-2 text-xs font-semibold text-muted-foreground">
-                          Văn bản - có thể chỉnh sửa trực tiếp
+                    <div className="rounded-xl border border-border bg-white px-5 py-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs font-semibold text-muted-foreground">
+                          Văn bản đã tạo
                         </p>
-                        <div
-                          ref={editRef}
-                          contentEditable
-                          suppressContentEditableWarning
-                          onInput={() => {
-                            if (editRef.current) {
-                              setTranscription(
-                                editRef.current.textContent ?? "",
-                              );
-                            }
-                          }}
-                          className="max-h-64 min-h-24 overflow-y-auto whitespace-pre-wrap text-sm leading-[2.2] text-foreground outline-none"
-                        />
+                        {completedTranscriptId && (
+                          <Link
+                            to="/transcript/$id"
+                            params={{ id: String(completedTranscriptId) }}
+                            className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90"
+                          >
+                            Chỉnh sửa chi tiết
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                        )}
                       </div>
-                    ) : (
-                      <textarea
-                        value={transcription}
-                        rows={8}
-                        onChange={(e) => setTranscription(e.target.value)}
-                        className="w-full resize-y rounded-xl border border-border bg-background/45 px-5 py-4 text-sm leading-relaxed text-foreground outline-none focus:ring-2 focus:ring-primary/40"
-                      />
+                      <p className="max-h-64 min-h-24 overflow-y-auto whitespace-pre-wrap text-sm leading-7 text-foreground">
+                        {transcription || "Transcript chưa có nội dung."}
+                      </p>
+                    </div>
+
+                    {!completedTranscriptId && (
+                      <p className="rounded-xl border border-primary/20 bg-white px-4 py-3 text-xs font-bold text-primary">
+                        Transcript đang được lưu. Mở Lịch sử nếu bạn cần theo
+                        dõi trạng thái chi tiết.
+                      </p>
                     )}
 
                     {translation?.text && (
-                      <div className="rounded-xl border border-primary/30 bg-primary/10 px-5 py-4">
+                      <div className="rounded-xl border border-primary/30 bg-white px-5 py-4">
                         <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-primary">
                           Bản dịch {languageLabel(translation.targetLanguage)}
                         </p>
@@ -1533,14 +1635,14 @@ function UploadPage() {
                       </button>
                       <button
                         onClick={handleDownloadTxt}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm font-black text-primary transition hover:bg-primary/20"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-white px-4 py-3 text-sm font-black text-primary transition hover:border-primary/60"
                       >
                         <Download className="h-4 w-4" />
                         Tải .txt
                       </button>
                       <button
                         onClick={() => void handleDownload()}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
                       >
                         <Download className="h-4 w-4" />
                         Tải xuống .docx
@@ -1571,10 +1673,11 @@ function UploadPage() {
                   item.error_message || item.translation_error || undefined
                 }
                 compact
+                transcriptId={item.status === "completed" ? item.id : undefined}
               />
             ))}
 
-            <div className="border-t border-border bg-[#fbf8ef] px-5 py-3 text-center text-sm font-black text-primary">
+            <div className="border-t border-border bg-white px-5 py-3 text-center text-sm font-black text-primary">
               {history.length + (hasSelectedSource ? 1 : 0)} items,{" "}
               {formatDuration(totalDuration)}
             </div>
@@ -1589,7 +1692,7 @@ function UploadPage() {
       </main>
 
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
-        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
+        <DialogContent className="border-border bg-white text-foreground sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Tạo folder mới</DialogTitle>
           </DialogHeader>
@@ -1600,19 +1703,19 @@ function UploadPage() {
             <input
               value={folderName}
               onChange={(e) => setFolderName(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
+              className="w-full rounded-xl border border-border bg-white px-4 py-3 text-sm outline-none focus:border-primary"
               placeholder="Tên folder"
             />
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
-                className="flex-1 rounded-full border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-background"
+                className="flex-1 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-bold transition hover:border-primary/50"
               >
                 Hủy
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90"
               >
                 Tạo folder
               </button>
@@ -1627,7 +1730,7 @@ function UploadPage() {
           if (!open) setActionDialog(null);
         }}
       >
-        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
+        <DialogContent className="border-border bg-white text-foreground sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{actionDialog?.title}</DialogTitle>
           </DialogHeader>
@@ -1638,7 +1741,7 @@ function UploadPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setActionDialog(null)}
-                className="flex-1 rounded-full border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-background"
+                className="flex-1 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-bold transition hover:border-primary/50"
               >
                 Đóng
               </button>
@@ -1653,7 +1756,7 @@ function UploadPage() {
                       void navigate({ to });
                     }
                   }}
-                  className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+                  className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90"
                 >
                   {actionDialog.ctaLabel}
                 </button>
@@ -1693,11 +1796,11 @@ function FileDropzone({
       onDrop={onDrop}
       className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition ${
         isDragging
-          ? "border-primary bg-primary/15"
-          : "border-border bg-white hover:border-primary/50 hover:bg-primary/5"
+          ? "border-primary bg-white"
+          : "border-border bg-white hover:border-primary/50"
       }`}
     >
-      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-white text-primary">
         {multiTrack ? (
           <AudioLines className="h-6 w-6" />
         ) : (
@@ -1718,7 +1821,7 @@ function FileDropzone({
           event.stopPropagation();
           onChooseFile();
         }}
-        className="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground shadow-glow transition hover:opacity-90"
+        className="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90"
       >
         <Upload className="h-3.5 w-3.5" />
         Chọn file
@@ -1727,7 +1830,7 @@ function FileDropzone({
         {FORMAT_TAGS.map((fmt) => (
           <span
             key={fmt}
-            className="rounded-full border border-border bg-[#fbf8ef] px-2.5 py-1 text-[11px] font-bold text-muted-foreground"
+            className="rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-bold text-muted-foreground"
           >
             {fmt}
           </span>
@@ -1759,7 +1862,7 @@ function VideoLinkPanel({
   return (
     <section className="rounded-xl border border-border bg-white p-5">
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-white text-primary">
           <Youtube className="h-5 w-5" />
         </span>
         <div>
@@ -1774,7 +1877,7 @@ function VideoLinkPanel({
         <input
           value={videoLink}
           onChange={(event) => setVideoLink(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg border border-border bg-[#fbf8ef] px-3 py-2.5 text-sm outline-none transition focus:border-primary"
+          className="min-w-0 flex-1 rounded-lg border border-border bg-white px-3 py-2.5 text-sm outline-none transition focus:border-primary"
           placeholder="https://www.youtube.com/watch?v=..."
           disabled={loading}
         />
@@ -1782,7 +1885,7 @@ function VideoLinkPanel({
           type="button"
           onClick={onSubmit}
           disabled={loading}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-wait disabled:opacity-65"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90 disabled:cursor-wait disabled:opacity-65"
         >
           {loading ? (
             <span className="h-4 w-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
@@ -1792,7 +1895,7 @@ function VideoLinkPanel({
           {loading ? "Đang kiểm tra" : "Dùng link"}
         </button>
       </div>
-      <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#fbf8ef] px-3 py-3">
+      <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-white px-3 py-3">
         <input
           type="checkbox"
           checked={rightsAccepted}
@@ -1809,7 +1912,7 @@ function VideoLinkPanel({
           {error}
         </div>
       )}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-white px-3 py-2.5">
         <p className="inline-flex items-center gap-2 text-xs leading-5 text-muted-foreground">
           <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
           Link được kiểm tra thời lượng, quota và đưa vào hàng đợi như file tải
@@ -1907,7 +2010,7 @@ function ProcessingPanel({
   ];
 
   return (
-    <div className="rounded-xl border border-primary/25 bg-primary/10 p-4">
+    <div className="rounded-xl border border-primary/25 bg-white p-4">
       <div className="flex items-center gap-3">
         <span className="block h-7 w-7 shrink-0 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
         <div>
@@ -1938,7 +2041,7 @@ function ProcessingPanel({
             className="rounded-lg border border-primary/15 bg-white/80 px-3 py-2.5"
           >
             <span
-              className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black ${index === 0 ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}
+              className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-black ${index === 0 ? "border-primary bg-primary text-primary-foreground" : "border-primary/30 bg-white text-primary"}`}
             >
               {index === 0 ? (
                 <span className="h-2 w-2 rounded-full bg-current animate-pulse" />
@@ -1998,7 +2101,7 @@ function UploadTimeEstimatePanel({
       : Math.max(1, Math.ceil(expectedDuration / 75));
 
   return (
-    <div className="mb-4 rounded-lg border border-border bg-[#fbf8ef] p-3">
+    <div className="mb-4 rounded-lg border border-border bg-white p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-black text-primary">
           <Clock className="h-4 w-4" />
@@ -2054,7 +2157,7 @@ function UploadTimeEstimatePanel({
             <span>Quota dự kiến dùng</span>
             <span>{formatQuotaTime(pendingUploadSeconds)}</span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-card">
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
             <div
               className="h-full rounded-full bg-primary"
               style={{ width: `${quotaPercent}%` }}
@@ -2082,6 +2185,7 @@ function VbeeFileCard({
   compact = false,
   children,
   onClear,
+  transcriptId,
 }: {
   filename: string;
   fileSize?: number;
@@ -2092,6 +2196,7 @@ function VbeeFileCard({
   compact?: boolean;
   children?: ReactNode;
   onClear?: () => void;
+  transcriptId?: number;
 }) {
   const Icon = getFileIcon(filename);
   const statusLabel =
@@ -2112,10 +2217,21 @@ function VbeeFileCard({
       <div className="grid gap-y-3 text-sm sm:grid-cols-[120px_minmax(0,1fr)]">
         <p className="font-black text-muted-foreground">Tên file</p>
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <span className="flex min-w-0 items-center gap-2 font-semibold text-primary">
-            <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate">{filename}</span>
-          </span>
+          {transcriptId ? (
+            <Link
+              to="/transcript/$id"
+              params={{ id: String(transcriptId) }}
+              className="flex min-w-0 items-center gap-2 font-semibold text-primary hover:underline"
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="truncate">{filename}</span>
+            </Link>
+          ) : (
+            <span className="flex min-w-0 items-center gap-2 font-semibold text-primary">
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="truncate">{filename}</span>
+            </span>
+          )}
           {onClear && (
             <button
               onClick={onClear}
@@ -2133,9 +2249,9 @@ function VbeeFileCard({
               status === "error" || status === "cancelled"
                 ? "bg-destructive/15 text-destructive"
                 : status === "idle"
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-white text-primary"
                   : status === "queued" || status === "uploading"
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-white text-primary"
                     : "bg-emerald-500 text-white"
             }`}
           >
@@ -2186,7 +2302,7 @@ function UploadWorkflowSteps({
     ["1", "Nguồn", "Chọn file, nhiều track hoặc link video"],
     ["2", "Cài đặt", "Ngôn ngữ, người nói và thư mục"],
     ["3", "Chuyển đổi", "AI xử lý và tạo transcript"],
-    ["4", "Biên tập", "Nghe lại, sửa, copy và xuất file"],
+    ["4", "Biên tập", "Mở transcript editor để chỉnh sửa chi tiết"],
   ];
   const activeIndex =
     status === "done"
@@ -2206,7 +2322,7 @@ function UploadWorkflowSteps({
             key={title}
             className={`rounded-lg border px-3 py-2.5 transition ${
               active
-                ? "border-primary/30 bg-primary/5"
+                ? "border-primary/30 bg-white"
                 : "border-border bg-white"
             }`}
           >
@@ -2280,7 +2396,7 @@ function UploadModeSelector({
             onClick={() => setMode(item.value)}
             className={`rounded-lg border p-3 text-left transition ${
               active
-                ? "border-primary/40 bg-primary/5 text-foreground"
+                ? "border-primary/40 bg-white text-foreground"
                 : "border-border bg-white text-muted-foreground hover:border-primary/40"
             }`}
           >

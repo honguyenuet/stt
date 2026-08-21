@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const dns = require("dns");
 const net = require("net");
+const pool = require("../db");
 const { IS_PRODUCTION } = require("../config/security");
 const {
   decryptProviderSecret,
@@ -208,11 +209,158 @@ async function deliverCustomerWebhook({
   throw lastError || new Error("Không gửi được webhook");
 }
 
+function serializeDelivery(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    apiKeyId: row.api_key_id ? Number(row.api_key_id) : null,
+    jobId: row.job_id ? Number(row.job_id) : null,
+    transcriptionId: row.transcription_id ? Number(row.transcription_id) : null,
+    event: row.event,
+    callbackUrl: row.callback_url,
+    status: row.status,
+    responseStatus: row.response_status ? Number(row.response_status) : null,
+    attempts: Number(row.attempts || 0),
+    errorMessage: row.error_message || null,
+    deliveredAt: row.delivered_at || null,
+    lastAttemptAt: row.last_attempt_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function createWebhookDeliveryRecord({
+  userId,
+  apiKeyId = null,
+  jobId = null,
+  transcriptionId = null,
+  webhook,
+  event,
+  payload,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO customer_webhook_deliveries (
+       user_id, api_key_id, job_id, transcription_id, event,
+       callback_url, webhook, payload
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+     RETURNING *`,
+    [
+      userId,
+      apiKeyId || null,
+      jobId || null,
+      transcriptionId || null,
+      event,
+      webhook.url,
+      JSON.stringify(webhook),
+      JSON.stringify(payload || {}),
+    ],
+  );
+  return rows[0];
+}
+
+async function updateWebhookDeliveryRecord(id, result) {
+  const delivered = Boolean(result?.delivered);
+  const { rows } = await pool.query(
+    `UPDATE customer_webhook_deliveries
+     SET status = $2,
+         response_status = $3,
+         attempts = GREATEST(attempts, $4),
+         error_message = $5,
+         delivered_at = CASE WHEN $2 = 'delivered' THEN NOW() ELSE delivered_at END,
+         last_attempt_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [
+      id,
+      delivered ? "delivered" : "failed",
+      result?.status || null,
+      Number(result?.attempts || 1),
+      delivered ? null : String(result?.error || "Không gửi được webhook").slice(0, 2000),
+    ],
+  );
+  return rows[0];
+}
+
+async function deliverAndRecordCustomerWebhook({
+  userId,
+  apiKeyId = null,
+  jobId = null,
+  transcriptionId = null,
+  webhook,
+  event,
+  payload,
+}) {
+  const delivery = await createWebhookDeliveryRecord({
+    userId,
+    apiKeyId,
+    jobId,
+    transcriptionId,
+    webhook,
+    event,
+    payload,
+  });
+  try {
+    const result = await deliverCustomerWebhook({ webhook, event, payload });
+    return serializeDelivery(await updateWebhookDeliveryRecord(delivery.id, result));
+  } catch (error) {
+    await updateWebhookDeliveryRecord(delivery.id, {
+      delivered: false,
+      attempts: WEBHOOK_RETRY_ATTEMPTS,
+      error: error.message || String(error),
+    });
+    throw error;
+  }
+}
+
+async function listCustomerWebhookDeliveries(userId, { limit = 20 } = {}) {
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM customer_webhook_deliveries
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [userId, safeLimit],
+  );
+  return rows.map(serializeDelivery);
+}
+
+async function replayCustomerWebhookDelivery({ userId, deliveryId }) {
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM customer_webhook_deliveries
+     WHERE id = $1 AND user_id = $2`,
+    [deliveryId, userId],
+  );
+  const delivery = rows[0];
+  if (!delivery) throw createWebhookError("Không tìm thấy webhook delivery", 404);
+
+  return deliverAndRecordCustomerWebhook({
+    userId,
+    apiKeyId: delivery.api_key_id,
+    jobId: delivery.job_id,
+    transcriptionId: delivery.transcription_id,
+    webhook: delivery.webhook,
+    event: delivery.event,
+    payload: {
+      ...delivery.payload,
+      replayOfDeliveryId: Number(delivery.id),
+      replayedAt: new Date().toISOString(),
+    },
+  });
+}
+
 module.exports = {
   assertPublicWebhookDestination,
   createWebhookSignature,
+  deliverAndRecordCustomerWebhook,
   deliverCustomerWebhook,
   isPrivateWebhookHost,
+  listCustomerWebhookDeliveries,
   normalizeCustomerWebhook,
   protectCustomerWebhook,
+  replayCustomerWebhookDelivery,
 };

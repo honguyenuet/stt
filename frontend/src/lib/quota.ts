@@ -7,6 +7,10 @@ export type BillingCycle = "monthly" | "yearly";
 
 export interface QuotaStatus {
   userId?: number;
+  workspaceId?: number;
+  workspaceName?: string;
+  workspaceRole?: "owner" | "admin" | "member";
+  workspaceOwnerUserId?: number;
   plan: PlanCode;
   label: string;
   baseQuotaSeconds: number;

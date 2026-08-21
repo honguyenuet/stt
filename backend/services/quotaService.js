@@ -2,6 +2,10 @@ const pool = require("../db");
 const { rewardReferralAfterFirstUsage } = require("./referralService");
 const { syncQuotaAlertState } = require("./quotaAlertService");
 const { getAdminSettings } = require("./adminSettingsService");
+const {
+  requireWorkspaceBillingRole,
+  resolveUserWorkspace,
+} = require("./workspaceBillingService");
 
 const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 2048);
 
@@ -174,11 +178,12 @@ async function getUserBilling(userId, db = pool) {
     getRuntimePlanConfig("free", db),
     getAdminSettings(db),
   ]);
+  const workspace = await resolveUserWorkspace(userId, db);
   await db.query(
-    `UPDATE users
+    `UPDATE workspaces
      SET plan = 'free',
           quota_seconds = $2,
-          plan_started_at = COALESCE(free_trial_started_at, created_at, plan_started_at),
+          plan_started_at = COALESCE(plan_started_at, created_at, NOW()),
           plan_expires_at = NULL,
          plan_cancel_at_period_end = FALSE,
          plan_cancellation_requested_at = NULL
@@ -186,23 +191,27 @@ async function getUserBilling(userId, db = pool) {
        AND plan <> 'free'
        AND plan_expires_at IS NOT NULL
        AND plan_expires_at <= NOW()`,
-    [userId, freeConfig.quotaSeconds],
+    [workspace.id, freeConfig.quotaSeconds],
   );
 
   const { rows } = await db.query(
-    `SELECT id, plan, quota_seconds, quota_alert_seconds, plan_started_at,
-       plan_expires_at, free_trial_started_at, plan_cancel_at_period_end,
+    `SELECT id, name, owner_user_id, plan, quota_seconds, quota_alert_seconds, plan_started_at,
+       plan_expires_at, plan_cancel_at_period_end,
        plan_cancellation_requested_at
-     FROM users WHERE id = $1`,
-    [userId],
+     FROM workspaces WHERE id = $1`,
+    [workspace.id],
   );
-  if (!rows[0]) throw createHttpError(404, "Không tìm thấy người dùng");
+  if (!rows[0]) throw createHttpError(404, "Không tìm thấy workspace");
 
   const planName = normalizePlan(rows[0].plan);
   const config = await getRuntimePlanConfig(planName, db);
   const globalMaxFileSeconds = settings.max_file_duration_minutes * 60;
   return {
     userId,
+    workspaceId: Number(rows[0].id),
+    workspaceName: rows[0].name,
+    workspaceRole: workspace.member_role || "member",
+    workspaceOwnerUserId: Number(rows[0].owner_user_id),
     plan: planName,
     label: config.label,
     quotaSeconds: Number(rows[0].quota_seconds || config.quotaSeconds),
@@ -233,27 +242,35 @@ async function getUserBilling(userId, db = pool) {
 }
 
 async function getUsageSeconds(userId, db = pool) {
+  const workspace = await resolveUserWorkspace(userId, db);
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(usage.seconds), 0)::float AS used_seconds
      FROM quota_usage_ledger usage
-     JOIN users account ON account.id = usage.user_id
-     WHERE usage.user_id = $1
-       AND usage.period_started_at = account.plan_started_at`,
-    [userId],
+     JOIN workspaces workspace ON workspace.id = $2
+     WHERE (
+        usage.workspace_id = $2
+        OR (usage.workspace_id IS NULL AND usage.user_id = $1)
+       )
+       AND usage.period_started_at = workspace.plan_started_at`,
+    [userId, workspace.id],
   );
   return Math.max(0, Math.round(Number(rows[0]?.used_seconds || 0)));
 }
 
 async function getTopUpCreditStatus(userId, db = pool) {
+  const workspace = await resolveUserWorkspace(userId, db);
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(seconds_granted), 0)::float AS granted_seconds,
             COALESCE(SUM(remaining_seconds), 0)::float AS remaining_seconds,
             MIN(expires_at) FILTER (WHERE remaining_seconds > 0) AS next_expiry
      FROM top_up_credits
-     WHERE user_id = $1
+     WHERE (
+        workspace_id = $2
+        OR (workspace_id IS NULL AND user_id = $1)
+       )
        AND remaining_seconds > 0
        AND (expires_at IS NULL OR expires_at > NOW())`,
-    [userId],
+    [userId, workspace.id],
   );
   return {
     grantedSeconds: Math.max(0, Math.round(Number(rows[0]?.granted_seconds || 0))),
@@ -271,7 +288,8 @@ async function getReservedSeconds(
   db = pool,
   excludeBatchId = null,
 ) {
-  const values = [userId];
+  const workspace = await resolveUserWorkspace(userId, db);
+  const values = [workspace.id];
   const excludeJobClause =
     excludeJobId === null || excludeJobId === undefined
       ? ""
@@ -283,8 +301,11 @@ async function getReservedSeconds(
     `WITH normal_reservations AS (
        SELECT COALESCE(job.expected_duration_seconds, 0)::float AS seconds
        FROM transcription_jobs job
-       WHERE job.user_id = $1
-         AND job.status IN ('queued', 'processing')
+       JOIN workspace_members member
+         ON member.user_id = job.user_id
+        AND member.workspace_id = $1
+        AND member.status = 'active'
+       WHERE job.status IN ('queued', 'processing')
          AND job.cancel_requested = FALSE
          AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
          ${excludeJobClause}
@@ -295,8 +316,11 @@ async function getReservedSeconds(
        JOIN transcription_jobs job
          ON job.payload->>'batchId' = batch.id::text
         AND job.payload->>'batchKind' = 'multitrack'
-       WHERE batch.user_id = $1
-         AND batch.status IN ('queued', 'processing', 'merging')
+       JOIN workspace_members member
+         ON member.user_id = batch.user_id
+        AND member.workspace_id = $1
+        AND member.status = 'active'
+       WHERE batch.status IN ('queued', 'processing', 'merging')
          AND job.cancel_requested = FALSE
          ${excludeBatchClause}
        GROUP BY batch.id
@@ -470,6 +494,7 @@ async function validateAfterTranscription({
 
 async function updateQuotaAlert(userId, alertSeconds) {
   const quota = await getQuotaStatus(userId);
+  await requireWorkspaceBillingRole(userId);
   const raw = Math.round(Number(alertSeconds));
   const maxAlertSeconds = Math.max(
     60,
@@ -479,8 +504,9 @@ async function updateQuotaAlert(userId, alertSeconds) {
     ? Math.max(60, Math.min(maxAlertSeconds, raw))
     : DEFAULT_ALERT_SECONDS;
   await pool.query(
-    `UPDATE users SET quota_alert_seconds = $1 WHERE id = $2`,
-    [clean, userId],
+    `UPDATE workspaces SET quota_alert_seconds = $1, updated_at = NOW()
+     WHERE id = $2`,
+    [clean, quota.workspaceId],
   );
   return getQuotaStatus(userId);
 }
@@ -500,19 +526,22 @@ async function recordQuotaUsage({
     );
   }
 
-  await db.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
+  const workspace = await resolveUserWorkspace(userId, db);
+  await db.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [
+    workspace.id,
+  ]);
   const billing = await getUserBilling(userId, db);
   const usedBefore = await getUsageSeconds(userId, db);
   const { rows } = await db.query(
     `INSERT INTO quota_usage_ledger (
-       user_id, transcription_id, seconds, period_started_at, period_ends_at
+       user_id, workspace_id, transcription_id, seconds, period_started_at, period_ends_at
      )
-     SELECT $1, $2, $3, plan_started_at, plan_expires_at
-     FROM users
-     WHERE id = $1
+     SELECT $1, $2, $3, $4, plan_started_at, plan_expires_at
+     FROM workspaces
+     WHERE id = $2
      ON CONFLICT (transcription_id) DO NOTHING
      RETURNING id, seconds, period_started_at, period_ends_at`,
-    [userId, transcriptionId, seconds],
+    [userId, billing.workspaceId, transcriptionId, seconds],
   );
   if (!rows[0]) return null;
 
@@ -527,12 +556,15 @@ async function recordQuotaUsage({
     const credits = await db.query(
       `SELECT id, remaining_seconds
        FROM top_up_credits
-       WHERE user_id = $1
+       WHERE (
+          workspace_id = $2
+          OR (workspace_id IS NULL AND user_id = $1)
+         )
          AND remaining_seconds > 0
          AND (expires_at IS NULL OR expires_at > NOW())
        ORDER BY expires_at ASC NULLS LAST, id ASC
        FOR UPDATE`,
-      [userId],
+      [userId, billing.workspaceId],
     );
 
     for (const credit of credits.rows) {
@@ -575,6 +607,7 @@ async function recordQuotaUsage({
 }
 
 async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly") {
+  const workspace = await requireWorkspaceBillingRole(userId);
   const planName = normalizePlan(plan);
   const cleanBillingCycle = normalizeBillingCycle(billingCycle);
   const config = await getRuntimePlanConfig(planName);
@@ -598,6 +631,18 @@ async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly
         );
 
   await pool.query(
+    `UPDATE workspaces
+     SET plan = $1,
+         quota_seconds = $2,
+         plan_started_at = NOW(),
+         plan_expires_at = $3,
+         plan_cancel_at_period_end = FALSE,
+         plan_cancellation_requested_at = NULL,
+         updated_at = NOW()
+     WHERE id = $4`,
+    [planName, quotaSeconds, expiresAt, workspace.id],
+  );
+  await pool.query(
     `UPDATE users
      SET plan = $1,
          quota_seconds = $2,
@@ -606,7 +651,7 @@ async function upgradeUserPlan(userId, plan = "special", billingCycle = "monthly
          plan_cancel_at_period_end = FALSE,
          plan_cancellation_requested_at = NULL
      WHERE id = $4`,
-    [planName, quotaSeconds, expiresAt, userId],
+    [planName, quotaSeconds, expiresAt, workspace.owner_user_id],
   );
   const quota = await getQuotaStatus(userId);
   await syncQuotaAlertState({ userId, quota, source: "plan_upgrade" });

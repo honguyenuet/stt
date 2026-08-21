@@ -156,6 +156,81 @@ export interface DashboardSummary {
   usage: UsagePoint[];
   recent_jobs: TranscriptionJob[];
   recent_failed_jobs: TranscriptionJob[];
+  observability?: {
+    generatedAt: string;
+    uptimeSeconds: number;
+    alerts: Array<{
+      code: string;
+      level: "warning" | "critical";
+      message: string;
+    }>;
+    alertEvents: Array<{
+      id: number;
+      code: string;
+      level: "warning" | "critical";
+      message: string;
+      status: "active" | "resolved";
+      firstSeenAt: string;
+      lastSeenAt: string;
+      resolvedAt: string | null;
+      notificationSentAt: string | null;
+      metadata: Record<string, unknown>;
+    }>;
+    logRetentionDays: number;
+    process: {
+      startedAt: string;
+      pid: number;
+      node: string;
+      host: string;
+      memoryRssMb: number;
+      memoryHeapUsedMb: number;
+    };
+    requests24h: {
+      total: number;
+      serverErrors: number;
+      clientErrors: number;
+      avgDurationMs: number;
+      p95DurationMs: number;
+      slowest: Array<{
+        requestId: string;
+        method: string;
+        path: string;
+        statusCode: number;
+        durationMs: number;
+        createdAt: string;
+      }>;
+    };
+    queue: {
+      queued: number;
+      processing: number;
+      failed24h: number;
+      deadLettered: number;
+      avgQueueAgeSeconds: number;
+      oldestQueuedAt: string | null;
+    };
+    providers: {
+      configured: unknown;
+      circuits: Array<{
+        provider: string;
+        state: string;
+        consecutive_failures: number;
+        opened_count: number;
+        last_error_code: string | null;
+        last_error_message: string | null;
+        last_failure_at: string | null;
+        last_success_at: string | null;
+        total_failures: number;
+        total_successes: number;
+        updated_at: string;
+      }>;
+      attempts24h: Array<{
+        provider: string;
+        attempts: number;
+        successes: number;
+        failures: number;
+      }>;
+    };
+  };
 }
 
 export interface UsageSummary {

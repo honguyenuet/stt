@@ -13,7 +13,9 @@ const { createProviderFileUrl } = require("./providerFileAccess");
 const { normalizeFilename } = require("./filenameEncoding");
 const { isInsideStaging } = require("./uploadStorage");
 const { resolveUserFolder } = require("./workspaceFolderService");
-const { deliverCustomerWebhook } = require("./customerWebhookService");
+const {
+  deliverAndRecordCustomerWebhook,
+} = require("./customerWebhookService");
 const { finalizeMultitrackBatch } = require("./multitrackService");
 const { getAdminSettings } = require("./adminSettingsService");
 const {
@@ -133,16 +135,35 @@ async function cleanupExpiredAudioFiles({
        SELECT transcript.id, transcript.audio_filename
        FROM transcriptions transcript
        JOIN users account ON account.id = transcript.user_id
+       LEFT JOIN user_settings settings ON settings.user_id = transcript.user_id
        WHERE transcript.audio_filename IS NOT NULL
          AND transcript.status IN ('completed', 'failed', 'cancelled')
          AND transcript.created_at < NOW() - ((
-           CASE
-             WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1
-             WHEN account.plan = 'business' THEN $4
-             WHEN account.plan IN ('special', 'premium') THEN $3
-             WHEN account.plan = 'standard' THEN $2
-             ELSE $1
-           END
+           LEAST(
+             CASE
+               WHEN settings.privacy_settings->>'mediaRetentionPolicy' = 'delete_after_transcription' THEN 0
+               WHEN settings.privacy_settings->>'mediaRetentionPolicy' = 'delete_after_days'
+                 THEN GREATEST(
+                   1,
+                   LEAST(
+                     3650,
+                     CASE
+                       WHEN settings.privacy_settings->>'mediaRetentionDays' ~ '^[0-9]+$'
+                         THEN (settings.privacy_settings->>'mediaRetentionDays')::integer
+                       ELSE 365
+                     END
+                   )
+                 )
+               ELSE 3650
+             END,
+             CASE
+             WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1::integer
+             WHEN account.plan = 'business' THEN $4::integer
+             WHEN account.plan IN ('special', 'premium') THEN $3::integer
+             WHEN account.plan = 'standard' THEN $2::integer
+             ELSE $1::integer
+             END
+           )
          )::integer * INTERVAL '1 day')
        FOR UPDATE OF transcript
      ), cleared_audio AS (
@@ -225,6 +246,28 @@ async function cleanupManagedStorage({ db = pool } = {}) {
     );
     deletedTranscripts = result.rowCount || result.rows.length;
   }
+  const privacyDeleted = await db.query(
+    `DELETE FROM transcriptions transcript
+     USING user_settings settings
+     WHERE settings.user_id = transcript.user_id
+       AND transcript.status IN ('completed', 'failed', 'cancelled')
+       AND settings.privacy_settings->>'transcriptRetentionPolicy' = 'delete_after_days'
+       AND transcript.created_at < NOW() - (
+         GREATEST(
+           1,
+           LEAST(
+             3650,
+             CASE
+               WHEN settings.privacy_settings->>'transcriptRetentionDays' ~ '^[0-9]+$'
+                 THEN (settings.privacy_settings->>'transcriptRetentionDays')::integer
+               ELSE 365
+             END
+           )
+         ) * INTERVAL '1 day'
+       )
+     RETURNING transcript.id`,
+  );
+  deletedTranscripts += privacyDeleted.rowCount || privacyDeleted.rows.length;
 
   return {
     deletedMedia,
@@ -1014,11 +1057,20 @@ async function notifyCustomerWebhook(job, status, { result = null, error = null 
     duration: result?.duration || null,
     provider: result?.provider || null,
     text: result?.text || null,
+    words: Array.isArray(result?.words) ? result.words : [],
     translation: result?.translation || null,
     error: error ? String(error.message || error).slice(0, 2000) : null,
   };
   try {
-    await deliverCustomerWebhook({ webhook, event, payload });
+    await deliverAndRecordCustomerWebhook({
+      userId: job.user_id,
+      apiKeyId: job.payload?.apiKeyId || null,
+      jobId: job.id,
+      transcriptionId: job.transcription_id,
+      webhook,
+      event,
+      payload,
+    });
   } catch (webhookError) {
     console.error(
       `Customer webhook for transcription job ${job.id} failed:`,

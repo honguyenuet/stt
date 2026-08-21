@@ -359,6 +359,8 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const location = useLocation();
+  const isAdminArea = location.pathname.startsWith("/admin");
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -366,7 +368,7 @@ function RootComponent() {
         <OnboardingGate>
           <Outlet />
         </OnboardingGate>
-        <VbeeSupportWidget />
+        {!isAdminArea && <VbeeSupportWidget />}
       </AuthProvider>
     </QueryClientProvider>
   );

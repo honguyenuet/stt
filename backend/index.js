@@ -26,6 +26,7 @@ const settingsRoutes = require("./routes/settings");
 const supportRoutes = require("./routes/support");
 const adminRoutes = require("./routes/admin");
 const referralRoutes = require("./routes/referrals");
+const workspaceRoutes = require("./routes/workspace");
 const initDatabase = require("./initDb");
 const {
   assertTranscriptionProviderReady,
@@ -37,6 +38,7 @@ const { startQuotaAlertDispatcher } = require("./services/quotaAlertService");
 const {
   startBillingReconciliationDispatcher,
 } = require("./services/billingService");
+const { requestMetrics } = require("./services/observabilityService");
 
 const app = express();
 app.disable("x-powered-by");
@@ -48,6 +50,7 @@ app.set(
 
 app.use(requestId);
 app.use(securityHeaders);
+app.use(requestMetrics());
 
 app.use(
   cors({
@@ -76,6 +79,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/referrals", referralRoutes);
+app.use("/api/workspace", workspaceRoutes);
 app.use("/api/v1", publicApiRoutes);
 
 app.get("/", (_req, res) => {

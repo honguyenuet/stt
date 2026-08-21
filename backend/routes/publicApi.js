@@ -33,6 +33,8 @@ const { IS_PRODUCTION } = require("../config/security");
 const { writeSecurityAudit } = require("../services/securityAuditService");
 const {
   protectCustomerWebhook,
+  listCustomerWebhookDeliveries,
+  replayCustomerWebhookDelivery,
 } = require("../services/customerWebhookService");
 const { recordApiUsage } = require("../services/apiUsageService");
 
@@ -163,6 +165,41 @@ router.delete("/transcribe/jobs/:jobId", apiKeyAuth, publicApiLimiter, async (re
       .json({ error: error.message || "Không hủy được job" });
   }
 });
+
+router.get("/webhooks/deliveries", apiKeyAuth, publicApiLimiter, async (req, res) => {
+  try {
+    const deliveries = await listCustomerWebhookDeliveries(req.user.id, {
+      limit: req.query.limit,
+    });
+    return res.json({ object: "list", data: deliveries });
+  } catch (error) {
+    console.error("Public API webhook deliveries error:", error.message);
+    return res.status(500).json({ error: "Không tải được webhook delivery" });
+  }
+});
+
+router.post(
+  "/webhooks/deliveries/:deliveryId/replay",
+  apiKeyAuth,
+  publicApiLimiter,
+  async (req, res) => {
+    const deliveryId = Number.parseInt(req.params.deliveryId, 10);
+    if (!Number.isFinite(deliveryId)) {
+      return res.status(400).json({ error: "Delivery ID không hợp lệ" });
+    }
+    try {
+      const delivery = await replayCustomerWebhookDelivery({
+        userId: req.user.id,
+        deliveryId,
+      });
+      return res.status(202).json({ object: "webhook_delivery", ...delivery });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Không replay được webhook" });
+    }
+  },
+);
 
 router.post(
   "/transcribe",

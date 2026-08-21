@@ -36,6 +36,10 @@ const {
 } = require("../services/providerFileAccess");
 const { normalizeFilename } = require("../services/filenameEncoding");
 const {
+  createZipBuffer,
+  sanitizeZipName,
+} = require("../services/zipExportService");
+const {
   cleanupStagedFile,
   cleanupStagedFiles,
   createPlanAwareMediaUpload,
@@ -90,6 +94,100 @@ const AUDIO_STREAM_TTL_SECONDS = Math.min(
     Number.parseInt(process.env.AUDIO_STREAM_TTL_SECONDS || "300", 10) || 300,
   ),
 );
+const AUDIO_MIME_TYPES = {
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".oga": "audio/ogg",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".wav": "audio/wav",
+  ".weba": "audio/webm",
+  ".webm": "audio/webm",
+};
+
+function getAudioContentType(filePath) {
+  return (
+    AUDIO_MIME_TYPES[path.extname(filePath).toLowerCase()] ||
+    "application/octet-stream"
+  );
+}
+
+function parseHttpRange(rangeHeader, fileSize) {
+  if (!rangeHeader) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+  if (!match) return { invalid: true };
+
+  let start = match[1] === "" ? null : Number.parseInt(match[1], 10);
+  let end = match[2] === "" ? null : Number.parseInt(match[2], 10);
+
+  if (start === null && end === null) return { invalid: true };
+  if (start === null) {
+    const suffixLength = end;
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+      return { invalid: true };
+    }
+    start = Math.max(fileSize - suffixLength, 0);
+    end = fileSize - 1;
+  } else {
+    if (!Number.isFinite(start) || start < 0) return { invalid: true };
+    end = end === null ? fileSize - 1 : end;
+  }
+
+  if (!Number.isFinite(end) || end < start || start >= fileSize) {
+    return { invalid: true };
+  }
+  return { start, end: Math.min(end, fileSize - 1) };
+}
+
+function streamAudioFile(req, res, filePath) {
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const contentType = getAudioContentType(filePath);
+  const range = parseHttpRange(req.headers.range, fileSize);
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Content-Disposition", "inline");
+
+  if (range?.invalid) {
+    res.setHeader("Content-Range", `bytes */${fileSize}`);
+    return res.status(416).end();
+  }
+
+  if (fileSize === 0) {
+    res.setHeader("Content-Length", "0");
+    return res.end();
+  }
+
+  const start = range ? range.start : 0;
+  const end = range ? range.end : fileSize - 1;
+  const contentLength = Math.max(0, end - start + 1);
+
+  if (range) {
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+  }
+  res.setHeader("Content-Length", String(contentLength));
+
+  if (req.method === "HEAD") {
+    return res.end();
+  }
+
+  const stream = fs.createReadStream(filePath, { start, end });
+  req.on("close", () => {
+    stream.destroy();
+  });
+  stream.on("error", (error) => {
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Không đọc được file audio" });
+      return;
+    }
+    res.destroy(error);
+  });
+  return stream.pipe(res);
+}
 
 function createAudioStreamSignature(id, userId, expiresAt) {
   const secret = process.env.AUDIO_URL_SECRET || process.env.JWT_SECRET;
@@ -143,6 +241,17 @@ async function validateUrlMetadataForUser(userId, metadata) {
     source: "url",
   });
   return quota;
+}
+
+function normalizeExportIds(value) {
+  const values = Array.isArray(value) ? value : String(value || "").split(",");
+  return [
+    ...new Set(
+      values
+        .map((item) => Number.parseInt(item, 10))
+        .filter((item) => Number.isSafeInteger(item) && item > 0),
+    ),
+  ].slice(0, 100);
 }
 
 async function insertTranscriptVersion(client, transcript, label = "Auto-save") {
@@ -1484,10 +1593,87 @@ router.get("/:id/audio-stream", async (req, res) => {
     }
     res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("Referrer-Policy", "no-referrer");
-    res.setHeader("Content-Disposition", "inline");
-    return res.sendFile(filePath);
+    return streamAudioFile(req, res, filePath);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Lỗi server" });
+  }
+});
+
+router.post("/export/batch", requireAuth, async (req, res) => {
+  const ids = normalizeExportIds(req.body?.ids || req.body?.transcriptionIds);
+  if (ids.length === 0) {
+    return res.status(400).json({ error: "Chọn ít nhất một transcript để export" });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, filename, text, words, translated_text,
+              source_language, translation_target_language, created_at
+       FROM transcriptions
+       WHERE user_id = $1
+         AND id = ANY($2::int[])
+       ORDER BY created_at DESC, id DESC`,
+      [req.user.id, ids],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Không tìm thấy transcript để export" });
+    }
+
+    const entries = [];
+    for (const row of rows) {
+      const base = `transcript-${row.id}-${sanitizeZipName(
+        path.basename(normalizeFilename(row.filename || `transcript-${row.id}`), path.extname(row.filename || "")),
+      )}`;
+      entries.push({
+        name: `${base}.txt`,
+        data: String(row.text || ""),
+        date: row.created_at,
+      });
+      if (row.translated_text) {
+        entries.push({
+          name: `${base}.translation.txt`,
+          data: String(row.translated_text || ""),
+          date: row.created_at,
+        });
+      }
+      entries.push({
+        name: `${base}.json`,
+        data: JSON.stringify(
+          {
+            id: row.id,
+            filename: normalizeFilename(row.filename),
+            sourceLanguage: row.source_language,
+            translationTargetLanguage: row.translation_target_language,
+            createdAt: row.created_at,
+            text: row.text || "",
+            translatedText: row.translated_text || null,
+            words: Array.isArray(row.words) ? row.words : [],
+          },
+          null,
+          2,
+        ),
+        date: row.created_at,
+      });
+    }
+
+    const archive = createZipBuffer(entries);
+    await writeSecurityAudit({
+      event: "transcription.batch_exported",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: { requested: ids.length, exported: rows.length },
+    });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="vbee-transcripts-${Date.now()}.zip"`,
+    );
+    return res.send(archive);
+  } catch (error) {
+    console.error("Batch export error:", error);
+    return res.status(500).json({ error: "Không export được batch" });
   }
 });
 
@@ -1510,6 +1696,37 @@ router.get("/:id/audio", requireAuth, async (req, res) => {
     res.sendFile(filePath);
   } catch {
     return res.status(500).json({ error: "Lỗi server" });
+  }
+});
+
+router.delete("/:id/audio", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
+  try {
+    const { rows } = await pool.query(
+      "SELECT audio_filename FROM transcriptions WHERE id = $1 AND user_id = $2",
+      [id, req.user.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy bản ghi" });
+    if (rows[0].audio_filename) {
+      fs.unlink(resolveStoredAudioPath(rows[0].audio_filename), () => {});
+      await pool.query(
+        "UPDATE transcriptions SET audio_filename = NULL WHERE id = $1 AND user_id = $2",
+        [id, req.user.id],
+      );
+    }
+    await writeSecurityAudit({
+      event: "transcription.media_deleted",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: { transcriptionId: id },
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    return res
+      .status(error.statusCode || 500)
+      .json({ error: error.message || "Không xóa được media" });
   }
 });
 

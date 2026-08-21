@@ -174,6 +174,94 @@ async function initDatabase() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, account_status);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id BIGSERIAL PRIMARY KEY,
+      name VARCHAR(160) NOT NULL,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan VARCHAR(20) NOT NULL DEFAULT 'free',
+      quota_seconds INTEGER NOT NULL DEFAULT ${FREE_PLAN_SECONDS},
+      quota_alert_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_QUOTA_ALERT_SECONDS},
+      plan_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      plan_expires_at TIMESTAMP WITH TIME ZONE,
+      plan_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+      plan_cancellation_requested_at TIMESTAMP WITH TIME ZONE,
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      id BIGSERIAL PRIMARY KEY,
+      workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role VARCHAR(20) NOT NULL DEFAULT 'member'
+        CHECK (role IN ('owner', 'admin', 'member')),
+      status VARCHAR(20) NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'removed')),
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, user_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_user_active ON workspace_members(user_id, status);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_active ON workspace_members(workspace_id, status);`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS invoice_company_name VARCHAR(200);`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS invoice_tax_code VARCHAR(80);`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS invoice_address TEXT;`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS invoice_email VARCHAR(255);`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS billing_contact_email VARCHAR(255);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspace_invitations (
+      id BIGSERIAL PRIMARY KEY,
+      workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      email VARCHAR(255) NOT NULL,
+      role VARCHAR(20) NOT NULL DEFAULT 'member'
+        CHECK (role IN ('admin', 'member')),
+      token_hash VARCHAR(64) UNIQUE NOT NULL,
+      invited_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      accepted_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'cancelled', 'expired')),
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      accepted_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_invitations_workspace_status ON workspace_invitations(workspace_id, status, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_invitations_email_status ON workspace_invitations(LOWER(email), status);`);
+  await pool.query(`
+    INSERT INTO workspaces (
+      name, owner_user_id, plan, quota_seconds, quota_alert_seconds,
+      plan_started_at, plan_expires_at, plan_cancel_at_period_end,
+      plan_cancellation_requested_at
+    )
+    SELECT
+      COALESCE(NULLIF(BTRIM(first_name || ' ' || last_name), ''), email),
+      id,
+      plan,
+      quota_seconds,
+      quota_alert_seconds,
+      COALESCE(plan_started_at, created_at, NOW()),
+      plan_expires_at,
+      COALESCE(plan_cancel_at_period_end, FALSE),
+      plan_cancellation_requested_at
+    FROM users account
+    WHERE NOT EXISTS (
+      SELECT 1 FROM workspace_members member
+      WHERE member.user_id = account.id
+        AND member.status = 'active'
+    );
+  `);
+  await pool.query(`
+    INSERT INTO workspace_members (workspace_id, user_id, role, status)
+    SELECT workspace.id, workspace.owner_user_id, 'owner', 'active'
+    FROM workspaces workspace
+    ON CONFLICT (workspace_id, user_id) DO NOTHING;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS user_auth_identities (
       id BIGSERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -677,6 +765,15 @@ async function initDatabase() {
     );
   `);
   await pool.query(`ALTER TABLE quota_usage_ledger ALTER COLUMN transcription_id DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE quota_usage_ledger ADD COLUMN IF NOT EXISTS workspace_id BIGINT REFERENCES workspaces(id) ON DELETE CASCADE;`);
+  await pool.query(`
+    UPDATE quota_usage_ledger usage
+    SET workspace_id = member.workspace_id
+    FROM workspace_members member
+    WHERE usage.workspace_id IS NULL
+      AND member.user_id = usage.user_id
+      AND member.status = 'active';
+  `);
   await pool.query(`
     DO $$
     BEGIN
@@ -703,24 +800,49 @@ async function initDatabase() {
     $$;
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_quota_usage_user_period ON quota_usage_ledger(user_id, period_started_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_quota_usage_workspace_period ON quota_usage_ledger(workspace_id, period_started_at);`);
   await pool.query(`
     INSERT INTO quota_usage_ledger (
-      user_id, transcription_id, seconds, period_started_at, period_ends_at, created_at
+      user_id, workspace_id, transcription_id, seconds, period_started_at, period_ends_at, created_at
     )
-    SELECT transcript.user_id, transcript.id, CEIL(transcript.duration)::integer,
-           account.plan_started_at, account.plan_expires_at, transcript.created_at
+    SELECT transcript.user_id, workspace.workspace_id, transcript.id, CEIL(transcript.duration)::integer,
+           COALESCE(workspace.plan_started_at, account.plan_started_at),
+           COALESCE(workspace.plan_expires_at, account.plan_expires_at),
+           transcript.created_at
     FROM transcriptions transcript
     JOIN users account ON account.id = transcript.user_id
+    LEFT JOIN LATERAL (
+      SELECT member.workspace_id, active_workspace.plan_started_at, active_workspace.plan_expires_at
+      FROM workspace_members member
+      JOIN workspaces active_workspace ON active_workspace.id = member.workspace_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS active_members
+        FROM workspace_members counted_member
+        WHERE counted_member.workspace_id = active_workspace.id
+          AND counted_member.status = 'active'
+      ) member_counts ON TRUE
+      WHERE member.user_id = transcript.user_id
+        AND member.status = 'active'
+        AND active_workspace.status = 'active'
+      ORDER BY
+        COALESCE(member_counts.active_members, 1) DESC,
+        CASE member.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+        active_workspace.created_at ASC
+      LIMIT 1
+    ) workspace ON TRUE
     WHERE transcript.status = 'completed'
       AND transcript.duration > 0
       AND (
-        transcript.created_at >= account.plan_started_at
+        transcript.created_at >= COALESCE(workspace.plan_started_at, account.plan_started_at)
         OR (
-          account.plan_started_at <= account.created_at + INTERVAL '1 second'
+          COALESCE(workspace.plan_started_at, account.plan_started_at) <= account.created_at + INTERVAL '1 second'
           AND transcript.created_at >= account.created_at
         )
       )
-      AND (account.plan_expires_at IS NULL OR transcript.created_at < account.plan_expires_at)
+      AND (
+        COALESCE(workspace.plan_expires_at, account.plan_expires_at) IS NULL
+        OR transcript.created_at < COALESCE(workspace.plan_expires_at, account.plan_expires_at)
+      )
     ON CONFLICT (transcription_id) DO NOTHING;
   `);
 
@@ -790,6 +912,9 @@ async function initDatabase() {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS transcription_settings JSONB NOT NULL DEFAULT '{}'::jsonb;`,
   );
   await pool.query(
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS privacy_settings JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+  );
+  await pool.query(
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`,
   );
   await pool.query(
@@ -815,6 +940,68 @@ async function initDatabase() {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);`,
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS http_request_logs (
+      id BIGSERIAL PRIMARY KEY,
+      request_id VARCHAR(100) NOT NULL,
+      method VARCHAR(12) NOT NULL,
+      path TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+      ip_hash VARCHAR(64),
+      user_agent VARCHAR(500),
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_http_request_logs_created ON http_request_logs(created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_http_request_logs_status_created ON http_request_logs(status_code, created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS customer_webhook_deliveries (
+      id BIGSERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+      job_id INTEGER,
+      transcription_id INTEGER,
+      event VARCHAR(80) NOT NULL,
+      callback_url TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'delivered', 'failed')),
+      response_status INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      webhook JSONB NOT NULL DEFAULT '{}'::jsonb,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delivered_at TIMESTAMP WITH TIME ZONE,
+      last_attempt_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_customer_webhook_deliveries_user_created ON customer_webhook_deliveries(user_id, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_customer_webhook_deliveries_job ON customer_webhook_deliveries(job_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_customer_webhook_deliveries_status_created ON customer_webhook_deliveries(status, created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS operational_alert_events (
+      id BIGSERIAL PRIMARY KEY,
+      code VARCHAR(80) NOT NULL,
+      level VARCHAR(20) NOT NULL,
+      message TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'resolved')),
+      first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMP WITH TIME ZONE,
+      notification_sent_at TIMESTAMP WITH TIME ZONE,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_operational_alert_events_active_code ON operational_alert_events(code) WHERE status = 'active';`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_operational_alert_events_status_seen ON operational_alert_events(status, last_seen_at DESC);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS api_key_usage_events (
@@ -931,7 +1118,17 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
   await pool.query(`ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE;`);
   await pool.query(`ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS workspace_id BIGINT REFERENCES workspaces(id) ON DELETE SET NULL;`);
+  await pool.query(`
+    UPDATE billing_orders billing
+    SET workspace_id = member.workspace_id
+    FROM workspace_members member
+    WHERE billing.workspace_id IS NULL
+      AND member.user_id = billing.user_id
+      AND member.status = 'active';
+  `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_billing_orders_user_created ON billing_orders(user_id, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_billing_orders_workspace_created ON billing_orders(workspace_id, created_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_billing_orders_status ON billing_orders(status);`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_orders_provider_order_id ON billing_orders(provider, provider_order_id) WHERE provider_order_id IS NOT NULL;`);
 
@@ -971,6 +1168,15 @@ async function initDatabase() {
   await pool.query(`ALTER TABLE top_up_credits ALTER COLUMN billing_order_id DROP NOT NULL;`);
   await pool.query(`ALTER TABLE top_up_credits ALTER COLUMN expires_at DROP NOT NULL;`);
   await pool.query(`ALTER TABLE top_up_credits ADD COLUMN IF NOT EXISTS referral_id BIGINT;`);
+  await pool.query(`ALTER TABLE top_up_credits ADD COLUMN IF NOT EXISTS workspace_id BIGINT REFERENCES workspaces(id) ON DELETE CASCADE;`);
+  await pool.query(`
+    UPDATE top_up_credits credit
+    SET workspace_id = member.workspace_id
+    FROM workspace_members member
+    WHERE credit.workspace_id IS NULL
+      AND member.user_id = credit.user_id
+      AND member.status = 'active';
+  `);
   await pool.query(`
     DO $$
     BEGIN
@@ -987,6 +1193,7 @@ async function initDatabase() {
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_top_up_credits_referral_id_unique ON top_up_credits(referral_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_top_up_credits_user_expiry ON top_up_credits(user_id, expires_at) WHERE remaining_seconds > 0;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_top_up_credits_workspace_expiry ON top_up_credits(workspace_id, expires_at) WHERE remaining_seconds > 0;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS payments (
