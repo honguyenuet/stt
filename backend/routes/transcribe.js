@@ -70,6 +70,10 @@ const { createTranscriptExport } = require("../services/transcriptExportService"
 const {
   insertTranscriptVersion,
 } = require("../services/transcriptVersionService");
+const {
+  applyTranscriptWordPatches,
+  normalizeTranscriptWordPatches,
+} = require("../services/transcriptWordPatches");
 
 const router = express.Router();
 
@@ -1916,10 +1920,11 @@ router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) =>
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
-  const { text, words, speakerNames } = req.body;
+  const { text, words, wordPatches, speakerNames } = req.body;
   if (
     text === undefined &&
     words === undefined &&
+    wordPatches === undefined &&
     speakerNames === undefined
   ) {
     return res.status(400).json({ error: "Không có thay đổi để lưu" });
@@ -1929,6 +1934,11 @@ router.patch("/:id", requireAuth, async (req, res) => {
     (typeof text !== "string" || text.length > 2_000_000)
   ) {
     return res.status(400).json({ error: "Nội dung text không hợp lệ" });
+  }
+  if (words !== undefined && wordPatches !== undefined) {
+    return res.status(400).json({
+      error: "Chỉ gửi danh sách timestamp hoặc thay đổi từ, không gửi đồng thời",
+    });
   }
   let normalizedWords = null;
   if (words !== undefined) {
@@ -1963,6 +1973,16 @@ router.patch("/:id", requireAuth, async (req, res) => {
         confidence: Number.isFinite(Number(word.confidence))
           ? Number(word.confidence)
           : null,
+      });
+    }
+  }
+  let normalizedWordPatches = null;
+  if (wordPatches !== undefined) {
+    try {
+      normalizedWordPatches = normalizeTranscriptWordPatches(wordPatches);
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        error: error.message || "Danh sách thay đổi từ không hợp lệ",
       });
     }
   }
@@ -2004,12 +2024,25 @@ router.patch("/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Không tìm thấy bản ghi" });
     }
     const nextText = text === undefined ? String(transcript.text || "") : text;
-    const nextWords =
+    let nextWords =
       normalizedWords === null
         ? Array.isArray(transcript.words)
           ? transcript.words
           : []
         : normalizedWords;
+    if (normalizedWordPatches !== null) {
+      try {
+        nextWords = applyTranscriptWordPatches(
+          transcript.words,
+          normalizedWordPatches,
+        );
+      } catch (error) {
+        await client.query("ROLLBACK");
+        return res.status(error.statusCode || 400).json({
+          error: error.message || "Danh sách thay đổi từ không hợp lệ",
+        });
+      }
+    }
     const currentSpeakerNames =
       transcript.speaker_names &&
       typeof transcript.speaker_names === "object" &&
