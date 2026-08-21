@@ -321,6 +321,8 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name VARCHAR(160) NOT NULL,
+      visibility VARCHAR(10) NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'team')),
+      team_permission VARCHAR(10) NOT NULL DEFAULT 'edit' CHECK (team_permission IN ('view', 'edit')),
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
@@ -329,6 +331,8 @@ async function initDatabase() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_transcription_folders_user_name
     ON transcription_folders(user_id, LOWER(name));
   `);
+  await pool.query(`ALTER TABLE transcription_folders ADD COLUMN IF NOT EXISTS visibility VARCHAR(10) NOT NULL DEFAULT 'private';`);
+  await pool.query(`ALTER TABLE transcription_folders ADD COLUMN IF NOT EXISTS team_permission VARCHAR(10) NOT NULL DEFAULT 'edit';`);
   await pool.query(`
     INSERT INTO transcription_folders (user_id, name)
     SELECT id, 'Dự án mới' FROM users
@@ -345,6 +349,11 @@ async function initDatabase() {
       processing_seconds NUMERIC,
       text TEXT NOT NULL,
       words JSONB DEFAULT '[]'::jsonb,
+      transcript_template VARCHAR(20) NOT NULL DEFAULT 'meeting',
+      insights JSONB NOT NULL DEFAULT '{}'::jsonb,
+      insights_updated_at TIMESTAMP WITH TIME ZONE,
+      reviewed_word_indexes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       audio_filename VARCHAR(255),
       source_language VARCHAR(20),
       translated_text TEXT,
@@ -368,6 +377,21 @@ async function initDatabase() {
   );
   await pool.query(
     `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS words JSONB DEFAULT '[]'::jsonb;`,
+  );
+  await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS transcript_template VARCHAR(20) NOT NULL DEFAULT 'meeting';`,
+  );
+  await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS insights JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+  );
+  await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS insights_updated_at TIMESTAMP WITH TIME ZONE;`,
+  );
+  await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS reviewed_word_indexes JSONB NOT NULL DEFAULT '[]'::jsonb;`,
+  );
+  await pool.query(
+    `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;`,
   );
   await pool.query(
     `ALTER TABLE transcriptions ADD COLUMN IF NOT EXISTS segments JSONB DEFAULT '[]'::jsonb;`,
@@ -416,6 +440,9 @@ async function initDatabase() {
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_transcriptions_folder_created ON transcriptions(folder_id, created_at DESC);`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_transcriptions_tags ON transcriptions USING GIN(tags);`,
   );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS transcription_batches (
@@ -479,11 +506,153 @@ async function initDatabase() {
       words JSONB NOT NULL DEFAULT '[]'::jsonb,
       speaker_names JSONB NOT NULL DEFAULT '{}'::jsonb,
       label VARCHAR(120),
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name VARCHAR(100) NOT NULL DEFAULT 'Người dùng',
+      change_source VARCHAR(20) NOT NULL DEFAULT 'owner'
+        CHECK (change_source IN ('owner', 'shared', 'restore')),
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
   await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS speaker_names JSONB NOT NULL DEFAULT '{}'::jsonb;`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS actor_name VARCHAR(100) NOT NULL DEFAULT 'Người dùng';`);
+  await pool.query(`ALTER TABLE transcription_versions ADD COLUMN IF NOT EXISTS change_source VARCHAR(20) NOT NULL DEFAULT 'owner';`);
+  await pool.query(`
+    UPDATE transcription_versions
+    SET change_source = 'owner'
+    WHERE change_source NOT IN ('owner', 'shared', 'restore');
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'transcription_versions_change_source_check'
+          AND conrelid = 'transcription_versions'::regclass
+      ) THEN
+        ALTER TABLE transcription_versions
+        ADD CONSTRAINT transcription_versions_change_source_check
+        CHECK (change_source IN ('owner', 'shared', 'restore'));
+      END IF;
+    END $$;
+  `);
+  await pool.query(`
+    UPDATE transcription_versions version
+    SET actor_user_id = COALESCE(version.actor_user_id, version.user_id),
+        actor_name = CASE
+          WHEN version.actor_name IS NULL
+            OR BTRIM(version.actor_name) = ''
+            OR version.actor_name = 'Người dùng'
+          THEN COALESCE(
+            NULLIF(BTRIM(CONCAT_WS(' ', account.first_name, account.last_name)), ''),
+            'Người dùng'
+          )
+          ELSE version.actor_name
+        END
+    FROM users account
+    WHERE account.id = version.user_id
+      AND (version.actor_user_id IS NULL OR version.actor_name = 'Người dùng');
+  `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcription_versions_transcription_created ON transcription_versions(transcription_id, created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transcript_public_links (
+      id BIGSERIAL PRIMARY KEY,
+      transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      token_prefix VARCHAR(12) NOT NULL,
+      permission VARCHAR(10) NOT NULL DEFAULT 'view' CHECK (permission IN ('view', 'edit')),
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      revoked_at TIMESTAMP WITH TIME ZONE,
+      last_accessed_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`ALTER TABLE transcript_public_links ADD COLUMN IF NOT EXISTS token_prefix VARCHAR(12);`);
+  await pool.query(`ALTER TABLE transcript_public_links ADD COLUMN IF NOT EXISTS permission VARCHAR(10) NOT NULL DEFAULT 'view';`);
+  await pool.query(`UPDATE transcript_public_links SET token_prefix = LEFT(token_hash, 10) WHERE token_prefix IS NULL;`);
+  await pool.query(`ALTER TABLE transcript_public_links ALTER COLUMN token_prefix SET NOT NULL;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_public_links_owner ON transcript_public_links(created_by, transcription_id, created_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_public_links_token ON transcript_public_links(token_hash) WHERE revoked_at IS NULL;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transcript_comments (
+      id BIGSERIAL PRIMARY KEY,
+      transcription_id INTEGER NOT NULL REFERENCES transcriptions(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      content TEXT,
+      position_ms BIGINT,
+      resolved_at TIMESTAMP WITH TIME ZONE,
+      resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      author_name VARCHAR(100) NOT NULL,
+      body TEXT NOT NULL,
+      mentions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      timestamp_ms INTEGER,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS content TEXT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS position_ms BIGINT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS author_name VARCHAR(100);`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS body TEXT;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS mentions JSONB NOT NULL DEFAULT '[]'::jsonb;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS timestamp_ms INTEGER;`);
+  await pool.query(`ALTER TABLE transcript_comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN user_id DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN content DROP NOT NULL;`);
+  await pool.query(`
+    UPDATE transcript_comments comment
+    SET author_user_id = COALESCE(comment.author_user_id, comment.user_id),
+        author_name = COALESCE(
+          NULLIF(BTRIM(comment.author_name), ''),
+          NULLIF(BTRIM(CONCAT_WS(' ', account.first_name, account.last_name)), ''),
+          'Người dùng'
+        ),
+        body = COALESCE(comment.body, comment.content, ''),
+        content = COALESCE(comment.content, comment.body, ''),
+        timestamp_ms = COALESCE(
+          comment.timestamp_ms,
+          LEAST(GREATEST(comment.position_ms, 0), 86400000)::integer
+        ),
+        position_ms = COALESCE(comment.position_ms, comment.timestamp_ms)
+    FROM users account
+    WHERE account.id = comment.user_id
+      AND (
+        comment.author_user_id IS NULL
+        OR comment.author_name IS NULL
+        OR BTRIM(comment.author_name) = ''
+        OR comment.body IS NULL
+        OR comment.content IS NULL
+        OR (comment.timestamp_ms IS NULL AND comment.position_ms IS NOT NULL)
+        OR (comment.position_ms IS NULL AND comment.timestamp_ms IS NOT NULL)
+      );
+  `);
+  await pool.query(`
+    UPDATE transcript_comments
+    SET author_name = COALESCE(NULLIF(BTRIM(author_name), ''), 'Khách'),
+        body = COALESCE(body, content, ''),
+        content = COALESCE(content, body, ''),
+        timestamp_ms = COALESCE(
+          timestamp_ms,
+          LEAST(GREATEST(position_ms, 0), 86400000)::integer
+        ),
+        position_ms = COALESCE(position_ms, timestamp_ms)
+    WHERE author_name IS NULL
+       OR BTRIM(author_name) = ''
+       OR body IS NULL
+       OR content IS NULL
+       OR (timestamp_ms IS NULL AND position_ms IS NOT NULL)
+       OR (position_ms IS NULL AND timestamp_ms IS NOT NULL);
+  `);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN author_name SET NOT NULL;`);
+  await pool.query(`ALTER TABLE transcript_comments ALTER COLUMN body SET NOT NULL;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_transcript_comments_transcript ON transcript_comments(transcription_id, created_at ASC);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
@@ -896,10 +1065,32 @@ async function initDatabase() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id BIGSERIAL PRIMARY KEY,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(160) NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      role VARCHAR(10) NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+      joined_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (workspace_id, user_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id, joined_at);`);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       custom_dictionary TEXT NOT NULL DEFAULT '',
       transcription_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+      privacy_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );

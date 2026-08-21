@@ -28,6 +28,10 @@ const {
   validateBeforeTranscription,
 } = require("./quotaService");
 const { recordApiUsage } = require("./apiUsageService");
+const {
+  generateTranscriptInsights,
+  normalizeTranscriptTemplate,
+} = require("./transcriptInsightsService");
 
 function getEnvInt(name, fallback) {
   const value = Number.parseInt(process.env[name] || "", 10);
@@ -156,12 +160,18 @@ async function cleanupExpiredAudioFiles({
                  )
                ELSE 3650
              END,
+              CASE
+                WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1::integer
+                WHEN account.plan = 'business' THEN $4::integer
+                WHEN account.plan IN ('special', 'premium') THEN $3::integer
+               WHEN account.plan = 'standard' THEN $2::integer
+               ELSE $1::integer
+             END,
              CASE
-             WHEN account.plan_expires_at IS NOT NULL AND account.plan_expires_at <= NOW() THEN $1::integer
-             WHEN account.plan = 'business' THEN $4::integer
-             WHEN account.plan IN ('special', 'premium') THEN $3::integer
-             WHEN account.plan = 'standard' THEN $2::integer
-             ELSE $1::integer
+               WHEN settings.privacy_settings->>'keepAudioAfterTranscription' = 'false' THEN 0
+               WHEN settings.privacy_settings->>'audioRetentionDays' IN ('0', '7', '30', '90', '365')
+                 THEN (settings.privacy_settings->>'audioRetentionDays')::integer
+               ELSE 36500
              END
            )
          )::integer * INTERVAL '1 day')
@@ -584,6 +594,7 @@ async function enqueueTranscriptionJob({
   customerWebhook = null,
   apiKeyId = null,
   uploadFingerprint = null,
+  transcriptTemplate = "meeting",
 }) {
   if (!file || (!file.buffer && !file.path)) {
     const error = new Error("Vui lòng chọn file âm thanh");
@@ -679,10 +690,10 @@ async function enqueueTranscriptionJob({
       `INSERT INTO transcriptions (
          user_id, folder_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         status, error_message
+         transcript_template, status, error_message
        )
-       VALUES ($1, $2, $3, $4, NULL, NULL, '', '[]'::jsonb, $5, $6, NULL, NULL, NULL, 'queued', NULL)
-       RETURNING id, folder_id, filename, file_size, audio_filename, created_at`,
+       VALUES ($1, $2, $3, $4, NULL, NULL, '', '[]'::jsonb, $5, $6, NULL, NULL, NULL, $7, 'queued', NULL)
+       RETURNING id, folder_id, filename, file_size, audio_filename, transcript_template, created_at`,
       [
         userId,
         folder.id,
@@ -690,6 +701,9 @@ async function enqueueTranscriptionJob({
         Number(file.size || file.buffer?.length || 0),
         storedFilename,
         language || "auto",
+        ["meeting", "interview", "podcast", "lecture"].includes(transcriptTemplate)
+          ? transcriptTemplate
+          : "meeting",
       ],
     );
 
@@ -907,6 +921,23 @@ async function completeJob(job, result) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const transcriptState = await client.query(
+      `SELECT transcript_template
+       FROM transcriptions
+       WHERE id = $1 AND user_id = $2
+       FOR UPDATE`,
+      [job.transcription_id, job.user_id],
+    );
+    if (!transcriptState.rows[0]) {
+      throw new Error(`Khong tim thay transcript cua job ${job.id}`);
+    }
+    const automaticInsights = generateTranscriptInsights({
+      text: result.text,
+      words: result.words || [],
+      template: normalizeTranscriptTemplate(
+        transcriptState.rows[0].transcript_template,
+      ),
+    });
     const finalizeJob = await client.query(
       `UPDATE transcription_jobs
        SET status = 'completed', progress = 100, locked_at = NULL, lock_token = NULL,
@@ -926,6 +957,7 @@ async function completeJob(job, result) {
             translation_provider = $11, translation_error = $12,
             transcription_provider = $13, provider_request_id = $14,
             provider_attempts = $15::jsonb,
+            insights = $16::jsonb, insights_updated_at = NOW(),
             status = 'completed', error_message = NULL
        WHERE id = $1 AND user_id = $2
        RETURNING id`,
@@ -946,6 +978,7 @@ async function completeJob(job, result) {
         result.provider || null,
         result.providerId || null,
         JSON.stringify(result.providerAttempts || []),
+        JSON.stringify(automaticInsights),
       ],
     );
 

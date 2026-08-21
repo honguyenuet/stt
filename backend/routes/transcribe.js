@@ -47,6 +47,7 @@ const {
 const {
   createUserFolder,
   listUserFolders,
+  normalizeFolderName,
 } = require("../services/workspaceFolderService");
 const {
   MULTITRACK_MAX_TRACKS,
@@ -65,9 +66,21 @@ const {
   urlImportLimiter,
 } = require("../middleware/security");
 const { writeSecurityAudit } = require("../services/securityAuditService");
+const {
+  generateTranscriptInsights,
+  normalizeTranscriptTemplate,
+} = require("../services/transcriptInsightsService");
+const { createTranscriptExport } = require("../services/transcriptExportService");
+const {
+  insertTranscriptVersion,
+} = require("../services/transcriptVersionService");
+const {
+  applyTranscriptWordPatches,
+  createApproximateTranscriptWords,
+  normalizeTranscriptWordPatches,
+} = require("../services/transcriptWordPatches");
 
 const router = express.Router();
-const MAX_TRANSCRIPT_VERSIONS = 50;
 
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
@@ -254,38 +267,6 @@ function normalizeExportIds(value) {
   ].slice(0, 100);
 }
 
-async function insertTranscriptVersion(client, transcript, label = "Auto-save") {
-  await client.query(
-    `INSERT INTO transcription_versions (transcription_id, user_id, text, words, speaker_names, label)
-     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)`,
-    [
-      transcript.id,
-      transcript.user_id,
-      String(transcript.text || ""),
-      JSON.stringify(Array.isArray(transcript.words) ? transcript.words : []),
-      JSON.stringify(
-        transcript.speaker_names &&
-          typeof transcript.speaker_names === "object" &&
-          !Array.isArray(transcript.speaker_names)
-          ? transcript.speaker_names
-          : {},
-      ),
-      label,
-    ],
-  );
-  await client.query(
-    `DELETE FROM transcription_versions
-     WHERE id IN (
-       SELECT id
-       FROM transcription_versions
-       WHERE transcription_id = $1
-       ORDER BY created_at DESC, id DESC
-       OFFSET $2
-     )`,
-    [transcript.id, MAX_TRANSCRIPT_VERSIONS],
-  );
-}
-
 router.get("/folders", requireAuth, async (req, res) => {
   try {
     const folders = await listUserFolders(req.user.id);
@@ -299,12 +280,69 @@ router.get("/folders", requireAuth, async (req, res) => {
 
 router.post("/folders", requireAuth, async (req, res) => {
   try {
-    const folder = await createUserFolder(req.user.id, req.body?.name);
+    const folder = await createUserFolder(req.user.id, req.body?.name, {
+      visibility: req.body?.visibility,
+      teamPermission: req.body?.teamPermission,
+    });
     return res.status(201).json({ folder });
   } catch (error) {
     return res
       .status(error.statusCode || 500)
       .json({ error: error.message || "Không tạo được thư mục" });
+  }
+});
+
+router.patch("/folders/:id", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "ID thư mục không hợp lệ" });
+  }
+  const hasName = req.body?.name !== undefined;
+  const hasVisibility = req.body?.visibility !== undefined;
+  const hasTeamPermission = req.body?.teamPermission !== undefined;
+  if (!hasName && !hasVisibility && !hasTeamPermission) {
+    return res.status(400).json({ error: "Không có thay đổi để lưu" });
+  }
+  if (
+    hasVisibility &&
+    !["private", "team"].includes(req.body.visibility)
+  ) {
+    return res.status(400).json({ error: "Phạm vi thư mục không hợp lệ" });
+  }
+  if (
+    hasTeamPermission &&
+    !["view", "edit"].includes(req.body.teamPermission)
+  ) {
+    return res.status(400).json({ error: "Quyền thư mục không hợp lệ" });
+  }
+  let name = null;
+  try {
+    name = hasName ? normalizeFolderName(req.body.name) : null;
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ error: error.message });
+  }
+  const visibility = hasVisibility ? req.body.visibility : null;
+  const teamPermission = hasTeamPermission ? req.body.teamPermission : null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE transcription_folders
+       SET name = COALESCE($1, name),
+           visibility = COALESCE($2, visibility),
+           team_permission = COALESCE($3, team_permission),
+           updated_at = NOW()
+       WHERE id = $4 AND user_id = $5
+       RETURNING id, user_id AS owner_user_id, name, visibility,
+                 team_permission, created_at, updated_at`,
+      [name, visibility, teamPermission, id, req.user.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy thư mục" });
+    return res.json({ folder: rows[0] });
+  } catch (error) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: "Tên thư mục đã tồn tại" });
+    }
+    console.error("Update folder permission error:", error.message);
+    return res.status(500).json({ error: "Không cập nhật được quyền thư mục" });
   }
 });
 
@@ -383,6 +421,7 @@ router.post("/url", requireAuth, urlImportLimiter, async (req, res) => {
       expectedDurationSeconds,
       folderId: req.body.folderId,
       uploadFingerprint: req.body.uploadFingerprint,
+      transcriptTemplate: normalizeTranscriptTemplate(req.body.transcriptTemplate),
     });
     const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
     const quota = await getQuotaStatus(req.user.id);
@@ -562,6 +601,7 @@ router.post(
             expectedDurationSeconds,
             folderId: req.body.folderId,
             batchId,
+            transcriptTemplate: normalizeTranscriptTemplate(req.body.transcriptTemplate),
           });
           accepted.push({
             id: job.transcription.id,
@@ -719,6 +759,7 @@ router.post(
           batchKind: "multitrack",
           batchTrackIndex: index,
           batchTrackName: item.trackName,
+          transcriptTemplate: normalizeTranscriptTemplate(req.body.transcriptTemplate),
         });
         acceptedJobs.push({
           id: job.transcription.id,
@@ -885,6 +926,7 @@ router.post(
         expectedDurationSeconds,
         folderId: req.body.folderId,
         uploadFingerprint: req.body.uploadFingerprint,
+        transcriptTemplate: normalizeTranscriptTemplate(req.body.transcriptTemplate),
       });
       const jobState = await getTranscriptionJobForUser(job.jobId, req.user.id);
       const quota = await getQuotaStatus(req.user.id);
@@ -998,6 +1040,16 @@ router.get("/history", requireAuth, async (req, res) => {
       Math.max(1, Number.parseInt(req.query.limit, 10) || 20),
     );
     const search = String(req.query.q || "").trim().slice(0, 200);
+    const speaker = String(req.query.speaker || "").trim().slice(0, 100);
+    const tag = String(req.query.tag || "").trim().slice(0, 40);
+    const createdAfter = String(req.query.createdAfter || "").trim();
+    const createdBefore = String(req.query.createdBefore || "").trim();
+    if (
+      (createdAfter && !/^\d{4}-\d{2}-\d{2}$/.test(createdAfter)) ||
+      (createdBefore && !/^\d{4}-\d{2}-\d{2}$/.test(createdBefore))
+    ) {
+      return res.status(400).json({ error: "Khoảng ngày không hợp lệ" });
+    }
     const requestedFolderId = String(req.query.folderId || "").trim();
     const folderId = requestedFolderId
       ? Number.parseInt(requestedFolderId, 10)
@@ -1016,8 +1068,10 @@ router.get("/history", requireAuth, async (req, res) => {
       folderSql = ` AND transcript.folder_id = $${values.length}`;
     }
     let searchSql = "";
+    let searchParameter = null;
     if (search) {
       values.push(`%${search}%`);
+      searchParameter = values.length;
       searchSql = `
         AND (
           transcript.filename ILIKE $${values.length}
@@ -1025,6 +1079,34 @@ router.get("/history", requireAuth, async (req, res) => {
           OR COALESCE(transcript.translated_text, '') ILIKE $${values.length}
         )`;
     }
+    let speakerSql = "";
+    if (speaker) {
+      values.push(`%${speaker}%`);
+      speakerSql = `
+        AND (
+          COALESCE(transcript.speaker_names, '{}'::jsonb)::text ILIKE $${values.length}
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(transcript.words, '[]'::jsonb)) word
+            WHERE COALESCE(word->>'speaker', '') ILIKE $${values.length}
+          )
+        )`;
+    }
+    let tagSql = "";
+    if (tag) {
+      values.push(tag);
+      tagSql = ` AND COALESCE(transcript.tags, '[]'::jsonb) ? $${values.length}`;
+    }
+    let dateSql = "";
+    if (createdAfter) {
+      values.push(createdAfter);
+      dateSql += ` AND transcript.created_at >= $${values.length}::date`;
+    }
+    if (createdBefore) {
+      values.push(createdBefore);
+      dateSql += ` AND transcript.created_at < ($${values.length}::date + INTERVAL '1 day')`;
+    }
+    const filterSql = `${folderSql}${searchSql}${speakerSql}${tagSql}${dateSql}`;
 
     const countResult = paginated
       ? await pool.query(
@@ -1034,7 +1116,7 @@ router.get("/history", requireAuth, async (req, res) => {
              ON hidden_job.transcription_id = transcript.id
            WHERE transcript.user_id = $1
              AND COALESCE(hidden_job.payload->>'batchKind', '') <> 'multitrack'
-             ${folderSql}${searchSql}`,
+             ${filterSql}`,
           values,
         )
       : null;
@@ -1051,6 +1133,15 @@ router.get("/history", requireAuth, async (req, res) => {
          LENGTH(COALESCE(transcript.translated_text, '')) > 500 AS translation_truncated,
          transcript.translation_target_language,
          transcript.translation_provider, transcript.translation_error, transcript.created_at,
+         transcript.transcript_template, transcript.tags,
+         ${searchParameter
+           ? `(
+               SELECT MIN((word->>'start')::numeric)
+               FROM jsonb_array_elements(COALESCE(transcript.words, '[]'::jsonb)) word
+               WHERE COALESCE(word->>'text', '') ILIKE $${searchParameter}
+                 AND COALESCE(word->>'start', '') ~ '^\\d+(\\.\\d+)?$'
+             )`
+           : "NULL::numeric"} AS search_start_ms,
          COALESCE(job.status, transcript.status, 'completed') AS status,
          COALESCE(job.progress, CASE WHEN transcript.status = 'completed' THEN 100 ELSE 0 END) AS progress,
          COALESCE(job.error_message, transcript.error_message) AS error_message,
@@ -1060,7 +1151,7 @@ router.get("/history", requireAuth, async (req, res) => {
        LEFT JOIN transcription_folders folder ON folder.id = transcript.folder_id
        WHERE transcript.user_id = $1
          AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
-         ${folderSql}${searchSql}
+         ${filterSql}
        ORDER BY transcript.created_at DESC, transcript.id DESC
        LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
       queryValues,
@@ -1121,7 +1212,9 @@ router.get("/history/:id", requireAuth, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT transcript.id, transcript.filename, transcript.file_size, transcript.duration,
          transcript.processing_seconds, transcript.text, transcript.words, transcript.segments,
-         transcript.speaker_names, transcript.audio_filename,
+         transcript.speaker_names, transcript.transcript_template, transcript.insights,
+         transcript.insights_updated_at, transcript.reviewed_word_indexes, transcript.tags,
+         transcript.audio_filename,
          transcript.source_language, transcript.translated_text, transcript.translation_target_language,
          transcript.translation_provider, transcript.translation_error, transcript.created_at,
          COALESCE(job.status, transcript.status, 'completed') AS status,
@@ -1152,6 +1245,19 @@ router.get("/history/:id", requireAuth, async (req, res) => {
         !Array.isArray(rows[0].speaker_names)
           ? rows[0].speaker_names
           : {},
+      transcript_template: normalizeTranscriptTemplate(
+        rows[0].transcript_template,
+      ),
+      insights:
+        rows[0].insights &&
+        typeof rows[0].insights === "object" &&
+        !Array.isArray(rows[0].insights)
+          ? rows[0].insights
+          : {},
+      reviewed_word_indexes: Array.isArray(rows[0].reviewed_word_indexes)
+        ? rows[0].reviewed_word_indexes
+        : [],
+      tags: Array.isArray(rows[0].tags) ? rows[0].tags : [],
     });
   } catch (error) {
     console.error("Get transcription detail error:", error.message);
@@ -1233,6 +1339,11 @@ router.post("/text", requireAuth, async (req, res) => {
     if (text.length > 500_000) {
       return res.status(413).json({ error: "Transcript realtime quá dài" });
     }
+    const automaticInsights = generateTranscriptInsights({
+      text,
+      words: [],
+      template: "meeting",
+    });
 
     const source = req.body.source === "manual" ? "manual" : "realtime";
     const realtimeSessionId = String(req.body.realtimeSessionId || "");
@@ -1310,12 +1421,12 @@ router.post("/text", requireAuth, async (req, res) => {
         `INSERT INTO transcriptions (
          user_id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         translation_error
+         translation_error, insights, insights_updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13::jsonb, NOW())
        RETURNING id, filename, file_size, duration, processing_seconds, text, words, audio_filename,
          source_language, translated_text, translation_target_language, translation_provider,
-         translation_error, created_at`,
+         translation_error, insights, insights_updated_at, created_at`,
         [
           req.user.id,
           filename,
@@ -1327,9 +1438,10 @@ router.post("/text", requireAuth, async (req, res) => {
           translation?.sourceLanguage || sourceLanguage,
           translation?.text || null,
            translation?.targetLanguage || targetLanguage || null,
-           translation?.provider || null,
-           translationError || null,
-        ],
+         translation?.provider || null,
+         translationError || null,
+         JSON.stringify(automaticInsights),
+       ],
       );
       savedTranscript = rows[0];
       await recordQuotaUsage({
@@ -1384,6 +1496,131 @@ router.post("/text", requireAuth, async (req, res) => {
     return res.status(err.statusCode || 500).json({
       error: err.message || "Không lưu được transcript realtime",
       quota: err.details?.quota,
+    });
+  }
+});
+
+// POST /api/transcribe/:id/insights - tạo và lưu lớp phân tích sau STT.
+router.post("/:id/insights", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, text, words, transcript_template
+       FROM transcriptions
+       WHERE id = $1 AND user_id = $2 AND status = 'completed'`,
+      [id, req.user.id],
+    );
+    const transcript = rows[0];
+    if (!transcript) {
+      return res.status(404).json({
+        error: "Không tìm thấy transcript đã hoàn thành",
+      });
+    }
+    const template = normalizeTranscriptTemplate(
+      req.body?.template || transcript.transcript_template,
+    );
+    const insights = generateTranscriptInsights({
+      text: transcript.text,
+      words: Array.isArray(transcript.words) ? transcript.words : [],
+      template,
+    });
+    await pool.query(
+      `UPDATE transcriptions
+       SET transcript_template = $3,
+           insights = $4::jsonb,
+           insights_updated_at = NOW()
+       WHERE id = $1 AND user_id = $2`,
+      [id, req.user.id, template, JSON.stringify(insights)],
+    );
+    return res.json({ insights, template });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.message || "Không tạo được phân tích transcript",
+    });
+  }
+});
+
+// PATCH /api/transcribe/:id/workflow - lưu template, tag và tiến độ review.
+router.patch("/:id/workflow", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  const hasTemplate = req.body?.template !== undefined;
+  const hasTags = req.body?.tags !== undefined;
+  const hasReviewed = req.body?.reviewedWordIndexes !== undefined;
+  if (!hasTemplate && !hasTags && !hasReviewed) {
+    return res.status(400).json({ error: "Không có thay đổi để lưu" });
+  }
+  const template = hasTemplate
+    ? normalizeTranscriptTemplate(req.body.template)
+    : null;
+  let tags = null;
+  if (hasTags) {
+    if (!Array.isArray(req.body.tags) || req.body.tags.length > 30) {
+      return res.status(400).json({ error: "Danh sách tag không hợp lệ" });
+    }
+    tags = [
+      ...new Set(
+        req.body.tags
+          .map((tag) =>
+            String(tag || "").trim().replace(/\s+/g, " ").slice(0, 40),
+          )
+          .filter(Boolean),
+      ),
+    ];
+  }
+  let reviewedWordIndexes = null;
+  if (hasReviewed) {
+    if (
+      !Array.isArray(req.body.reviewedWordIndexes) ||
+      req.body.reviewedWordIndexes.length > 100_000
+    ) {
+      return res.status(400).json({
+        error: "Danh sách từ đã review không hợp lệ",
+      });
+    }
+    reviewedWordIndexes = [
+      ...new Set(
+        req.body.reviewedWordIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isSafeInteger(value) && value >= 0),
+      ),
+    ].sort((left, right) => left - right);
+  }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE transcriptions
+       SET transcript_template = COALESCE($3, transcript_template),
+           tags = COALESCE($4::jsonb, tags),
+           reviewed_word_indexes = COALESCE($5::jsonb, reviewed_word_indexes)
+       WHERE id = $1 AND user_id = $2
+       RETURNING transcript_template, tags, reviewed_word_indexes`,
+      [
+        id,
+        req.user.id,
+        template,
+        tags === null ? null : JSON.stringify(tags),
+        reviewedWordIndexes === null
+          ? null
+          : JSON.stringify(reviewedWordIndexes),
+      ],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Không tìm thấy transcript" });
+    }
+    return res.json({
+      template: rows[0].transcript_template,
+      tags: rows[0].tags || [],
+      reviewedWordIndexes: rows[0].reviewed_word_indexes || [],
+    });
+  } catch (error) {
+    console.error("Update transcript workflow error:", error.message);
+    return res.status(500).json({
+      error: "Không lưu được thiết lập transcript",
     });
   }
 });
@@ -1521,6 +1758,38 @@ router.post(
 );
 
 // POST /api/transcribe/:id/audio-access - cấp URL ngắn hạn để trình duyệt stream audio.
+router.get("/:id/export", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "ID không hợp lệ" });
+  try {
+    const { rows } = await pool.query(
+      `SELECT filename, text, words FROM transcriptions
+       WHERE id = $1 AND user_id = $2 AND status = 'completed'`,
+      [id, req.user.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Không tìm thấy transcript hoàn tất" });
+    const exported = createTranscriptExport({
+      format: String(req.query.format || "txt").toLowerCase(),
+      text: rows[0].text,
+      words: rows[0].words,
+    });
+    const basename = path
+      .basename(String(rows[0].filename || `transcript-${id}`), path.extname(String(rows[0].filename || "")))
+      .replace(/[^\p{L}\p{N}_. -]/gu, "_")
+      .slice(0, 120) || `transcript-${id}`;
+    res.setHeader("Content-Type", exported.contentType);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(`${basename}.${exported.extension}`)}`,
+    );
+    return res.send(exported.content);
+  } catch (error) {
+    console.error("Transcript export error:", error.message);
+    return res.status(500).json({ error: "Không xuất được transcript" });
+  }
+});
+
 router.post("/:id/audio-access", requireAuth, async (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) {
@@ -1735,7 +2004,8 @@ router.get("/:id/versions", requireAuth, async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
   try {
     const { rows } = await pool.query(
-      `SELECT version.id, version.label, version.created_at,
+      `SELECT version.id, version.label, version.actor_name,
+              version.change_source, version.created_at,
               LENGTH(version.text)::integer AS text_length,
               COALESCE(jsonb_array_length(version.words), 0)::integer AS word_count
        FROM transcription_versions version
@@ -1749,6 +2019,49 @@ router.get("/:id/versions", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("List transcript versions error:", error.message);
     return res.status(500).json({ error: "Không tải được lịch sử phiên bản" });
+  }
+});
+
+router.get("/:id/versions/:versionId/compare", requireAuth, async (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const versionId = Number.parseInt(req.params.versionId, 10);
+  if (
+    !Number.isInteger(id) ||
+    id <= 0 ||
+    !Number.isInteger(versionId) ||
+    versionId <= 0
+  ) {
+    return res.status(400).json({ error: "ID không hợp lệ" });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT version.id, version.label, version.actor_name,
+              version.change_source, version.created_at, version.text,
+              transcript.text AS current_text
+       FROM transcription_versions version
+       JOIN transcriptions transcript ON transcript.id = version.transcription_id
+       WHERE version.id = $1 AND version.transcription_id = $2
+         AND transcript.user_id = $3`,
+      [versionId, id, req.user.id],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Không tìm thấy phiên bản" });
+    }
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.json({
+      version: {
+        id: rows[0].id,
+        label: rows[0].label,
+        actor_name: rows[0].actor_name,
+        change_source: rows[0].change_source,
+        created_at: rows[0].created_at,
+        text: rows[0].text,
+      },
+      current: { text: rows[0].current_text },
+    });
+  } catch (error) {
+    console.error("Compare transcript version error:", error.message);
+    return res.status(500).json({ error: "Không so sánh được phiên bản" });
   }
 });
 
@@ -1783,7 +2096,12 @@ router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) =>
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Không tìm thấy phiên bản" });
     }
-    await insertTranscriptVersion(client, transcript, "Trước khi khôi phục");
+    await insertTranscriptVersion(client, transcript, {
+      label: "Trước khi khôi phục",
+      actorUserId: req.user.id,
+      actorName: `${req.user.first_name || ""} ${req.user.last_name || ""}`,
+      source: "restore",
+    });
     const restored = await client.query(
       `UPDATE transcriptions
        SET text = $1,
@@ -1820,10 +2138,18 @@ router.post("/:id/versions/:versionId/restore", requireAuth, async (req, res) =>
 router.patch("/:id", requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: "ID không hợp lệ" });
-  const { text, words, speakerNames } = req.body;
+  const {
+    text,
+    words,
+    wordPatches,
+    initializeWordTimeline,
+    speakerNames,
+  } = req.body;
   if (
     text === undefined &&
     words === undefined &&
+    wordPatches === undefined &&
+    initializeWordTimeline === undefined &&
     speakerNames === undefined
   ) {
     return res.status(400).json({ error: "Không có thay đổi để lưu" });
@@ -1833,6 +2159,19 @@ router.patch("/:id", requireAuth, async (req, res) => {
     (typeof text !== "string" || text.length > 2_000_000)
   ) {
     return res.status(400).json({ error: "Nội dung text không hợp lệ" });
+  }
+  if (words !== undefined && wordPatches !== undefined) {
+    return res.status(400).json({
+      error: "Chỉ gửi danh sách timestamp hoặc thay đổi từ, không gửi đồng thời",
+    });
+  }
+  if (
+    initializeWordTimeline !== undefined &&
+    initializeWordTimeline !== true
+  ) {
+    return res.status(400).json({
+      error: "Yêu cầu tạo timestamp từ văn bản không hợp lệ",
+    });
   }
   let normalizedWords = null;
   if (words !== undefined) {
@@ -1870,6 +2209,16 @@ router.patch("/:id", requireAuth, async (req, res) => {
       });
     }
   }
+  let normalizedWordPatches = null;
+  if (wordPatches !== undefined) {
+    try {
+      normalizedWordPatches = normalizeTranscriptWordPatches(wordPatches);
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({
+        error: error.message || "Danh sách thay đổi từ không hợp lệ",
+      });
+    }
+  }
   let normalizedSpeakerNames = null;
   if (speakerNames !== undefined) {
     if (
@@ -1896,7 +2245,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
   try {
     await client.query("BEGIN");
     const current = await client.query(
-      `SELECT id, user_id, text, words, speaker_names
+      `SELECT id, user_id, text, words, speaker_names, duration
        FROM transcriptions
        WHERE id = $1 AND user_id = $2
        FOR UPDATE`,
@@ -1908,12 +2257,34 @@ router.patch("/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Không tìm thấy bản ghi" });
     }
     const nextText = text === undefined ? String(transcript.text || "") : text;
-    const nextWords =
+    let nextWords =
       normalizedWords === null
         ? Array.isArray(transcript.words)
           ? transcript.words
           : []
         : normalizedWords;
+    if (initializeWordTimeline === true && nextWords.length === 0) {
+      nextWords = createApproximateTranscriptWords(nextText, transcript.duration);
+      if (String(nextText || "").trim() && nextWords.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          error: "Văn bản vượt giới hạn 100.000 từ có timestamp",
+        });
+      }
+    }
+    if (normalizedWordPatches !== null) {
+      try {
+        nextWords = applyTranscriptWordPatches(
+          nextWords,
+          normalizedWordPatches,
+        );
+      } catch (error) {
+        await client.query("ROLLBACK");
+        return res.status(error.statusCode || 400).json({
+          error: error.message || "Danh sách thay đổi từ không hợp lệ",
+        });
+      }
+    }
     const currentSpeakerNames =
       transcript.speaker_names &&
       typeof transcript.speaker_names === "object" &&
@@ -1930,7 +2301,12 @@ router.patch("/:id", requireAuth, async (req, res) => {
         JSON.stringify(nextWords) ||
       JSON.stringify(currentSpeakerNames) !== JSON.stringify(nextSpeakerNames);
     if (changed) {
-      await insertTranscriptVersion(client, transcript, "Auto-save");
+      await insertTranscriptVersion(client, transcript, {
+        label: "Auto-save",
+        actorUserId: req.user.id,
+        actorName: `${req.user.first_name || ""} ${req.user.last_name || ""}`,
+        source: "owner",
+      });
     }
     const { rows } = await client.query(
       `UPDATE transcriptions

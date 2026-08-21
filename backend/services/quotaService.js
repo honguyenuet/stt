@@ -6,6 +6,7 @@ const {
   requireWorkspaceBillingRole,
   resolveUserWorkspace,
 } = require("./workspaceBillingService");
+const { resolveQuotaScope } = require("./workspaceTeamService");
 
 const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 2048);
 
@@ -241,7 +242,7 @@ async function getUserBilling(userId, db = pool) {
   };
 }
 
-async function getUsageSeconds(userId, db = pool) {
+async function getUsageSeconds(userId, db = pool, memberIds = [userId]) {
   const workspace = await resolveUserWorkspace(userId, db);
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(usage.seconds), 0)::float AS used_seconds
@@ -249,10 +250,10 @@ async function getUsageSeconds(userId, db = pool) {
      JOIN workspaces workspace ON workspace.id = $2
      WHERE (
         usage.workspace_id = $2
-        OR (usage.workspace_id IS NULL AND usage.user_id = $1)
+        OR (usage.workspace_id IS NULL AND usage.user_id = ANY($3::int[]))
        )
        AND usage.period_started_at = workspace.plan_started_at`,
-    [userId, workspace.id],
+    [userId, workspace.id, memberIds],
   );
   return Math.max(0, Math.round(Number(rows[0]?.used_seconds || 0)));
 }
@@ -287,6 +288,7 @@ async function getReservedSeconds(
   excludeJobId = null,
   db = pool,
   excludeBatchId = null,
+  memberIds = [userId],
 ) {
   const workspace = await resolveUserWorkspace(userId, db);
   const values = [workspace.id];
@@ -305,7 +307,7 @@ async function getReservedSeconds(
          ON member.user_id = job.user_id
         AND member.workspace_id = $1
         AND member.status = 'active'
-       WHERE job.status IN ('queued', 'processing')
+        WHERE job.status IN ('queued', 'processing')
          AND job.cancel_requested = FALSE
          AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
          ${excludeJobClause}
@@ -320,7 +322,7 @@ async function getReservedSeconds(
          ON member.user_id = batch.user_id
         AND member.workspace_id = $1
         AND member.status = 'active'
-       WHERE batch.status IN ('queued', 'processing', 'merging')
+        WHERE batch.status IN ('queued', 'processing', 'merging')
          AND job.cancel_requested = FALSE
          ${excludeBatchClause}
        GROUP BY batch.id
@@ -340,14 +342,21 @@ async function getQuotaStatus(
   userId,
   { excludeJobId = null, excludeBatchId = null, db = pool } = {},
 ) {
-  const billing = await getUserBilling(userId, db);
-  const usedSeconds = await getUsageSeconds(userId, db);
-  const topUp = await getTopUpCreditStatus(userId, db);
+  const scope = await resolveQuotaScope(userId, db);
+  const billing = await getUserBilling(scope.billingOwnerUserId, db);
+  const usedSeconds = await getUsageSeconds(
+    userId,
+    db,
+    scope.memberIds,
+    billing.planStartedAt,
+  );
+  const topUp = await getTopUpCreditStatus(scope.billingOwnerUserId, db);
   const reservedSeconds = await getReservedSeconds(
     userId,
     excludeJobId,
     db,
     excludeBatchId,
+    scope.memberIds,
   );
   const baseRemainingSeconds = Math.max(0, billing.quotaSeconds - usedSeconds);
   const rawRemainingSeconds = baseRemainingSeconds + topUp.remainingSeconds;
@@ -365,6 +374,11 @@ async function getQuotaStatus(
 
   return {
     ...billing,
+    userId,
+    billingOwnerUserId: scope.billingOwnerUserId,
+    workspaceId: scope.workspaceId,
+    workspaceName: scope.workspaceName,
+    sharedMemberCount: scope.memberIds.length,
     baseQuotaSeconds: billing.quotaSeconds,
     quotaSeconds: totalQuotaSeconds,
     topUpGrantedSeconds: topUp.grantedSeconds,
@@ -526,12 +540,13 @@ async function recordQuotaUsage({
     );
   }
 
+  const scope = await resolveQuotaScope(userId, db);
   const workspace = await resolveUserWorkspace(userId, db);
   await db.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [
     workspace.id,
   ]);
   const billing = await getUserBilling(userId, db);
-  const usedBefore = await getUsageSeconds(userId, db);
+  const usedBefore = await getUsageSeconds(userId, db, scope.memberIds);
   const { rows } = await db.query(
     `INSERT INTO quota_usage_ledger (
        user_id, workspace_id, transcription_id, seconds, period_started_at, period_ends_at
@@ -540,8 +555,8 @@ async function recordQuotaUsage({
      FROM workspaces
      WHERE id = $2
      ON CONFLICT (transcription_id) DO NOTHING
-     RETURNING id, seconds, period_started_at, period_ends_at`,
-    [userId, billing.workspaceId, transcriptionId, seconds],
+    RETURNING id, seconds, period_started_at, period_ends_at`,
+     [userId, billing.workspaceId, transcriptionId, seconds],
   );
   if (!rows[0]) return null;
 

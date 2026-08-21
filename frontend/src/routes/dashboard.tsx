@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, useRef } from "react";
-import type { ComponentType } from "react";
 import {
   AudioLines,
   AlertCircle,
@@ -13,14 +12,10 @@ import {
   Download,
   Eye,
   EyeOff,
-  FileAudio,
   Folder,
   FolderPlus,
-  Gift,
   Heart,
-  Home,
   KeyRound,
-  Languages,
   MessageCircle,
   Mic,
   MonitorSmartphone,
@@ -28,7 +23,6 @@ import {
   RefreshCw,
   Settings,
   ShieldAlert,
-  SlidersHorizontal,
   Trash2,
   Upload,
   UploadCloud,
@@ -43,13 +37,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PhilosophyQuoteCard } from "@/components/philosophy-quote-card";
-import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
 import {
   formatMediaDuration as formatDuration,
   sumMediaDurations,
 } from "@/lib/format-duration";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  buildDashboardHistoryPath,
+  normalizeDashboardFolders,
+  selectDashboardFolder,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
 const API_URL = getApiBaseUrl();
 
@@ -63,6 +61,10 @@ interface HistoryItem {
   error_message?: string | null;
   translation_error?: string | null;
   created_at: string;
+}
+
+interface DashboardHistoryResponse {
+  items: HistoryItem[];
 }
 
 interface AuthSession {
@@ -136,7 +138,6 @@ type ActionDialogState = {
   ctaLabel?: string;
   to?: string;
 };
-
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("vi-VN", {
     day: "numeric",
@@ -166,28 +167,73 @@ function DashboardPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyRetryKey, setHistoryRetryKey] = useState(0);
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [folderError, setFolderError] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+
+  const activeFolder = selectDashboardFolder(folders, activeFolderId);
+
+  const loadFolders = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folders?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tải được danh sách thư mục");
+      }
+      const nextFolders = normalizeDashboardFolders(body.folders);
+      setFolders(nextFolders);
+      setActiveFolderId((current) =>
+        selectDashboardFolder(nextFolders, current)?.id ?? null,
+      );
+      setFolderError("");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error
+          ? error.message
+          : "Không tải được danh sách thư mục",
+      );
+    } finally {
+      setFoldersLoaded(true);
+    }
+  }, [token]);
 
   useEffect(() => {
-    if (!user || !token) return;
+    if (user && token) void loadFolders();
+  }, [loadFolders, token, user]);
+
+  useEffect(() => {
+    if (!user || !token || !foldersLoaded) return;
     let active = true;
     const loadHistory = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/transcribe/history`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const body = (await response.json().catch(() => [])) as
-          | HistoryItem[]
+        const response = await fetch(
+          `${API_URL}${buildDashboardHistoryPath(activeFolder?.id ?? null)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as
+          | DashboardHistoryResponse
           | { error?: string };
-        if (!response.ok || !Array.isArray(body)) {
+        if (!response.ok || !("items" in body) || !Array.isArray(body.items)) {
           throw new Error(
-            !Array.isArray(body) && body.error
+            "error" in body && body.error
               ? body.error
               : "Không tải được lịch sử chuyển đổi",
           );
         }
         if (active) {
-          setHistory(body.slice(0, 3));
+          setHistory(body.items.slice(0, 3));
           setHistoryError("");
         }
       } catch (error) {
@@ -208,7 +254,7 @@ function DashboardPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [historyRetryKey, user, token]);
+  }, [activeFolder?.id, foldersLoaded, historyRetryKey, user, token]);
 
   // ── Edit profile state ──────────────────────────────────────────────
   const [editOpen, setEditOpen] = useState(false);
@@ -256,10 +302,19 @@ function DashboardPage() {
   const [privacyMessage, setPrivacyMessage] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
-  const [activeFolder, setActiveFolder] = useState("Dự án mới");
-  const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
-    null,
-  );
+  const [folderVisibility, setFolderVisibility] = useState<"private" | "team">("private");
+  const [folderTeamPermission, setFolderTeamPermission] = useState<
+    "view" | "edit"
+  >("edit");
+  const [folderSettingsOpen, setFolderSettingsOpen] = useState(false);
+  const [folderSettingsName, setFolderSettingsName] = useState("");
+  const [folderSettingsVisibility, setFolderSettingsVisibility] = useState<
+    "private" | "team"
+  >("private");
+  const [folderSettingsPermission, setFolderSettingsPermission] = useState<
+    "view" | "edit"
+  >("edit");
+  const [savingFolderSettings, setSavingFolderSettings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -971,74 +1026,104 @@ function DashboardPage() {
     }
   }
 
-  function handleCreateFolder() {
+  async function handleCreateFolder() {
     const name = folderName.trim();
-    if (!name) return;
-    setActiveFolder(name);
-    setFolderOpen(false);
-    setFolderName("Dự án mới");
+    if (!name || !token || creatingFolder) return;
+    setCreatingFolder(true);
+    setFolderError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          visibility: folderVisibility,
+          teamPermission: folderTeamPermission,
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tạo được thư mục");
+      }
+      const created = normalizeDashboardFolders(
+        body.folder ? [body.folder] : [],
+      )[0];
+      if (!created) throw new Error("Dữ liệu thư mục trả về không hợp lệ");
+      setFolders((current) => [...current, created]);
+      setActiveFolderId(created.id);
+      setFolderOpen(false);
+      setFolderName("Dự án mới");
+      setFolderVisibility("private");
+      setFolderTeamPermission("edit");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không tạo được thư mục",
+      );
+    } finally {
+      setCreatingFolder(false);
+    }
   }
 
-  function openFeature(label: string) {
-    const normalized = label.toLowerCase();
-    if (
-      normalized.includes("transcription") ||
-      normalized.includes("chuyển giọng nói")
-    ) {
-      void navigate({ to: "/transcription-settings" });
-      return;
+  function openFolderSettings() {
+    if (!activeFolder) return;
+    setFolderSettingsName(activeFolder.name);
+    setFolderSettingsVisibility(activeFolder.visibility);
+    setFolderSettingsPermission(activeFolder.team_permission);
+    setFolderSettingsOpen(true);
+  }
+
+  async function saveFolderSettings() {
+    if (!activeFolder || !token || savingFolderSettings) return;
+    const name = folderSettingsName.trim();
+    if (!name) return;
+    setSavingFolderSettings(true);
+    setFolderError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/folders/${activeFolder.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name,
+            visibility: folderSettingsVisibility,
+            teamPermission: folderSettingsPermission,
+          }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không cập nhật được thư mục");
+      }
+      const updated = normalizeDashboardFolders(body.folder ? [body.folder] : [])[0];
+      if (!updated) throw new Error("Dữ liệu thư mục trả về không hợp lệ");
+      setFolders((current) =>
+        current.map((folder) =>
+          folder.id === updated.id
+            ? { ...updated, item_count: folder.item_count }
+            : folder,
+        ),
+      );
+      setFolderSettingsOpen(false);
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không cập nhật được thư mục",
+      );
+    } finally {
+      setSavingFolderSettings(false);
     }
-    if (normalized.includes("dictionary") || normalized.includes("từ điển")) {
-      void navigate({ to: "/custom-dictionary" });
-      return;
-    }
-    if (normalized.includes("upload") || normalized.includes("tải lên")) {
-      void navigate({ to: "/upload" });
-      return;
-    }
-    if (
-      normalized.includes("zoom") ||
-      normalized.includes("teams") ||
-      normalized.includes("zapier")
-    ) {
-      setActionDialog({
-        title: label,
-        description:
-          "Phần tích hợp này sẽ dùng API key và webhook. Mở trang API để tạo key, test endpoint và chuẩn bị tích hợp giống Sonix.",
-        ctaLabel: "Mở trang API",
-        to: "/api",
-      });
-      return;
-    }
-    if (normalized.includes("analysis") || normalized.includes("phân tích")) {
-      setActionDialog({
-        title: label,
-        description:
-          "Phân tích AI sẽ dùng bản chép lời đã tạo để tóm tắt, trích ý chính và tìm chủ đề. Trước mắt bạn có thể mở lịch sử để chọn bản chép lời cần phân tích.",
-        ctaLabel: "Mở lịch sử",
-        to: "/history",
-      });
-      return;
-    }
-    if (
-      normalized.includes("help") ||
-      normalized.includes("video") ||
-      normalized.includes("hỗ trợ")
-    ) {
-      setActionDialog({
-        title: label,
-        description:
-          "Bạn có thể dùng trang ghi âm để mở bảng trợ giúp, hoặc quay lại tải file hoặc ghi âm để bắt đầu.",
-        ctaLabel: "Mở ghi âm",
-        to: "/record",
-      });
-      return;
-    }
-    setActionDialog({
-      title: label,
-      description:
-        "Thiết lập này đã có điểm bấm và sẽ được nối sâu hơn khi có màn cấu hình riêng.",
-    });
   }
 
   // ── Loading ──────────────────────────────────────────────────────────
@@ -1064,21 +1149,24 @@ function DashboardPage() {
       <AuthenticatedHeader onEditProfile={openEdit} />
 
       {/* ── Main ─────────────────────────────────────────────────────── */}
-      <main className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 md:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <main className="relative z-10 mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-6">
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="mb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-1.5 text-xs font-black text-primary">
                   <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                   Không gian làm việc sẵn sàng
                 </div>
                 <div className="flex items-center gap-3">
-                  <Heart className="h-10 w-10 text-[#ffcb05]" />
-                  <h1 className="text-2xl font-light tracking-tight text-foreground md:text-3xl">
+                  <Heart className="h-6 w-6 text-[#e4b600]" />
+                  <h1 className="text-xl font-black tracking-tight text-foreground sm:text-2xl">
                     Chào mừng, {user.firstName}
                   </h1>
                 </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Bắt đầu chuyển giọng nói hoặc tiếp tục từ tệp gần đây.
+                </p>
               </div>
               <Link
                 to="/history"
@@ -1103,14 +1191,14 @@ function DashboardPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground transition hover:opacity-90"
               >
                 <Upload className="h-4 w-4" />
-                TẢI FILE
+                Tải tệp
               </Link>
               <button
                 onClick={() => setFolderOpen(true)}
                 className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-white px-5 py-3 text-sm font-black text-foreground transition hover:border-primary/50 hover:text-primary"
               >
                 <FolderPlus className="h-4 w-4" />
-                THƯ MỤC MỚI
+                Thư mục mới
               </button>
               <Link
                 to="/record"
@@ -1118,6 +1206,7 @@ function DashboardPage() {
                 title="Ghi âm nhanh"
               >
                 <Mic className="h-4 w-4" />
+                <span>Ghi âm</span>
               </Link>
               <Link
                 to="/realtime"
@@ -1125,22 +1214,85 @@ function DashboardPage() {
                 title="Realtime"
               >
                 <Radio className="h-4 w-4" />
+                <span>Trực tiếp</span>
               </Link>
             </div>
 
-            <CustomerJourneyPanel />
+            <nav
+              className="mt-3 flex flex-wrap gap-2"
+              aria-label="Thiết lập nhanh"
+            >
+              <Link
+                to="/transcription-settings"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Cài đặt chuyển đổi
+              </Link>
+              <Link
+                to="/custom-dictionary"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                Từ điển riêng
+              </Link>
+              <Link
+                to="/api"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                API
+              </Link>
+              <Link
+                to="/support"
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition hover:bg-white hover:text-primary"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Hỗ trợ
+              </Link>
+            </nav>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-soft">
             <div className="border-b border-border bg-white px-5 py-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
-                    DỰ ÁN
+                  <p className="text-xs font-black uppercase text-primary">
+                    Tệp gần đây
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <div className="mt-1 flex items-center gap-1">
+                  <label className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
-                    {activeFolder}
+                    <span className="sr-only">Thư mục đang xem</span>
+                    <select
+                      value={activeFolder?.id ?? ""}
+                      onChange={(event) =>
+                        setActiveFolderId(Number(event.target.value) || null)
+                      }
+                      disabled={!folders.length}
+                      className="max-w-56 rounded-md border-0 bg-transparent py-1 pr-7 font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      {!folders.length && <option value="">Đang tải thư mục...</option>}
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name} ({folder.item_count})
+                          {folder.visibility === "team" ? " · Nhóm" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {activeFolder &&
+                    Number(activeFolder.owner_user_id) === Number(user?.id) && (
+                      <button
+                        type="button"
+                        onClick={openFolderSettings}
+                        aria-label="Cài đặt thư mục"
+                        title="Cài đặt tên và quyền thư mục"
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-primary/5 hover:text-primary"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="rounded-full border border-border bg-white px-3 py-1 text-xs font-bold text-primary">
@@ -1148,6 +1300,19 @@ function DashboardPage() {
                 </div>
               </div>
             </div>
+
+            {folderError && (
+              <div className="m-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:m-5">
+                <span>{folderError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadFolders()}
+                  className="shrink-0 rounded-md border border-destructive/30 bg-white px-3 py-1.5 text-xs font-bold"
+                >
+                  Tải lại
+                </button>
+              </div>
+            )}
 
             {historyError && (
               <div className="m-5 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -1173,10 +1338,9 @@ function DashboardPage() {
                   Chưa có file transcript
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                  Bắt đầu giống Sonix: tải file, ghi âm trực tiếp, rồi mọi bản
-                  transcript sẽ xuất hiện trong workspace này.
+                  Tải tệp hoặc ghi âm; bản chép lời sẽ xuất hiện tại đây.
                 </p>
-                <div className="mt-5 flex flex-wrap justify-center gap-3">
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
                   <Link
                     to="/upload"
                     className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-black text-primary-foreground"
@@ -1186,7 +1350,7 @@ function DashboardPage() {
                   </Link>
                   <Link
                     to="/record"
-                    className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm font-black transition hover:border-primary/50 hover:text-primary"
+                    className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-bold transition hover:border-primary/50 hover:text-primary"
                   >
                     <Mic className="h-4 w-4" />
                     Ghi âm ngay
@@ -1808,6 +1972,32 @@ function DashboardPage() {
               className="w-full rounded-xl border border-border bg-white px-4 py-3 text-sm outline-none focus:border-primary"
               placeholder="Tên folder"
             />
+            <label className="block text-sm font-bold">
+              Quyền truy cập
+              <select
+                value={folderVisibility}
+                onChange={(event) => setFolderVisibility(event.target.value as "private" | "team")}
+                className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+              >
+                <option value="private">Riêng tư · chỉ mình bạn</option>
+                <option value="team">Nhóm · thành viên có thể tải tệp vào</option>
+              </select>
+            </label>
+            {folderVisibility === "team" && (
+              <label className="block text-sm font-bold">
+                Quyền của thành viên
+                <select
+                  value={folderTeamPermission}
+                  onChange={(event) =>
+                    setFolderTeamPermission(event.target.value as "view" | "edit")
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+                >
+                  <option value="view">Chỉ xem transcript</option>
+                  <option value="edit">Được tải tệp và chỉnh sửa</option>
+                </select>
+              </label>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
@@ -1817,11 +2007,67 @@ function DashboardPage() {
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90"
+                disabled={!folderName.trim() || creatingFolder}
+                className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Tạo folder
+                {creatingFolder ? "Đang tạo..." : "Tạo folder"}
               </button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={folderSettingsOpen} onOpenChange={setFolderSettingsOpen}>
+        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cài đặt thư mục</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="block text-sm font-bold">
+              Tên dự án hoặc khách hàng
+              <input
+                value={folderSettingsName}
+                onChange={(event) => setFolderSettingsName(event.target.value)}
+                maxLength={160}
+                className="mt-2 w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
+              />
+            </label>
+            <label className="block text-sm font-bold">
+              Phạm vi truy cập
+              <select
+                value={folderSettingsVisibility}
+                onChange={(event) =>
+                  setFolderSettingsVisibility(event.target.value as "private" | "team")
+                }
+                className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+              >
+                <option value="private">Riêng tư · chỉ chủ sở hữu</option>
+                <option value="team">Chia sẻ với workspace</option>
+              </select>
+            </label>
+            {folderSettingsVisibility === "team" && (
+              <label className="block text-sm font-bold">
+                Quyền thành viên
+                <select
+                  value={folderSettingsPermission}
+                  onChange={(event) =>
+                    setFolderSettingsPermission(event.target.value as "view" | "edit")
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
+                >
+                  <option value="view">Chỉ xem</option>
+                  <option value="edit">Xem, tải tệp và chỉnh sửa</option>
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => void saveFolderSettings()}
+              disabled={!folderSettingsName.trim() || savingFolderSettings}
+              className="w-full rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground disabled:opacity-50"
+            >
+              {savingFolderSettings ? "Đang lưu…" : "Lưu cài đặt thư mục"}
+            </button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1842,6 +2088,7 @@ function DashboardPage() {
             </p>
             <div className="flex gap-3">
               <button
+                type="button"
                 onClick={() => setActionDialog(null)}
                 className="flex-1 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-bold transition hover:border-primary/50"
               >
@@ -1849,6 +2096,7 @@ function DashboardPage() {
               </button>
               {actionDialog?.ctaLabel && actionDialog.to && (
                 <button
+                  type="button"
                   onClick={() => {
                     const to = actionDialog.to;
                     setActionDialog(null);
@@ -1863,9 +2111,10 @@ function DashboardPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
+
+      </div>
+    );
+  }
 
 function CustomerJourneyPanel() {
   const steps = [

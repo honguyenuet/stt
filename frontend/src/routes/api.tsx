@@ -2,17 +2,14 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
-  ArrowRight,
   BarChart3,
   Check,
   Clipboard,
   Code2,
   Copy,
-  FileAudio,
   KeyRound,
   Loader2,
   LockKeyhole,
-  PlugZap,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -506,15 +503,15 @@ function ApiPage() {
 
       <section
         id="keys"
-        className="mx-auto grid max-w-7xl gap-5 px-4 py-10 md:grid-cols-[.9fr_1.1fr] md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 py-4 sm:px-5 sm:py-5 md:grid-cols-[.9fr_1.1fr]"
       >
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center gap-3">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
               <KeyRound className="h-6 w-6" />
             </span>
             <div>
-              <h2 className="text-xl font-black">Tạo API key</h2>
+              <h1 className="text-xl font-black">Tạo API key</h1>
               <p className="text-sm text-muted-foreground">
                 Key đầy đủ chỉ hiện một lần sau khi tạo.
               </p>
@@ -572,7 +569,7 @@ function ApiPage() {
           )}
         </div>
 
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black">Danh sách API key</h2>
@@ -625,8 +622,8 @@ function ApiPage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-10 md:px-6">
-        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
+      <section className="mx-auto max-w-6xl px-3 pb-4 sm:px-5">
+        <div className="rounded-lg border border-border bg-white p-4">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
@@ -749,7 +746,7 @@ function ApiPage() {
 
       <section
         id="docs"
-        className="mx-auto grid max-w-7xl gap-5 px-4 pb-10 md:grid-cols-2 md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 pb-4 sm:px-5 md:grid-cols-2"
       >
         <DocCard title="cURL" code={curlSample} onCopy={copyText} />
         <DocCard title="JavaScript SDK mẫu" code={jsSample} onCopy={copyText} />

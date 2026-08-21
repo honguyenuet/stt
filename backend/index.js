@@ -27,6 +27,8 @@ const supportRoutes = require("./routes/support");
 const adminRoutes = require("./routes/admin");
 const referralRoutes = require("./routes/referrals");
 const workspaceRoutes = require("./routes/workspace");
+const collaborationRoutes = require("./routes/collaboration");
+const teamRoutes = require("./routes/team");
 const initDatabase = require("./initDb");
 const {
   assertTranscriptionProviderReady,
@@ -80,6 +82,8 @@ app.use("/api/support", supportRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/workspace", workspaceRoutes);
+app.use("/api/collaboration", collaborationRoutes);
+app.use("/api/team", teamRoutes);
 app.use("/api/v1", publicApiRoutes);
 
 app.get("/", (_req, res) => {
@@ -92,7 +96,7 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", async (req, res) => {
   const transcriptionProvider = getTranscriptionProviderStatus();
   let providerReady = false;
   let providerError = null;
@@ -106,6 +110,9 @@ app.get("/api/health", async (_req, res) => {
   res.json({
     status: providerReady ? "ok" : "degraded",
     message: "Backend đang chạy",
+    requestId: req.requestId,
+    checkedAt: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
     provider_ready: providerReady,
     ...(IS_PRODUCTION ? {} : { transcriptionProvider, providerError }),
   });

@@ -172,18 +172,18 @@ function SupportChat() {
                 Liên hệ trực tiếp
               </p>
               <a
-                href="tel:0916168475"
+                href="tel:+842499993399"
                 className="flex items-center gap-2.5 rounded-xl border border-[oklch(0.28_0.02_85/60%)] px-3 py-2.5 text-xs text-[oklch(0.98_0.01_90)] transition hover:border-[oklch(0.82_0.17_84)]/40 hover:bg-[oklch(0.82_0.17_84)]/5"
               >
                 <Phone className="h-3.5 w-3.5 text-[oklch(0.82_0.17_84)]" />
-                <span>0916 168 475</span>
+                <span>(+84) 249 999 3399</span>
               </a>
               <a
-                href="mailto:vbee@gmail.com"
+                href="mailto:contact@vbee.ai"
                 className="flex items-center gap-2.5 rounded-xl border border-[oklch(0.28_0.02_85/60%)] px-3 py-2.5 text-xs text-[oklch(0.98_0.01_90)] transition hover:border-[oklch(0.82_0.17_84)]/40 hover:bg-[oklch(0.82_0.17_84)]/5"
               >
                 <Mail className="h-3.5 w-3.5 text-[oklch(0.82_0.17_84)]" />
-                <span>vbee@gmail.com</span>
+                <span>contact@vbee.ai</span>
               </a>
             </div>
 

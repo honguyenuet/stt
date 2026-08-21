@@ -22,8 +22,8 @@ import {
   adjustUserQuota,
   deleteUserAccount,
   listUsers,
-  updateUserRole,
   updateUserPlan,
+  updateUserRole,
   updateUserStatus,
 } from "@/lib/admin/users-service";
 import type {
@@ -72,10 +72,10 @@ function AdminUsersPage() {
   const [createdTo, setCreatedTo] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<AdminUser | null>(null);
-  const [quotaDelta, setQuotaDelta] = useState(30);
-  const [quotaReason, setQuotaReason] = useState("");
   const [planDraft, setPlanDraft] = useState<ManagedUserPlan>("free");
   const [billingCycle, setBillingCycle] = useState<BillingCycle>("monthly");
+  const [quotaDelta, setQuotaDelta] = useState(30);
+  const [quotaReason, setQuotaReason] = useState("");
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [loading, setLoading] = useState(true);
@@ -117,10 +117,10 @@ function AdminUsersPage() {
   useEffect(() => {
     if (!selected) return;
     setPlanDraft(selected.plan);
-    setBillingCycle(selected.plan === "free" ? "monthly" : "monthly");
+    setBillingCycle("monthly");
     setDeleteArmed(false);
     setDeleteCountdown(5);
-  }, [selected?.id]);
+  }, [selected]);
 
   useEffect(() => {
     if (!deleteArmed || deleteCountdown <= 0) return;
@@ -140,6 +140,7 @@ function AdminUsersPage() {
     try {
       const user = await action();
       setSelected(user);
+      setPlanDraft(user.plan);
       toast.success(success);
       load();
     } catch (err) {
@@ -147,6 +148,12 @@ function AdminUsersPage() {
     } finally {
       setSavingAction("");
     }
+  }
+
+  function openUser(user: AdminUser) {
+    setSelected(user);
+    setPlanDraft(user.plan);
+    setBillingCycle("monthly");
   }
 
   async function deleteSelectedAccount() {
@@ -171,6 +178,7 @@ function AdminUsersPage() {
     : "";
   const canSaveQuota =
     mayMutate &&
+    selected?.status !== "deleted" &&
     !savingAction &&
     !quotaError &&
     Boolean(quotaReason.trim());
@@ -181,7 +189,8 @@ function AdminUsersPage() {
     deleteArmed &&
     deleteCountdown === 0 &&
     !savingAction &&
-    selected?.status !== "deleted";
+    selected?.status !== "deleted" &&
+    selected?.id !== session?.user.id;
 
   return (
     <div className="space-y-5">
@@ -334,7 +343,7 @@ function AdminUsersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => setSelected(user)}
+                        onClick={() => openUser(user)}
                         aria-label={`Xem chi tiết ${user.name}`}
                         title={`Xem chi tiết ${user.name}`}
                         className="inline-grid h-8 w-8 place-items-center rounded-md border border-[#e4ddcf] text-[#21104a] transition hover:bg-[#fbf8ef] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffcb05]"
@@ -382,6 +391,9 @@ function AdminUsersPage() {
                 <b>Gói:</b> {planLabel[selected.plan]}
               </p>
               <p>
+                <b>Hết hạn gói:</b> {formatDateTime(selected.plan_expires_at)}
+              </p>
+              <p>
                 <b>Thời lượng:</b> {formatMinutes(selected.quota_minutes)}
               </p>
               <p>
@@ -402,7 +414,11 @@ function AdminUsersPage() {
               <h3 className="font-black">Trạng thái</h3>
               <div className="flex gap-2">
                 <button
-                  disabled={!mayMutate || selected.status === "active"}
+                  disabled={
+                    !mayMutate ||
+                    selected.status === "active" ||
+                    selected.status === "deleted"
+                  }
                   title={
                     selected.status === "active"
                       ? "Tài khoản đang hoạt động"
@@ -420,7 +436,11 @@ function AdminUsersPage() {
                   Mở khóa
                 </button>
                 <button
-                  disabled={!mayMutate || selected.status === "suspended"}
+                  disabled={
+                    !mayMutate ||
+                    selected.status === "suspended" ||
+                    selected.status === "deleted"
+                  }
                   title={
                     selected.status === "suspended"
                       ? "Tài khoản đã bị khóa"
@@ -440,7 +460,11 @@ function AdminUsersPage() {
               </div>
               <h3 className="font-black">Vai trò</h3>
               <select
-                disabled={!mayChangeRole || Boolean(savingAction)}
+                disabled={
+                  !mayChangeRole ||
+                  selected.status === "deleted" ||
+                  Boolean(savingAction)
+                }
                 value={selected.role}
                 onChange={(e) =>
                   void mutate(
@@ -508,23 +532,78 @@ function AdminUsersPage() {
               </div>
             </div>
             <div className="space-y-3">
+              <h3 className="font-black">Gói người dùng</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  aria-label="Chọn gói người dùng"
+                  disabled={
+                    !mayChangeRole ||
+                    selected.status === "deleted" ||
+                    Boolean(savingAction)
+                  }
+                  value={planDraft}
+                  onChange={(event) =>
+                    setPlanDraft(event.target.value as ManagedUserPlan)
+                  }
+                  className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
+                >
+                  {plans.map((plan) => (
+                    <option key={plan} value={plan}>
+                      {planLabel[plan]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Chọn chu kỳ gói người dùng"
+                  disabled={
+                    !mayChangeRole ||
+                    selected.status === "deleted" ||
+                    Boolean(savingAction)
+                  }
+                  value={billingCycle}
+                  onChange={(event) =>
+                    setBillingCycle(event.target.value as BillingCycle)
+                  }
+                  className="rounded-md border border-[#e4ddcf] px-3 py-2 text-sm disabled:opacity-40"
+                >
+                  <option value="monthly">Theo tháng</option>
+                  <option value="yearly">Theo năm</option>
+                </select>
+              </div>
+              <button
+                disabled={
+                  !mayChangeRole ||
+                  selected.status === "deleted" ||
+                  Boolean(savingAction)
+                }
+                onClick={() =>
+                  void mutate(
+                    "plan",
+                    () => updateUserPlan(selected.id, planDraft, billingCycle),
+                    "Đã cập nhật gói người dùng",
+                  )
+                }
+                className="w-full rounded-md border border-[#21104a] px-3 py-2 text-sm font-black text-[#21104a] disabled:opacity-40"
+              >
+                {savingAction === "plan" ? "Đang cập nhật..." : "Cập nhật gói"}
+              </button>
               <h3 className="font-black">Điều chỉnh thời lượng</h3>
               <input
                 type="number"
+                disabled={selected.status === "deleted"}
                 value={quotaDelta}
                 onChange={(e) => setQuotaDelta(Number(e.target.value))}
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
               <input
+                disabled={selected.status === "deleted"}
                 value={quotaReason}
                 onChange={(e) => setQuotaReason(e.target.value)}
                 placeholder="Lý do điều chỉnh"
                 className="w-full rounded-md border border-[#e4ddcf] px-3 py-2 text-sm"
               />
               {quotaError && (
-                <p className="text-sm text-red-700">
-                  {quotaError}
-                </p>
+                <p className="text-sm text-red-700">{quotaError}</p>
               )}
               {!quotaReason.trim() && (
                 <p className="text-xs text-[#756894]">
@@ -554,7 +633,11 @@ function AdminUsersPage() {
                 </p>
                 {!deleteArmed ? (
                   <button
-                    disabled={!mayChangeRole || selected.status === "deleted"}
+                    disabled={
+                      !mayChangeRole ||
+                      selected.status === "deleted" ||
+                      selected.id === session?.user.id
+                    }
                     onClick={() => {
                       setDeleteArmed(true);
                       setDeleteCountdown(5);

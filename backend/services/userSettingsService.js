@@ -1,4 +1,5 @@
 const pool = require("../db");
+const { normalizePrivacySettings } = require("./privacySettingsService");
 
 const DEFAULT_TRANSCRIPTION_SETTINGS = {
   timecodeOffset: "no",
@@ -54,7 +55,7 @@ function normalizeTranscriptionSettings(settings = {}) {
 
 async function getUserSettings(userId) {
   const { rows } = await pool.query(
-    `SELECT custom_dictionary, transcription_settings
+    `SELECT custom_dictionary, transcription_settings, privacy_settings
      FROM user_settings
      WHERE user_id = $1`,
     [userId],
@@ -65,6 +66,7 @@ async function getUserSettings(userId) {
     transcriptionSettings: normalizeTranscriptionSettings(
       rows[0]?.transcription_settings || {},
     ),
+    privacySettings: normalizePrivacySettings(rows[0]?.privacy_settings || {}),
   };
 }
 
@@ -75,7 +77,7 @@ async function saveCustomDictionary(userId, dictionaryText) {
      VALUES ($1, $2)
      ON CONFLICT (user_id)
      DO UPDATE SET custom_dictionary = EXCLUDED.custom_dictionary, updated_at = NOW()
-     RETURNING custom_dictionary, transcription_settings`,
+     RETURNING custom_dictionary, transcription_settings, privacy_settings`,
     [userId, customDictionary],
   );
   return {
@@ -83,6 +85,7 @@ async function saveCustomDictionary(userId, dictionaryText) {
     transcriptionSettings: normalizeTranscriptionSettings(
       rows[0].transcription_settings || {},
     ),
+    privacySettings: normalizePrivacySettings(rows[0].privacy_settings || {}),
   };
 }
 
@@ -93,7 +96,7 @@ async function saveTranscriptionSettings(userId, settings) {
      VALUES ($1, $2)
      ON CONFLICT (user_id)
      DO UPDATE SET transcription_settings = EXCLUDED.transcription_settings, updated_at = NOW()
-     RETURNING custom_dictionary, transcription_settings`,
+     RETURNING custom_dictionary, transcription_settings, privacy_settings`,
     [userId, JSON.stringify(transcriptionSettings)],
   );
   return {
@@ -101,6 +104,26 @@ async function saveTranscriptionSettings(userId, settings) {
     transcriptionSettings: normalizeTranscriptionSettings(
       rows[0].transcription_settings || {},
     ),
+    privacySettings: normalizePrivacySettings(rows[0].privacy_settings || {}),
+  };
+}
+
+async function savePrivacySettings(userId, settings) {
+  const privacySettings = normalizePrivacySettings(settings);
+  const { rows } = await pool.query(
+    `INSERT INTO user_settings (user_id, privacy_settings)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id)
+     DO UPDATE SET privacy_settings = EXCLUDED.privacy_settings, updated_at = NOW()
+     RETURNING custom_dictionary, transcription_settings, privacy_settings`,
+    [userId, JSON.stringify(privacySettings)],
+  );
+  return {
+    customDictionary: rows[0].custom_dictionary || "",
+    transcriptionSettings: normalizeTranscriptionSettings(
+      rows[0].transcription_settings || {},
+    ),
+    privacySettings: normalizePrivacySettings(rows[0].privacy_settings || {}),
   };
 }
 
@@ -111,5 +134,6 @@ module.exports = {
   normalizeTranscriptionSettings,
   parseDictionaryKeywords,
   saveCustomDictionary,
+  savePrivacySettings,
   saveTranscriptionSettings,
 };

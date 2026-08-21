@@ -19,6 +19,7 @@ import {
   FileAudio,
   FileText,
   Flag,
+  GitCompare,
   History,
   Languages,
   Pause,
@@ -30,30 +31,62 @@ import {
   RotateCw,
   Save,
   Search,
+  Sparkles,
+  Tag,
   Undo2,
   Redo2,
   Users,
 } from "lucide-react";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
+import { TranscriptSidebarSection } from "@/components/transcript-sidebar-section";
+import { TranscriptCollaborationPanel } from "@/components/transcript-collaboration-panel";
 import { useAuth } from "@/context/AuthContext";
 import { formatMediaDuration } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import {
+  audioAccessNeedsRefresh,
+  audioRecoveryMadeProgress,
+  canUseSyncEditor,
   clampSeekTime,
+  createAudioRecoveryPlan,
+  createApproximateTimedWords,
   findActiveWordIndex,
   formatPlaybackTime,
   normalizeTimedWordBounds,
+  indexTimedWordTextRanges,
+  MAX_EDITABLE_TIMED_WORDS,
+  nextTranscriptFollowMode,
   replaceTimedWordInText,
+  type TranscriptFollowMode,
 } from "@/lib/transcript-playback";
+import {
+  EDITABLE_TIMED_WORD_CLASS_NAME,
+  TRANSCRIPT_WORD_FLOW_CLASS_NAME,
+  editableTimedWordWidthCh,
+} from "@/lib/transcript-typography";
+import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
+import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  compareTranscriptText,
+  type TranscriptTextComparison,
+} from "@/lib/transcript-version";
+import {
+  applyRememberedSpeakerLabels,
+  normalizeSpeakerMemory,
+  renameRememberedSpeakerLabel,
+} from "@/lib/speaker-memory";
+import { buildTemplateFrontMatter } from "@/lib/transcript-template-export";
 
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 12_000;
 const AUTO_SAVE_DELAY_MS = 1_200;
-const MAX_SYNC_WORDS = 5_000;
 const MAX_LOCAL_HISTORY = 80;
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
+const VIRTUAL_SEGMENT_ESTIMATED_SIZE = 176;
+const VIRTUAL_SEGMENT_GAP = 24;
+const VIRTUAL_SEGMENT_OVERSCAN = 3;
 
 type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 type EditorMode = "sync" | "edit";
@@ -83,6 +116,11 @@ interface TranscriptDetail {
   processing_seconds: number | null;
   text: string;
   words: TranscriptWord[];
+  transcript_template: TranscriptTemplate;
+  insights: TranscriptInsights | null;
+  insights_updated_at: string | null;
+  reviewed_word_indexes: number[];
+  tags: string[];
   audio_filename: string | null;
   source_language: string | null;
   translated_text: string | null;
@@ -94,6 +132,30 @@ interface TranscriptDetail {
   created_at: string;
 }
 
+type TranscriptTemplate = "meeting" | "interview" | "podcast" | "lecture";
+
+interface TranscriptInsights {
+  template: TranscriptTemplate;
+  summary: string;
+  keyPoints: string[];
+  actionItems: Array<{
+    text: string;
+    owner: string | null;
+    deadline: string | null;
+  }>;
+  decisions: string[];
+  chapters: Array<{
+    title: string;
+    startMs: number;
+    endMs: number;
+    summary: string;
+  }>;
+  keywords: string[];
+  questions: string[];
+  generatedAt: string;
+  generator: string;
+}
+
 interface IndexedWord extends TranscriptWord {
   index: number;
 }
@@ -101,9 +163,19 @@ interface IndexedWord extends TranscriptWord {
 interface TranscriptVersion {
   id: number;
   label: string | null;
+  actor_name: string;
+  change_source: "owner" | "shared" | "restore";
   created_at: string;
   text_length: number;
   word_count: number;
+}
+
+interface VersionComparison {
+  version: Pick<
+    TranscriptVersion,
+    "id" | "label" | "actor_name" | "change_source" | "created_at"
+  >;
+  comparison: TranscriptTextComparison;
 }
 
 interface EditorSnapshot {
@@ -131,16 +203,33 @@ const EditableTimedWord = memo(function EditableTimedWord({
 }) {
   const [value, setValue] = useState(word.text);
   const inputRef = useRef<HTMLInputElement>(null);
+  const valueRef = useRef(word.text);
+  const wordRef = useRef(word);
+  const onCommitRef = useRef(onCommit);
   const isLowConfidence =
     typeof word.confidence === "number" &&
     word.confidence > 0 &&
     word.confidence < LOW_CONFIDENCE_THRESHOLD;
 
   useEffect(() => {
+    wordRef.current = word;
+    onCommitRef.current = onCommit;
     if (document.activeElement !== inputRef.current) {
       setValue(word.text);
+      valueRef.current = word.text;
     }
-  }, [word.text]);
+  }, [onCommit, word]);
+
+  useEffect(
+    () => () => {
+      const currentWord = wordRef.current;
+      const nextValue = valueRef.current.trim();
+      if (nextValue && nextValue !== currentWord.text) {
+        onCommitRef.current(currentWord.index, nextValue);
+      }
+    },
+    [],
+  );
 
   function commit() {
     const nextValue = value.trim();
@@ -159,7 +248,10 @@ const EditableTimedWord = memo(function EditableTimedWord({
       data-word-index={word.index}
       aria-current={active ? "true" : undefined}
       aria-label={`Chỉnh sửa từ ${word.text}`}
-      onChange={(event) => setValue(event.target.value)}
+      onChange={(event) => {
+        valueRef.current = event.target.value;
+        setValue(event.target.value);
+      }}
       onClick={() => onSeek(word.start)}
       onBlur={commit}
       onKeyDown={(event) => {
@@ -168,14 +260,15 @@ const EditableTimedWord = memo(function EditableTimedWord({
           event.currentTarget.blur();
         }
         if (event.key === "Escape") {
+          valueRef.current = word.text;
           setValue(word.text);
           event.currentTarget.blur();
         }
       }}
       style={{
-        width: `${Math.max(1.2, Math.min(36, value.length + 0.35))}ch`,
+        width: `${editableTimedWordWidthCh(value)}ch`,
       }}
-      className={`mr-0.5 inline-block h-7 min-w-0 rounded border-0 px-px align-middle text-[15px] leading-7 outline-none transition-colors duration-150 ${
+      className={`${EDITABLE_TIMED_WORD_CLASS_NAME} ${
         active
           ? "bg-[#ffcb05] font-black text-[#21104a] shadow-[0_0_0_3px_rgba(255,203,5,.22)]"
           : isLowConfidence
@@ -186,7 +279,106 @@ const EditableTimedWord = memo(function EditableTimedWord({
   );
 });
 
+const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
+  segment,
+  segmentIndex,
+  start,
+  activeWordIndex,
+  onCommit,
+  onSeek,
+  onMeasure,
+}: {
+  segment: TranscriptSegment;
+  segmentIndex: number;
+  start: number;
+  activeWordIndex: number;
+  onCommit: (index: number, text: string) => void;
+  onSeek: (milliseconds: number) => void;
+  onMeasure: (index: number, size: number) => void;
+}) {
+  const articleRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+    const measure = () =>
+      onMeasure(
+        segmentIndex,
+        Math.ceil(article.getBoundingClientRect().height) + VIRTUAL_SEGMENT_GAP,
+      );
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(article);
+    return () => observer.disconnect();
+  }, [onMeasure, segmentIndex]);
+
+  return (
+    <article
+      ref={articleRef}
+      data-segment-index={segmentIndex}
+      style={{ transform: `translateY(${start}px)` }}
+      className="absolute inset-x-0 top-0 grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
+    >
+      <div className="flex items-center gap-2 sm:block">
+        <button
+          type="button"
+          onClick={() => onSeek(segment.start)}
+          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
+        >
+          {formatClock(segment.start)}
+        </button>
+        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
+          {speakerLabel(segment.speaker)}
+        </p>
+      </div>
+      <p className={TRANSCRIPT_WORD_FLOW_CLASS_NAME}>
+        {segment.words.map((word) => (
+          <EditableTimedWord
+            key={`${word.start}-${word.index}`}
+            word={word}
+            active={activeWordIndex === word.index}
+            onCommit={onCommit}
+            onSeek={onSeek}
+          />
+        ))}
+      </p>
+    </article>
+  );
+});
+
+function HighlightedPlainText({
+  text,
+  range,
+}: {
+  text: string;
+  range: { start: number; end: number } | null;
+}) {
+  if (!range) {
+    return <>{text || " "}</>;
+  }
+
+  return (
+    <>
+      {text.slice(0, range.start)}
+      <mark
+        data-active-plain-word="true"
+        className="rounded bg-[#ffcb05] px-0.5 font-black text-[#21104a]"
+      >
+        {text.slice(range.start, range.end)}
+      </mark>
+      {text.slice(range.end) || " "}
+    </>
+  );
+}
+
 export const Route = createFileRoute("/transcript/$id")({
+  validateSearch: (search: Record<string, unknown>) => {
+    const at = Number(search.at);
+    return {
+      at: Number.isFinite(at) && at >= 0 ? at : undefined,
+    };
+  },
   component: TranscriptEditorPage,
 });
 
@@ -245,6 +437,25 @@ function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
   });
 
   return segments;
+}
+
+function findSegmentIndexForWord(
+  segments: TranscriptSegment[],
+  wordIndex: number,
+) {
+  if (wordIndex < 0) return -1;
+  let low = 0;
+  let high = segments.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const segmentWords = segments[middle].words;
+    const firstWordIndex = segmentWords[0]?.index ?? -1;
+    const lastWordIndex = segmentWords.at(-1)?.index ?? -1;
+    if (wordIndex < firstWordIndex) high = middle - 1;
+    else if (wordIndex > lastWordIndex) low = middle + 1;
+    else return middle;
+  }
+  return -1;
 }
 
 function buildTextFromTimedWords(words: TranscriptWord[]) {
@@ -469,6 +680,7 @@ function exportSegmentLabel(
 
 function TranscriptEditorPage() {
   const { id } = Route.useParams();
+  const { at: requestedStartMs } = Route.useSearch();
   const transcriptId = Number.parseInt(id, 10);
   const { user, token, isLoading } = useAuth();
   const navigate = useNavigate();
@@ -477,6 +689,9 @@ function TranscriptEditorPage() {
   const [loadError, setLoadError] = useState("");
   const [retryKey, setRetryKey] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioAccessExpiresAt, setAudioAccessExpiresAt] = useState<
+    number | null
+  >(null);
   const [audioError, setAudioError] = useState("");
   const [audioLoading, setAudioLoading] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("sync");
@@ -499,6 +714,26 @@ function TranscriptEditorPage() {
   const [versions, setVersions] = useState<TranscriptVersion[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
+  const [versionComparingId, setVersionComparingId] = useState<number | null>(
+    null,
+  );
+  const [versionComparison, setVersionComparison] =
+    useState<VersionComparison | null>(null);
+  const [insightsGenerating, setInsightsGenerating] = useState(false);
+  const [insightsError, setInsightsError] = useState("");
+  const [tagDraft, setTagDraft] = useState("");
+  const [speakerMergeSource, setSpeakerMergeSource] = useState("");
+  const [speakerMergeTarget, setSpeakerMergeTarget] = useState("");
+  const [rememberSpeakerLabels, setRememberSpeakerLabels] = useState(true);
+  const [timelineIsEstimated, setTimelineIsEstimated] = useState(false);
+  const [timelineIsTooLarge, setTimelineIsTooLarge] = useState(false);
+  const [syncScrollOffset, setSyncScrollOffset] = useState(0);
+  const [syncViewportSize, setSyncViewportSize] = useState(600);
+  const [transcriptFollowMode, setTranscriptFollowMode] =
+    useState<TranscriptFollowMode>("following");
+  const [segmentSizes, setSegmentSizes] = useState(
+    () => new Map<number, number>(),
+  );
   const [exportOptions, setExportOptions] = useState<ExportOptions>({
     includeSpeakers: true,
     includeTimestamps: true,
@@ -510,22 +745,74 @@ function TranscriptEditorPage() {
   const syncScrollRef = useRef<HTMLDivElement>(null);
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
   const playWhenReadyRef = useRef(false);
+  const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
+  const audioLoadingRef = useRef(false);
+  const audioRecoveryAttemptsRef = useRef(0);
+  const audioRecoveryCheckpointRef = useRef<number | null>(null);
   const loadRequestRef = useRef<AbortController | null>(null);
   const saveRequestRef = useRef<AbortController | null>(null);
   const editorTextRef = useRef("");
   const savedTextRef = useRef("");
   const wordsRef = useRef<TranscriptWord[]>([]);
+  const savedWordsRef = useRef<TranscriptWord[]>([]);
+  const timelineNeedsInitializationRef = useRef(false);
   const historyPushRef = useRef(0);
+  const syncScrollFrameRef = useRef<number | null>(null);
 
   const words = useMemo(() => transcript?.words ?? [], [transcript?.words]);
   const activeTranscriptId = transcript?.id ?? null;
-  const syncAvailable = words.length > 0 && words.length <= MAX_SYNC_WORDS;
+  const syncAvailable = canUseSyncEditor(words.length);
   const segments = useMemo(() => buildSegments(words), [words]);
+  const activeSegmentIndex = useMemo(
+    () => findSegmentIndexForWord(segments, activeWordIndex),
+    [activeWordIndex, segments],
+  );
+  const virtualSegmentLayout = useMemo(
+    () =>
+      getVirtualLayout({
+        itemCount: segments.length,
+        estimatedItemSize: VIRTUAL_SEGMENT_ESTIMATED_SIZE,
+        measuredItemSizes: segmentSizes,
+      }),
+    [segmentSizes, segments.length],
+  );
+  const virtualSegments = useMemo(
+    () =>
+      getVirtualWindow({
+        layout: virtualSegmentLayout,
+        scrollOffset: syncScrollOffset,
+        viewportSize: syncViewportSize,
+        overscan: VIRTUAL_SEGMENT_OVERSCAN,
+      }),
+    [syncScrollOffset, syncViewportSize, virtualSegmentLayout],
+  );
+  const firstVirtualSegment = virtualSegments.items[0]?.index ?? -1;
+  const lastVirtualSegment = virtualSegments.items.at(-1)?.index ?? -1;
+  const activeSegmentStart =
+    activeSegmentIndex >= 0
+      ? (virtualSegments.offsets[activeSegmentIndex] ?? 0)
+      : 0;
+  const activeSegmentSize =
+    activeSegmentIndex >= 0
+      ? (segmentSizes.get(activeSegmentIndex) ??
+        VIRTUAL_SEGMENT_ESTIMATED_SIZE)
+      : 0;
   const translationSegments = useMemo(
     () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
     [segments.length, transcript?.translated_text],
   );
+  const plainTextWordRanges = useMemo(
+    () =>
+      editorMode === "edit" && syncAvailable
+        ? indexTimedWordTextRanges(editorText, words)
+        : [],
+    [editorMode, editorText, syncAvailable, words],
+  );
+  const plainTextActiveRange =
+    activeWordIndex >= 0
+      ? (plainTextWordRanges[activeWordIndex] ?? null)
+      : null;
   const speakers = useMemo(
     () =>
       Array.from(
@@ -546,10 +833,12 @@ function TranscriptEditorPage() {
           (word) =>
             typeof word.confidence === "number" &&
             word.confidence > 0 &&
-            word.confidence < LOW_CONFIDENCE_THRESHOLD,
+            word.confidence < LOW_CONFIDENCE_THRESHOLD &&
+            !transcript?.reviewed_word_indexes?.includes(word.index),
         )
-        .sort((a, b) => a.start - b.start),
-    [words],
+        .sort((a, b) => a.start - b.start)
+        .slice(0, 30),
+    [transcript?.reviewed_word_indexes, words],
   );
   const lowConfidenceReviewIndex = useMemo(
     () => lowConfidenceWords.findIndex((word) => word.index === activeWordIndex),
@@ -573,6 +862,61 @@ function TranscriptEditorPage() {
   useEffect(() => {
     if (searchIndex >= searchMatches.length) setSearchIndex(-1);
   }, [searchIndex, searchMatches.length]);
+
+  const handleSegmentMeasure = useCallback((index: number, size: number) => {
+    setSegmentSizes((current) => {
+      const previousSize = current.get(index);
+      if (previousSize !== undefined && Math.abs(previousSize - size) < 1) {
+        return current;
+      }
+      const next = new Map(current);
+      next.set(index, size);
+      return next;
+    });
+  }, []);
+
+  const handleSyncScroll = useCallback((scrollOffset: number) => {
+    if (syncScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(syncScrollFrameRef.current);
+    }
+    syncScrollFrameRef.current = window.requestAnimationFrame(() => {
+      syncScrollFrameRef.current = null;
+      setSyncScrollOffset(scrollOffset);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (syncScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(syncScrollFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    setSegmentSizes(new Map());
+    setSyncScrollOffset(0);
+    if (syncScrollRef.current) syncScrollRef.current.scrollTop = 0;
+  }, [activeTranscriptId]);
+
+  useEffect(() => {
+    if (editorMode !== "sync" || !syncAvailable) return;
+    const container = syncScrollRef.current;
+    if (!container) return;
+    const updateViewport = () => {
+      setSyncViewportSize(Math.max(1, container.clientHeight));
+      setSyncScrollOffset(container.scrollTop);
+    };
+    updateViewport();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateViewport);
+      return () => window.removeEventListener("resize", updateViewport);
+    }
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [editorMode, segments.length, syncAvailable]);
 
   useEffect(() => {
     if (transcript?.translated_text) return;
@@ -637,8 +981,57 @@ function TranscriptEditorPage() {
         );
       }
       const detail = body as TranscriptDetail;
-      detail.words = normalizeWords(detail.words, detail.duration);
+      const providerWords = normalizeWords(detail.words, detail.duration);
+      const estimatedWords = providerWords.length
+        ? []
+        : createApproximateTimedWords(
+            detail.text,
+            detail.duration,
+            MAX_EDITABLE_TIMED_WORDS,
+          );
+      detail.words = providerWords.length
+        ? providerWords
+        : estimatedWords;
+      savedWordsRef.current = providerWords.map((word) => ({ ...word }));
+      timelineNeedsInitializationRef.current =
+        !providerWords.length && estimatedWords.length > 0;
+      setTimelineIsEstimated(!providerWords.length && detail.words.length > 0);
+      setTimelineIsTooLarge(
+        !providerWords.length &&
+          Boolean(String(detail.text || "").trim()) &&
+          !estimatedWords.length,
+      );
+      try {
+        const remembered = normalizeSpeakerMemory(
+          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+        );
+        detail.words = applyRememberedSpeakerLabels(detail.words, remembered);
+      } catch {
+        // Bộ nhớ trình duyệt có thể bị chặn; transcript vẫn hoạt động bình thường.
+      }
       detail.text = String(detail.text || "");
+      detail.transcript_template = [
+        "meeting",
+        "interview",
+        "podcast",
+        "lecture",
+      ].includes(detail.transcript_template)
+        ? detail.transcript_template
+        : "meeting";
+      detail.insights =
+        detail.insights && typeof detail.insights === "object"
+          ? detail.insights
+          : null;
+      detail.reviewed_word_indexes = Array.isArray(
+        detail.reviewed_word_indexes,
+      )
+        ? detail.reviewed_word_indexes.filter(
+            (value) => Number.isSafeInteger(value) && value >= 0,
+          )
+        : [];
+      detail.tags = Array.isArray(detail.tags)
+        ? detail.tags.map((tag) => String(tag)).filter(Boolean)
+        : [];
       setTranscript(detail);
       setTranslationRetryError("");
       setEditorText(detail.text);
@@ -649,8 +1042,10 @@ function TranscriptEditorPage() {
       setRedoStack([]);
       setSearchQuery("");
       setSearchIndex(-1);
+      setInsightsError("");
+      setTagDraft(detail.tags.join(", "));
       setEditorMode(
-        detail.words.length > 0 && detail.words.length <= MAX_SYNC_WORDS
+        canUseSyncEditor(detail.words.length)
           ? "sync"
           : "edit",
       );
@@ -715,6 +1110,7 @@ function TranscriptEditorPage() {
   useEffect(() => {
     audioRef.current?.pause();
     setAudioUrl(null);
+    setAudioAccessExpiresAt(null);
     setAudioError("");
     setAudioLoading(false);
     setIsPlaying(false);
@@ -722,73 +1118,173 @@ function TranscriptEditorPage() {
     setAudioDurationSeconds(0);
     setActiveWordIndex(-1);
     playWhenReadyRef.current = false;
-    pendingSeekMillisecondsRef.current = null;
-  }, [transcript?.audio_filename, transcript?.id]);
+    playbackRequestedRef.current = false;
+    audioLoadingRef.current = false;
+    audioRecoveryAttemptsRef.current = 0;
+    audioRecoveryCheckpointRef.current = null;
+    setTranscriptFollowMode("following");
+    pendingSeekMillisecondsRef.current = requestedStartMs ?? null;
+    if (requestedStartMs !== undefined) {
+      setPlaybackSeconds(requestedStartMs / 1000);
+      setActiveWordIndex(
+        findActiveWordIndex(wordsRef.current, requestedStartMs),
+      );
+    }
+  }, [requestedStartMs, transcript?.audio_filename, transcript?.id]);
 
   useEffect(() => {
-    if (editorMode !== "sync" || activeWordIndex < 0) return;
+    if (
+      editorMode !== "sync" ||
+      transcriptFollowMode !== "following" ||
+      activeWordIndex < 0 ||
+      activeSegmentIndex < 0
+    ) {
+      return;
+    }
     const container = syncScrollRef.current;
-    const activeWord = container?.querySelector<HTMLElement>(
-      `[data-word-index="${activeWordIndex}"]`,
-    );
-    if (!container || !activeWord) return;
-    const containerRect = container.getBoundingClientRect();
-    const wordRect = activeWord.getBoundingClientRect();
-    const isOutsideViewport =
-      wordRect.top < containerRect.top + 64 ||
-      wordRect.bottom > containerRect.bottom - 64;
-    if (isOutsideViewport) {
-      activeWord.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!container) return;
+    const segmentIsRendered =
+      activeSegmentIndex >= firstVirtualSegment &&
+      activeSegmentIndex <= lastVirtualSegment;
+    if (!segmentIsRendered) {
+      const nextScrollTop = Math.max(
+        0,
+        activeSegmentStart -
+          Math.max(0, container.clientHeight - activeSegmentSize) / 2,
+      );
+      container.scrollTop = nextScrollTop;
+      setSyncScrollOffset(nextScrollTop);
+      return;
     }
-  }, [activeWordIndex, editorMode]);
 
-  const loadAudio = useCallback(async (playWhenReady = false) => {
-    if (!token || !transcript?.audio_filename || audioLoading) return;
-    playWhenReadyRef.current = playWhenReady;
-    setAudioLoading(true);
-    setAudioError("");
-    try {
-      const response = await fetch(
-        `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        },
+    const frame = window.requestAnimationFrame(() => {
+      const activeWord = container.querySelector<HTMLElement>(
+        `[data-word-index="${activeWordIndex}"]`,
       );
-      const body = (await response.json().catch(() => ({}))) as {
-        url?: string;
-        error?: string;
-      };
-      if (!response.ok || !body.url) {
-        throw new Error(body.error || "Không tạo được đường dẫn audio");
+      if (!activeWord) return;
+      const containerRect = container.getBoundingClientRect();
+      const wordRect = activeWord.getBoundingClientRect();
+      const isOutsideViewport =
+        wordRect.top < containerRect.top + 64 ||
+        wordRect.bottom > containerRect.bottom - 64;
+      if (isOutsideViewport) {
+        activeWord.scrollIntoView({ block: "center", behavior: "auto" });
       }
-      setAudioUrl(
-        body.url.startsWith("http") ? body.url : `${API_URL}${body.url}`,
-      );
-    } catch (error) {
-      playWhenReadyRef.current = false;
-      setAudioError(
-        error instanceof Error ? error.message : "Không tải được audio gốc",
-      );
-    } finally {
-      setAudioLoading(false);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeSegmentIndex,
+    activeSegmentSize,
+    activeSegmentStart,
+    activeWordIndex,
+    editorMode,
+    firstVirtualSegment,
+    lastVirtualSegment,
+    transcriptFollowMode,
+  ]);
+
+  useEffect(() => {
+    if (
+      editorMode !== "edit" ||
+      transcriptFollowMode !== "following" ||
+      !plainTextActiveRange
+    ) {
+      return;
     }
-  }, [audioLoading, token, transcript?.audio_filename, transcript?.id]);
+    const textarea = plainTextAreaRef.current;
+    const mirror = plainTextMirrorRef.current;
+    const activeWord = mirror?.querySelector<HTMLElement>(
+      '[data-active-plain-word="true"]',
+    );
+    if (!textarea || !mirror || !activeWord) return;
+
+    const wordTop = activeWord.offsetTop;
+    const wordBottom = wordTop + activeWord.offsetHeight;
+    const visibleTop = textarea.scrollTop + 64;
+    const visibleBottom = textarea.scrollTop + textarea.clientHeight - 64;
+
+    if (wordTop < visibleTop || wordBottom > visibleBottom) {
+      const nextScrollTop = Math.max(
+        0,
+        wordTop - Math.round(textarea.clientHeight / 2),
+      );
+      textarea.scrollTop = nextScrollTop;
+      mirror.style.transform = `translateY(-${nextScrollTop}px)`;
+    }
+  }, [editorMode, plainTextActiveRange, transcriptFollowMode]);
+
+  const loadAudio = useCallback(
+    async (playWhenReady = false, seekMilliseconds: number | null = null) => {
+      if (
+        !token ||
+        !transcript?.audio_filename ||
+        audioLoadingRef.current
+      ) {
+        return;
+      }
+      if (seekMilliseconds !== null) {
+        pendingSeekMillisecondsRef.current = Math.max(0, seekMilliseconds);
+      }
+      playWhenReadyRef.current = playWhenReady;
+      playbackRequestedRef.current = playWhenReady;
+      audioLoadingRef.current = true;
+      setAudioLoading(true);
+      setAudioError("");
+      try {
+        const response = await fetch(
+          `${API_URL}/api/transcribe/${transcript.id}/audio-access`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          url?: string;
+          expiresAt?: string;
+          error?: string;
+        };
+        if (!response.ok || !body.url) {
+          throw new Error(body.error || "Không tạo được đường dẫn audio");
+        }
+        const expiresAt = body.expiresAt ? Date.parse(body.expiresAt) : NaN;
+        setAudioAccessExpiresAt(
+          Number.isFinite(expiresAt) ? expiresAt : null,
+        );
+        const resolvedUrl = body.url.startsWith("http")
+          ? body.url
+          : `${API_URL}${body.url}`;
+        const separator = resolvedUrl.includes("?") ? "&" : "?";
+        setAudioUrl(`${resolvedUrl}${separator}refresh=${Date.now()}`);
+      } catch (error) {
+        playWhenReadyRef.current = false;
+        playbackRequestedRef.current = false;
+        setAudioError(
+          error instanceof Error ? error.message : "Không tải được audio gốc",
+        );
+      } finally {
+        audioLoadingRef.current = false;
+        setAudioLoading(false);
+      }
+    },
+    [token, transcript?.audio_filename, transcript?.id],
+  );
 
   const pushUndoSnapshot = useCallback((force = false) => {
     const now = Date.now();
     if (!force && now - historyPushRef.current < 700) return;
     historyPushRef.current = now;
+    // Word arrays are replaced, never mutated, so long-text snapshots can share
+    // the immutable timeline instead of cloning thousands of objects per keypress.
     const snapshot = {
       text: editorTextRef.current,
-      words: wordsRef.current.map((word) => ({ ...word })),
+      words: wordsRef.current,
     };
     setUndoStack((current) => {
       const last = current[current.length - 1];
       if (
         last &&
         last.text === snapshot.text &&
-        JSON.stringify(last.words) === JSON.stringify(snapshot.words)
+        last.words === snapshot.words
       ) {
         return current;
       }
@@ -817,12 +1313,16 @@ function TranscriptEditorPage() {
   const applyEditorChange = useCallback(
     (text: string, nextWords = wordsRef.current, trackHistory = true) => {
       if (trackHistory) pushUndoSnapshot();
-      const cleanWords = nextWords.map((word) => ({ ...word }));
-      wordsRef.current = cleanWords;
+      const wordsChanged = nextWords !== wordsRef.current;
+      wordsRef.current = nextWords;
       editorTextRef.current = text;
       setEditorText(text);
       setTranscript((current) =>
-        current ? { ...current, text, words: cleanWords } : current,
+        current
+          ? wordsChanged
+            ? { ...current, text, words: nextWords }
+            : { ...current, text }
+          : current,
       );
       setDirtyRevision((value) => value + 1);
       setSaveStatus("unsaved");
@@ -877,6 +1377,14 @@ function TranscriptEditorPage() {
       }, REQUEST_TIMEOUT_MS);
       setSaveStatus("saving");
       setSaveError("");
+      const payload = buildTranscriptSavePayload(
+        text,
+        timedWords,
+        savedWordsRef.current,
+        {
+          initializeWordTimeline: timelineNeedsInitializationRef.current,
+        },
+      );
       try {
         const response = await fetch(
           `${API_URL}/api/transcribe/${activeTranscriptId}`,
@@ -886,22 +1394,34 @@ function TranscriptEditorPage() {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ text, words: timedWords }),
+            body: JSON.stringify(payload),
             signal: controller.signal,
           },
         );
         const body = (await response.json().catch(() => ({}))) as {
           error?: string;
+          words?: unknown;
         };
         if (!response.ok) {
           throw new Error(body.error || "Không thể lưu thay đổi");
         }
+        const returnedWords = Array.isArray(body.words)
+          ? normalizeWords(body.words)
+          : null;
+        const persistedWords = returnedWords ?? timedWords;
+        const saveIsCurrent =
+          editorTextRef.current === text && wordsRef.current === timedWords;
         setSavedText(text);
-        setTranscript((previous) =>
-          previous ? { ...previous, text, words: timedWords } : previous,
-        );
-        setDirtyRevision(0);
-        setSaveStatus(editorTextRef.current === text ? "saved" : "unsaved");
+        savedWordsRef.current = persistedWords.map((word) => ({ ...word }));
+        timelineNeedsInitializationRef.current = false;
+        if (saveIsCurrent) {
+          wordsRef.current = persistedWords;
+          setTranscript((previous) =>
+            previous ? { ...previous, text, words: persistedWords } : previous,
+          );
+          setDirtyRevision(0);
+        }
+        setSaveStatus(saveIsCurrent ? "saved" : "unsaved");
         void loadVersions();
       } catch (error) {
         if (controller.signal.aborted && !timedOut) return;
@@ -951,10 +1471,16 @@ function TranscriptEditorPage() {
         Number.isFinite(transcriptId) &&
         (pendingText !== savedTextRef.current || dirtyRevision > 0)
       ) {
-        const payload = JSON.stringify({
-          text: pendingText,
-          words: wordsRef.current,
-        });
+        const payload = JSON.stringify(
+          buildTranscriptSavePayload(
+            pendingText,
+            wordsRef.current,
+            savedWordsRef.current,
+            {
+              initializeWordTimeline: timelineNeedsInitializationRef.current,
+            },
+          ),
+        );
         void fetch(`${API_URL}/api/transcribe/${transcriptId}`, {
           method: "PATCH",
           headers: {
@@ -971,9 +1497,30 @@ function TranscriptEditorPage() {
 
   function handleTimeUpdate() {
     const currentSeconds = audioRef.current?.currentTime || 0;
+    if (
+      audioRecoveryMadeProgress(
+        audioRecoveryCheckpointRef.current,
+        currentSeconds,
+      )
+    ) {
+      audioRecoveryAttemptsRef.current = 0;
+      audioRecoveryCheckpointRef.current = null;
+    }
     setPlaybackSeconds(currentSeconds);
     setActiveWordIndex(findActiveWordIndex(words, currentSeconds * 1000));
   }
+
+  const pauseTranscriptFollow = useCallback(() => {
+    setTranscriptFollowMode((current) =>
+      nextTranscriptFollowMode(current, "user-scroll"),
+    );
+  }, []);
+
+  const resumeTranscriptFollow = useCallback(() => {
+    setTranscriptFollowMode((current) =>
+      nextTranscriptFollowMode(current, "resume"),
+    );
+  }, []);
 
   function handleAudioReady() {
     const audio = audioRef.current;
@@ -992,16 +1539,61 @@ function TranscriptEditorPage() {
     if (playWhenReadyRef.current) {
       playWhenReadyRef.current = false;
       void audio.play().catch(() => {
+        playbackRequestedRef.current = false;
         setIsPlaying(false);
         setAudioError("Trình duyệt đã chặn tự phát. Hãy nhấn Phát.");
       });
     }
   }
 
+  function handleAudioPlaying() {
+    playbackRequestedRef.current = true;
+    setIsPlaying(true);
+    setAudioError("");
+  }
+
+  function handleAudioEnded() {
+    playbackRequestedRef.current = false;
+    audioRecoveryAttemptsRef.current = 0;
+    audioRecoveryCheckpointRef.current = null;
+    setIsPlaying(false);
+    setActiveWordIndex(-1);
+  }
+
+  function handleAudioError() {
+    const currentSeconds =
+      audioRef.current?.currentTime || playbackSeconds || 0;
+    const recovery = createAudioRecoveryPlan(
+      currentSeconds,
+      playbackRequestedRef.current,
+      audioRecoveryAttemptsRef.current,
+    );
+    setIsPlaying(false);
+    if (!recovery) {
+      playbackRequestedRef.current = false;
+      audioRecoveryCheckpointRef.current = null;
+      setAudioError(
+        "Không thể phát audio. Hãy nhấn Phát để kết nối lại và nghe tiếp.",
+      );
+      return;
+    }
+    audioRecoveryAttemptsRef.current += 1;
+    audioRecoveryCheckpointRef.current = currentSeconds;
+    setAudioError("Đang kết nối lại audio...");
+    void loadAudio(recovery.playWhenReady, recovery.seekMilliseconds);
+  }
+
   function handlePlayPause() {
     const audio = audioRef.current;
-    if (!audioUrl || !audio) {
-      void loadAudio(true);
+    if (
+      !audioUrl ||
+      !audio ||
+      audioError ||
+      audioAccessNeedsRefresh(audioAccessExpiresAt)
+    ) {
+      audioRecoveryAttemptsRef.current = 0;
+      audioRecoveryCheckpointRef.current = null;
+      void loadAudio(true, Math.round(playbackSeconds * 1_000));
       return;
     }
     if (audio.paused) {
@@ -1012,10 +1604,13 @@ function TranscriptEditorPage() {
         audio.currentTime = 0;
         setPlaybackSeconds(0);
       }
+      playbackRequestedRef.current = true;
       void audio.play().catch(() => {
+        playbackRequestedRef.current = false;
         setAudioError("Không thể phát audio. Vui lòng thử tải lại trang.");
       });
     } else {
+      playbackRequestedRef.current = false;
       audio.pause();
     }
   }
@@ -1032,6 +1627,13 @@ function TranscriptEditorPage() {
       deltaSeconds,
       duration,
     );
+    if (audioAccessNeedsRefresh(audioAccessExpiresAt)) {
+      void loadAudio(
+        playbackRequestedRef.current,
+        Math.round(nextTime * 1_000),
+      );
+      return;
+    }
     audio.currentTime = nextTime;
     setPlaybackSeconds(nextTime);
     setActiveWordIndex(findActiveWordIndex(words, nextTime * 1000));
@@ -1040,6 +1642,13 @@ function TranscriptEditorPage() {
   function seekFromProgress(nextSeconds: number) {
     const audio = audioRef.current;
     if (!audio) return;
+    if (audioAccessNeedsRefresh(audioAccessExpiresAt)) {
+      void loadAudio(
+        playbackRequestedRef.current,
+        Math.round(nextSeconds * 1_000),
+      );
+      return;
+    }
     audio.currentTime = nextSeconds;
     setPlaybackSeconds(nextSeconds);
     setActiveWordIndex(findActiveWordIndex(words, nextSeconds * 1000));
@@ -1047,21 +1656,24 @@ function TranscriptEditorPage() {
 
   const seekTo = useCallback(
     (milliseconds: number) => {
-      if (!audioRef.current || !audioUrl) {
+      resumeTranscriptFollow();
+      if (
+        !audioRef.current ||
+        !audioUrl ||
+        audioAccessNeedsRefresh(audioAccessExpiresAt)
+      ) {
         pendingSeekMillisecondsRef.current = milliseconds;
-        playWhenReadyRef.current = false;
-        setIsPlaying(false);
-        void loadAudio(false);
+        void loadAudio(true, milliseconds);
         return;
       }
-      const nextSeconds = milliseconds / 1000;
-      audioRef.current.pause();
-      audioRef.current.currentTime = nextSeconds;
-      setIsPlaying(false);
-      setPlaybackSeconds(nextSeconds);
-      setActiveWordIndex(findActiveWordIndex(wordsRef.current, milliseconds));
+      playbackRequestedRef.current = true;
+      audioRef.current.currentTime = milliseconds / 1000;
+      void audioRef.current.play().catch(() => {
+        playbackRequestedRef.current = false;
+        setAudioError("Không thể phát audio. Hãy nhấn Phát để thử lại.");
+      });
     },
-    [audioUrl, loadAudio],
+    [audioAccessExpiresAt, audioUrl, loadAudio, resumeTranscriptFollow],
   );
 
   const jumpToLowConfidenceWord = useCallback(
@@ -1187,6 +1799,21 @@ function TranscriptEditorPage() {
         : word,
     );
     applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+    if (rememberSpeakerLabels) {
+      try {
+        const remembered = renameRememberedSpeakerLabel(
+          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+          previousSpeaker,
+          cleanSpeaker,
+        );
+        window.localStorage.setItem(
+          "vbee-speaker-labels",
+          JSON.stringify(remembered),
+        );
+      } catch {
+        // Không chặn thao tác đổi tên nếu bộ nhớ trình duyệt không khả dụng.
+      }
+    }
   }
 
   function markLowConfidenceReviewed(wordIndex: number, advance = false) {
@@ -1206,8 +1833,152 @@ function TranscriptEditorPage() {
       index === wordIndex ? { ...word, confidence: 1 } : word,
     );
     applyEditorChange(editorTextRef.current, nextWords, true);
+    if (transcript && !transcript.reviewed_word_indexes.includes(wordIndex)) {
+      void saveWorkflow({
+        reviewedWordIndexes: [...transcript.reviewed_word_indexes, wordIndex].sort(
+          (left, right) => left - right,
+        ),
+      });
+    }
     if (nextReviewWord && nextReviewWord.index !== wordIndex) {
       window.requestAnimationFrame(() => jumpToLowConfidenceWord(nextReviewWord));
+    }
+  }
+
+  function mergeSpeakers() {
+    if (!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget) return;
+    const nextWords = wordsRef.current.map((word) =>
+      String(word.speaker ?? "") === speakerMergeSource
+        ? { ...word, speaker: speakerMergeTarget }
+        : word,
+    );
+    applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+    setSpeakerMergeSource("");
+  }
+
+  function splitSpeakerAtActiveWord() {
+    if (activeWordIndex < 0 || activeWordIndex >= wordsRef.current.length) return;
+    const currentSpeaker = String(wordsRef.current[activeWordIndex].speaker ?? "");
+    if (!currentSpeaker) return;
+    const nextSpeaker = `${speakerLabel(currentSpeaker)} (phần 2)`;
+    let segmentEnd = activeWordIndex + 1;
+    while (
+      segmentEnd < wordsRef.current.length &&
+      String(wordsRef.current[segmentEnd].speaker ?? "") === currentSpeaker
+    ) {
+      segmentEnd += 1;
+    }
+    const nextWords = wordsRef.current.map((word, index) => {
+      return index >= activeWordIndex && index < segmentEnd
+        ? { ...word, speaker: nextSpeaker }
+        : word;
+    });
+    applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
+  }
+
+  async function saveWorkflow(values: {
+    template?: TranscriptTemplate;
+    tags?: string[];
+    reviewedWordIndexes?: number[];
+  }) {
+    if (!token || !activeTranscriptId) return;
+    const response = await fetch(
+      `${API_URL}/api/transcribe/${activeTranscriptId}/workflow`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(values),
+      },
+    );
+    const body = (await response.json().catch(() => ({}))) as {
+      template?: TranscriptTemplate;
+      tags?: string[];
+      reviewedWordIndexes?: number[];
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(body.error || "Không lưu được thiết lập transcript");
+    }
+    setTranscript((current) =>
+      current
+        ? {
+            ...current,
+            transcript_template: body.template ?? current.transcript_template,
+            tags: body.tags ?? current.tags,
+            reviewed_word_indexes:
+              body.reviewedWordIndexes ?? current.reviewed_word_indexes,
+          }
+        : current,
+    );
+  }
+
+  async function generateInsights(template: TranscriptTemplate) {
+    if (!token || !activeTranscriptId) return;
+    setInsightsGenerating(true);
+    setInsightsError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}/insights`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ template }),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as
+        | { insights: TranscriptInsights; template: TranscriptTemplate }
+        | { error?: string };
+      if (!response.ok || !("insights" in body)) {
+        throw new Error(
+          "error" in body && body.error
+            ? body.error
+            : "Không tạo được phân tích transcript",
+        );
+      }
+      setTranscript((current) =>
+        current
+          ? {
+              ...current,
+              transcript_template: body.template,
+              insights: body.insights,
+              insights_updated_at: body.insights.generatedAt,
+            }
+          : current,
+      );
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error
+          ? error.message
+          : "Không tạo được phân tích transcript",
+      );
+    } finally {
+      setInsightsGenerating(false);
+    }
+  }
+
+  async function saveTags() {
+    const tags = [
+      ...new Set(
+        tagDraft
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      ),
+    ].slice(0, 30);
+    setInsightsError("");
+    try {
+      await saveWorkflow({ tags });
+      setTagDraft(tags.join(", "));
+    } catch (error) {
+      setInsightsError(
+        error instanceof Error ? error.message : "Không lưu được tag",
+      );
     }
   }
 
@@ -1233,7 +2004,30 @@ function TranscriptEditorPage() {
             : "Không khôi phục được phiên bản",
         );
       }
-      const restoredWords = normalizeWords(body.words, transcript?.duration);
+      const normalizedRestoredWords = normalizeWords(body.words, transcript?.duration);
+      const estimatedRestoredWords = normalizedRestoredWords.length
+        ? []
+        : createApproximateTimedWords(
+            body.text,
+            transcript?.duration,
+            MAX_EDITABLE_TIMED_WORDS,
+          );
+      const restoredWords = normalizedRestoredWords.length
+        ? normalizedRestoredWords
+        : estimatedRestoredWords;
+      setTimelineIsEstimated(
+        !normalizedRestoredWords.length && restoredWords.length > 0,
+      );
+      setTimelineIsTooLarge(
+        !normalizedRestoredWords.length &&
+          Boolean(String(body.text || "").trim()) &&
+          !estimatedRestoredWords.length,
+      );
+      savedWordsRef.current = normalizedRestoredWords.map((word) => ({
+        ...word,
+      }));
+      timelineNeedsInitializationRef.current =
+        !normalizedRestoredWords.length && estimatedRestoredWords.length > 0;
       wordsRef.current = restoredWords;
       editorTextRef.current = String(body.text || "");
       setEditorText(String(body.text || ""));
@@ -1247,12 +2041,49 @@ function TranscriptEditorPage() {
       setSaveStatus("saved");
       setRedoStack([]);
       await loadVersions();
+      setVersionComparison(null);
     } catch (error) {
       setVersionError(
         error instanceof Error
           ? error.message
           : "Không khôi phục được phiên bản",
       );
+    }
+  }
+
+  async function compareVersion(versionId: number) {
+    if (!token || !activeTranscriptId) return;
+    setVersionComparingId(versionId);
+    setVersionError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}/versions/${versionId}/compare`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        version?: VersionComparison["version"] & { text: string };
+        current?: { text?: string };
+        error?: string;
+      };
+      if (!response.ok || !body.version) {
+        throw new Error(body.error || "Không so sánh được phiên bản");
+      }
+      setVersionComparison({
+        version: body.version,
+        comparison: compareTranscriptText(
+          body.version.text,
+          body.current?.text || "",
+        ),
+      });
+    } catch (error) {
+      setVersionError(
+        error instanceof Error ? error.message : "Không so sánh được phiên bản",
+      );
+    } finally {
+      setVersionComparingId(null);
     }
   }
 
@@ -1380,15 +2211,8 @@ function TranscriptEditorPage() {
     });
   }
 
-  function buildExportTextContent() {
-    const options = effectiveExportOptions();
-    const title =
-      options.translationMode === "translation"
-        ? "BẢN DỊCH"
-        : options.translationMode === "bilingual"
-          ? "TRANSCRIPT SONG NGỮ"
-          : "TRANSCRIPT";
-    const body =
+  function buildExportBodyContent(options: ExportOptions) {
+    return (
       options.layout === "segments"
         ? buildExportSegmentLines(options).join("\n\n")
         : options.translationMode === "translation"
@@ -1402,8 +2226,31 @@ function TranscriptEditorPage() {
               ]
                 .filter(Boolean)
                 .join("\n\n")
-            : editorText.trim();
-    return [title, ...exportMetadataLines(), "", body].join("\n");
+            : editorText.trim()
+    );
+  }
+
+  function buildExportTextContent() {
+    const options = effectiveExportOptions();
+    const title =
+      options.translationMode === "translation"
+        ? "BẢN DỊCH"
+        : options.translationMode === "bilingual"
+          ? "TRANSCRIPT SONG NGỮ"
+          : "TRANSCRIPT";
+    const frontMatter = buildTemplateFrontMatter(
+      transcript?.transcript_template || "meeting",
+      transcript?.insights ?? null,
+    );
+    return [
+      title,
+      ...exportMetadataLines(),
+      "",
+      ...(frontMatter
+        ? [frontMatter, "", "NỘI DUNG TRANSCRIPT", ""]
+        : []),
+      buildExportBodyContent(options),
+    ].join("\n");
   }
 
   function exportText() {
@@ -1439,6 +2286,35 @@ function TranscriptEditorPage() {
       new Paragraph({ children: [new TextRun({ text: "" })] }),
     ];
 
+    const frontMatter = buildTemplateFrontMatter(
+      transcript?.transcript_template || "meeting",
+      transcript?.insights ?? null,
+    );
+    if (frontMatter) {
+      frontMatter.split("\n").forEach((line) => {
+        const isHeading = line && line === line.toLocaleUpperCase("vi-VN");
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: line,
+                bold: Boolean(isHeading),
+                size: isHeading ? 24 : 21,
+                color: isHeading ? "21104A" : "4E4168",
+              }),
+            ],
+          }),
+        );
+      });
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: "NỘI DUNG TRANSCRIPT", bold: true, size: 24 }),
+          ],
+        }),
+      );
+    }
+
     if (options.layout === "segments") {
       buildExportSegmentLines(options).forEach((segmentBlock, index) => {
         const [firstLine, ...bodyLines] = segmentBlock.split("\n");
@@ -1469,9 +2345,8 @@ function TranscriptEditorPage() {
         }
       });
     } else {
-      buildExportTextContent()
+      buildExportBodyContent(options)
         .split("\n")
-        .slice(exportMetadataLines().length + 2)
         .forEach((line) => {
           paragraphs.push(
             new Paragraph({
@@ -1575,7 +2450,7 @@ function TranscriptEditorPage() {
     <div className="min-h-screen bg-[#f8f7fb] text-[#21104a] print:bg-white">
       <AuthenticatedHeader />
 
-      <main className="mx-auto max-w-7xl px-4 py-5 md:px-6">
+      <main className="mx-auto max-w-7xl px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -1635,7 +2510,7 @@ function TranscriptEditorPage() {
 
         <section
           data-testid="transcript-audio-player"
-          className="sticky top-[61px] z-30 mb-4 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-4 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] print:hidden"
+          className="sticky top-14 z-30 mb-3 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-3 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] sm:top-[61px] sm:mb-4 sm:p-4 print:hidden"
         >
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
@@ -1657,18 +2532,10 @@ function TranscriptEditorPage() {
                   preload="metadata"
                   onLoadedMetadata={handleAudioReady}
                   onTimeUpdate={handleTimeUpdate}
-                  onPlay={() => setIsPlaying(true)}
+                  onPlaying={handleAudioPlaying}
                   onPause={() => setIsPlaying(false)}
-                  onEnded={() => {
-                    setIsPlaying(false);
-                    setActiveWordIndex(-1);
-                  }}
-                  onError={() => {
-                    setIsPlaying(false);
-                    setAudioError(
-                      "Không phát được audio. Vui lòng tải lại trang và thử lại.",
-                    );
-                  }}
+                  onEnded={handleAudioEnded}
+                  onError={handleAudioError}
                   className="hidden"
                 />
               )}
@@ -1763,8 +2630,14 @@ function TranscriptEditorPage() {
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
-          <section className="overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
+        <div
+          className={`grid gap-4 lg:min-h-[360px] lg:grid-cols-[minmax(0,1fr)_310px] ${
+            transcript.audio_filename
+              ? "lg:h-[calc(100dvh-345px)]"
+              : "lg:h-[calc(100dvh-290px)]"
+          }`}
+        >
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex w-fit rounded-md bg-[#f3f0f7] p-1">
                 <button
@@ -1792,13 +2665,26 @@ function TranscriptEditorPage() {
                   <Pencil className="h-3.5 w-3.5" /> Văn bản thuần
                 </button>
               </div>
-              <p className="text-xs text-[#8a7da1]">
-                {words.length > MAX_SYNC_WORDS
-                  ? "Transcript quá dài, dùng chế độ chỉnh sửa để đảm bảo mượt."
-                  : syncAvailable
-                    ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
-                    : "Bản ghi chưa có timestamp theo từng từ."}
-              </p>
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-[#8a7da1]">
+                <p>
+                  {timelineIsTooLarge || words.length > MAX_EDITABLE_TIMED_WORDS
+                    ? "Transcript vượt giới hạn 100.000 từ có timestamp; bạn vẫn có thể dùng chế độ văn bản thuần."
+                    : timelineIsEstimated
+                      ? "Mốc thời gian gần đúng được tạo từ văn bản; bạn vẫn có thể nghe và chỉnh sửa từng từ."
+                      : syncAvailable
+                        ? "Sửa trực tiếp từng từ; bấm mốc thời gian để nghe đúng vị trí."
+                        : "Bản ghi chưa có timestamp theo từng từ."}
+                </p>
+                {transcriptFollowMode === "manual" && activeWordIndex >= 0 && (
+                  <button
+                    type="button"
+                    onClick={resumeTranscriptFollow}
+                    className="rounded-full border border-[#d9c96a] bg-[#fff9d8] px-3 py-1.5 font-black text-[#4b3b00] transition hover:bg-[#fff2a8]"
+                  >
+                    Theo dõi vị trí đang đọc
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] bg-[#fbfaf7] px-4 py-3 md:flex-row md:items-center md:justify-between">
               <div className="flex flex-wrap gap-2">
@@ -1823,9 +2709,10 @@ function TranscriptEditorPage() {
                   <Redo2 className="h-3.5 w-3.5" /> Redo
                 </button>
               </div>
-              <div className="flex min-w-0 flex-1 items-center gap-2 md:max-w-md">
+              <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-2 md:max-w-md md:flex-nowrap">
                 <Search className="h-4 w-4 shrink-0 text-[#8067aa]" />
                 <input
+                  aria-label="Tìm trong transcript"
                   value={searchQuery}
                   onChange={(event) => {
                     setSearchQuery(event.target.value);
@@ -1838,7 +2725,7 @@ function TranscriptEditorPage() {
                     }
                   }}
                   placeholder="Tìm trong transcript"
-                  className="h-9 min-w-0 flex-1 rounded-md border border-[#ded5e9] bg-white px-3 text-sm outline-none focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
+                  className="h-9 min-w-0 basis-40 flex-1 rounded-md border border-[#ded5e9] bg-white px-3 text-sm outline-none focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
                 />
                 <span className="min-w-16 text-center text-xs font-bold text-[#756894]">
                   {searchMatches.length && searchIndex >= 0
@@ -1867,51 +2754,93 @@ function TranscriptEditorPage() {
             {editorMode === "sync" && syncAvailable ? (
               <div
                 ref={syncScrollRef}
-                className="max-h-[calc(100vh-245px)] min-h-[520px] overflow-y-auto px-4 py-5 scroll-smooth md:px-7"
+                tabIndex={0}
+                aria-label="Nội dung transcript đồng bộ"
+                onWheel={pauseTranscriptFollow}
+                onTouchStart={pauseTranscriptFollow}
+                onPointerDown={pauseTranscriptFollow}
+                onKeyDown={(event) => {
+                  if (
+                    [
+                      "ArrowDown",
+                      "ArrowUp",
+                      "End",
+                      "Home",
+                      "PageDown",
+                      "PageUp",
+                      " ",
+                    ].includes(event.key)
+                  ) {
+                    pauseTranscriptFollow();
+                  }
+                }}
+                onScroll={(event) =>
+                  handleSyncScroll(event.currentTarget.scrollTop)
+                }
+                data-testid="virtual-transcript-scroll"
+                data-segment-count={segments.length}
+                data-rendered-segment-count={virtualSegments.items.length}
+                className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
               >
-                <div className="mx-auto max-w-3xl space-y-6">
-                  {segments.map((segment, segmentIndex) => (
-                    <article
-                      key={`${segment.start}-${segmentIndex}`}
-                      className="grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
-                    >
-                      <div className="flex items-center gap-2 sm:block">
-                        <button
-                          type="button"
-                          onClick={() => seekTo(segment.start)}
-                          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
-                        >
-                          {formatClock(segment.start)}
-                        </button>
-                        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
-                          {speakerLabel(segment.speaker)}
-                        </p>
-                      </div>
-                      <p className="text-[15px] leading-8 text-[#342752]">
-                        {segment.words.map((word) => (
-                          <EditableTimedWord
-                            key={`${word.start}-${word.index}`}
-                            word={word}
-                            active={activeWordIndex === word.index}
-                            onCommit={commitTimedWord}
-                            onSeek={seekTo}
-                          />
-                        ))}
-                      </p>
-                    </article>
-                  ))}
+                <div
+                  className="relative mx-auto max-w-3xl"
+                  style={{ height: `${virtualSegments.totalSize}px` }}
+                >
+                  {virtualSegments.items.map((virtualSegment) => {
+                    const segment = segments[virtualSegment.index];
+                    if (!segment) return null;
+                    return (
+                      <VirtualTranscriptSegment
+                        key={`${segment.start}-${virtualSegment.index}`}
+                        segment={segment}
+                        segmentIndex={virtualSegment.index}
+                        start={virtualSegment.start}
+                        activeWordIndex={activeWordIndex}
+                        onCommit={commitTimedWord}
+                        onSeek={seekTo}
+                        onMeasure={handleSegmentMeasure}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             ) : (
-              <div className="p-4 md:p-6">
-                <div className="min-h-[560px]">
+              <div className="flex min-h-[420px] flex-col p-3 sm:min-h-[520px] sm:p-4 md:p-6 lg:min-h-0 lg:flex-1">
+                <div className="relative min-h-[360px] sm:min-h-[460px] lg:min-h-0 lg:flex-1">
+                  {syncAvailable && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg border border-transparent bg-[#fbfaf7] px-5 py-4 text-[15px] leading-8 break-words whitespace-pre-wrap text-[#342752]"
+                    >
+                      <div ref={plainTextMirrorRef}>
+                        <HighlightedPlainText
+                          text={editorText}
+                          range={plainTextActiveRange}
+                        />
+                      </div>
+                    </div>
+                  )}
                   <textarea
                     ref={plainTextAreaRef}
                     value={editorText}
-                    onChange={(event) => applyPlainTextChange(event.target.value)}
+                    onWheel={pauseTranscriptFollow}
+                    onTouchStart={pauseTranscriptFollow}
+                    onPointerDown={pauseTranscriptFollow}
+                    onChange={(event) =>
+                      applyEditorChange(event.target.value, wordsRef.current, true)
+                    }
+                    onScroll={(event) => {
+                      if (plainTextMirrorRef.current) {
+                        plainTextMirrorRef.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
+                      }
+                    }}
                     aria-label="Nội dung transcript"
                     spellCheck
-                    className="min-h-[560px] w-full resize-y rounded-lg border border-[#ded5e9] bg-[#fbfaf7] px-5 py-4 text-[15px] leading-8 text-[#342752] outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20"
+                    className={`relative h-full min-h-[360px] w-full resize-y rounded-lg border border-[#ded5e9] px-4 py-3 text-[15px] leading-7 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:min-h-[460px] sm:px-5 sm:py-4 sm:leading-8 lg:min-h-0 lg:resize-none ${
+                      syncAvailable
+                        ? "bg-transparent text-transparent caret-[#21104a] selection:bg-[#8067aa]/20"
+                        : "bg-[#fbfaf7] text-[#342752]"
+                    }`}
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-[#8a7da1]">
@@ -1922,12 +2851,13 @@ function TranscriptEditorPage() {
             )}
           </section>
 
-          <aside className="space-y-4 print:hidden">
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <FileText className="h-4 w-4 text-[#8067aa]" /> Thông tin
-              </h2>
-              <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 text-xs">
+          <aside className="space-y-2 print:hidden lg:h-full lg:overflow-y-auto lg:pr-1">
+            <TranscriptSidebarSection
+              icon={<FileText className="h-4 w-4" />}
+              title="Thông tin"
+              defaultOpen
+            >
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
                 <div>
                   <dt className="text-[#8a7da1]">Thời lượng</dt>
                   <dd className="mt-1 font-bold">
@@ -1956,17 +2886,210 @@ function TranscriptEditorPage() {
                   </dd>
                 </div>
               </dl>
-              <div className="mt-4 flex items-center gap-2 border-t border-[#ece7f2] pt-4 text-xs text-[#756894]">
+              <div className="mt-3 flex items-center gap-2 border-t border-[#ece7f2] pt-3 text-xs text-[#756894]">
                 <Clock3 className="h-3.5 w-3.5" />
                 {new Date(transcript.created_at).toLocaleString("vi-VN")}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Download className="h-4 w-4 text-[#8067aa]" /> Xuất transcript
-              </h2>
-              <div className="mt-3 space-y-3">
+            {token && (
+              <TranscriptSidebarSection
+                icon={<Users className="h-4 w-4" />}
+                title="Chia sẻ và cộng tác"
+                meta="Bảo mật"
+              >
+                <TranscriptCollaborationPanel
+                  transcriptId={transcript.id}
+                  token={token}
+                  playbackMilliseconds={Math.round(playbackSeconds * 1000)}
+                />
+              </TranscriptSidebarSection>
+            )}
+
+            <TranscriptSidebarSection
+              icon={<Sparkles className="h-4 w-4" />}
+              title="Phân tích nội dung"
+              meta={transcript.insights ? "Đã tạo" : "Chưa tạo"}
+              defaultOpen
+            >
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <label className="text-[11px] font-bold text-[#5f4c82]">
+                  Mẫu transcript
+                  <select
+                    value={transcript.transcript_template}
+                    onChange={(event) => {
+                      const template = event.target.value as TranscriptTemplate;
+                      setTranscript((current) =>
+                        current
+                          ? { ...current, transcript_template: template }
+                          : current,
+                      );
+                    }}
+                    className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-bold text-[#21104a]"
+                  >
+                    <option value="meeting">Cuộc họp</option>
+                    <option value="interview">Phỏng vấn</option>
+                    <option value="podcast">Podcast</option>
+                    <option value="lecture">Bài giảng</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void generateInsights(transcript.transcript_template)
+                  }
+                  disabled={insightsGenerating}
+                  className="mt-[18px] inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#ffcb05] px-3 text-xs font-black text-[#21104a] disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Sparkles
+                    className={`h-3.5 w-3.5 ${insightsGenerating ? "animate-pulse" : ""}`}
+                  />
+                  {insightsGenerating ? "Đang tạo" : "Tạo lại"}
+                </button>
+              </div>
+
+              <label className="mt-3 block text-[11px] font-bold text-[#5f4c82]">
+                Tag, phân cách bằng dấu phẩy
+                <div className="mt-1 flex gap-2">
+                  <input
+                    value={tagDraft}
+                    onChange={(event) => setTagDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveTags();
+                      }
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-semibold outline-none focus:border-[#ffcb05]"
+                    placeholder="khách hàng, sprint 8"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveTags()}
+                    className="rounded-md border border-[#ded5e9] bg-white px-2.5 text-xs font-black"
+                    aria-label="Lưu tag"
+                  >
+                    <Tag className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </label>
+
+              {insightsError && (
+                <p className="mt-3 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-800">
+                  {insightsError}
+                </p>
+              )}
+
+              {transcript.insights ? (
+                <div className="mt-3 space-y-3 text-xs leading-5 text-[#4e4168]">
+                  <div>
+                    <p className="font-black text-[#21104a]">Tóm tắt</p>
+                    <p className="mt-1">{transcript.insights.summary}</p>
+                  </div>
+                  {transcript.insights.keyPoints.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Ý chính</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.keyPoints.map((point) => (
+                          <li key={point}>{point}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {transcript.insights.actionItems.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Việc cần làm</p>
+                      <ul className="mt-1 space-y-1.5">
+                        {transcript.insights.actionItems.map((item, index) => (
+                          <li
+                            key={`${item.text}-${index}`}
+                            className="rounded-md bg-[#fbfaf7] p-2"
+                          >
+                            <span className="font-bold">{item.text}</span>
+                            {(item.owner || item.deadline) && (
+                              <span className="mt-1 block text-[11px] text-[#8a7da1]">
+                                {item.owner
+                                  ? `Phụ trách: ${item.owner}`
+                                  : "Chưa rõ người phụ trách"}
+                                {item.deadline ? ` · Hạn: ${item.deadline}` : ""}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {transcript.insights.decisions.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Quyết định</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.decisions.map((decision) => (
+                          <li key={decision}>{decision}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {transcript.insights.chapters.length > 0 && (
+                    <div>
+                      <p className="font-black text-[#21104a]">Chapters</p>
+                      <div className="mt-1 space-y-1">
+                        {transcript.insights.chapters.map((chapter, index) => (
+                          <button
+                            key={`${chapter.startMs}-${index}`}
+                            type="button"
+                            onClick={() => seekTo(chapter.startMs)}
+                            className="flex w-full items-start gap-2 rounded-md border border-[#ece7f2] bg-white p-2 text-left hover:border-[#ffcb05]"
+                          >
+                            <span className="shrink-0 font-black text-[#8067aa]">
+                              {formatPlaybackTime(chapter.startMs / 1000)}
+                            </span>
+                            <span className="line-clamp-2 font-bold text-[#342752]">
+                              {chapter.title}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {transcript.insights.keywords.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {transcript.insights.keywords.map((keyword) => (
+                        <span
+                          key={keyword}
+                          className="rounded-full border border-[#ded5e9] bg-white px-2 py-0.5 text-[11px] font-bold"
+                        >
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {transcript.insights.questions.length > 0 && (
+                    <details>
+                      <summary className="cursor-pointer font-black text-[#21104a]">
+                        Câu hỏi trong transcript ({transcript.insights.questions.length})
+                      </summary>
+                      <ul className="mt-1 list-disc space-y-1 pl-4">
+                        {transcript.insights.questions.map((question) => (
+                          <li key={question}>{question}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs leading-5 text-[#8a7da1]">
+                  Tạo tóm tắt, ý chính, action items, quyết định, chapter,
+                  keyword và câu hỏi từ transcript này.
+                </p>
+              )}
+            </TranscriptSidebarSection>
+
+            <TranscriptSidebarSection
+              icon={<Download className="h-4 w-4" />}
+              title="Xuất transcript"
+              meta="6 tùy chọn"
+            >
+              <div className="space-y-3">
                 <div className="grid gap-2">
                   <label className="text-xs font-bold text-[#5f4c82]">
                     Mẫu xuất
@@ -2044,11 +3167,11 @@ function TranscriptEditorPage() {
                   </label>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => void handleCopy()}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   {copied ? (
                     <Check className="h-3.5 w-3.5" />
@@ -2060,46 +3183,47 @@ function TranscriptEditorPage() {
                 <button
                   type="button"
                   onClick={exportText}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   TXT
                 </button>
                 <button
                   type="button"
                   onClick={() => void exportDocx()}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   DOCX
                 </button>
                 <button
                   type="button"
                   onClick={() => exportCaptions("srt")}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   SRT
                 </button>
                 <button
                   type="button"
                   onClick={() => exportCaptions("vtt")}
-                  className="rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   VTT
                 </button>
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-[#ded5e9] px-3 py-2.5 text-xs font-bold hover:border-[#ffcb05]"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ded5e9] px-2 py-2 text-[11px] font-bold hover:border-[#ffcb05]"
                 >
                   <Printer className="h-3.5 w-3.5" /> PDF
                 </button>
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Users className="h-4 w-4 text-[#8067aa]" /> Người nói
-              </h2>
-              <div className="mt-3 space-y-2">
+            <TranscriptSidebarSection
+              icon={<Users className="h-4 w-4" />}
+              title="Người nói"
+              meta={speakers.length ? `${speakers.length}` : "Chưa tách"}
+            >
+              <div className="grid grid-cols-2 gap-2">
                 {speakers.length ? (
                   speakers.map((speaker) => (
                     <label
@@ -2130,7 +3254,56 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
-            </section>
+              {speakers.length > 0 && (
+                <div className="mt-3 space-y-2 border-t border-[#ece7f2] pt-3">
+                  <label className="flex items-center gap-2 text-xs font-bold text-[#5f4c82]">
+                    <input
+                      type="checkbox"
+                      checked={rememberSpeakerLabels}
+                      onChange={(event) => setRememberSpeakerLabels(event.target.checked)}
+                      className="h-4 w-4 accent-[#21104a]"
+                    />
+                    Nhớ tên cho transcript sau trên thiết bị này
+                  </label>
+                  {speakers.length > 1 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={speakerMergeSource}
+                        onChange={(event) => setSpeakerMergeSource(event.target.value)}
+                        className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
+                      >
+                        <option value="">Gộp người…</option>
+                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                      </select>
+                      <select
+                        value={speakerMergeTarget}
+                        onChange={(event) => setSpeakerMergeTarget(event.target.value)}
+                        className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
+                      >
+                        <option value="">vào người…</option>
+                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={mergeSpeakers}
+                        disabled={!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget}
+                        className="col-span-2 rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
+                      >
+                        Gộp hai người nói
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={splitSpeakerAtActiveWord}
+                    disabled={activeWordIndex < 0}
+                    className="w-full rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
+                  >
+                    Tách đoạn tại từ đang chọn
+                  </button>
+                </div>
+              )}
+            </TranscriptSidebarSection>
 
             <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
               <div className="flex items-start justify-between gap-3">
@@ -2211,23 +3384,75 @@ function TranscriptEditorPage() {
               </div>
             </section>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-sm font-black">
-                  <History className="h-4 w-4 text-[#8067aa]" /> Phiên bản
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => void loadVersions()}
-                  className="rounded-md border border-[#ded5e9] px-2 py-1 text-[11px] font-black"
-                >
-                  Tải lại
-                </button>
-              </div>
+            <TranscriptSidebarSection
+              icon={<History className="h-4 w-4" />}
+              title="Phiên bản"
+              meta={`${versions.length}`}
+            >
+              <button
+                type="button"
+                onClick={() => void loadVersions()}
+                className="ml-auto block rounded-md border border-[#ded5e9] px-2 py-1 text-[11px] font-black"
+              >
+                Tải lại
+              </button>
               {versionError && (
                 <p className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-800">
                   {versionError}
                 </p>
+              )}
+              {versionComparison && (
+                <div className="mt-3 rounded-lg border border-[#d8d0e7] bg-white p-3 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-black text-[#21104a]">
+                        So sánh với bản hiện tại
+                      </p>
+                      <p className="mt-1 text-[11px] text-[#756894]">
+                        {versionComparison.version.actor_name} ·{" "}
+                        {new Date(
+                          versionComparison.version.created_at,
+                        ).toLocaleString("vi-VN")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Đóng so sánh phiên bản"
+                      onClick={() => setVersionComparison(null)}
+                      className="rounded-md px-2 py-1 font-black text-[#756894] hover:bg-[#f3f0f8]"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                  {versionComparison.comparison.hasChanges ? (
+                    <div className="mt-3 space-y-2 break-words leading-5">
+                      {versionComparison.comparison.prefix && (
+                        <p className="text-[#756894]">
+                          …{versionComparison.comparison.prefix.slice(-140)}
+                        </p>
+                      )}
+                      {versionComparison.comparison.removed && (
+                        <p className="rounded-md bg-red-50 p-2 text-red-800 line-through">
+                          − {versionComparison.comparison.removed}
+                        </p>
+                      )}
+                      {versionComparison.comparison.added && (
+                        <p className="rounded-md bg-emerald-50 p-2 text-emerald-800">
+                          + {versionComparison.comparison.added}
+                        </p>
+                      )}
+                      {versionComparison.comparison.suffix && (
+                        <p className="text-[#756894]">
+                          {versionComparison.comparison.suffix.slice(0, 140)}…
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-3 rounded-md bg-emerald-50 p-2 font-bold text-emerald-800">
+                      Phiên bản này giống nội dung hiện tại.
+                    </p>
+                  )}
+                </div>
               )}
               <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                 {versionsLoading ? (
@@ -2246,13 +3471,34 @@ function TranscriptEditorPage() {
                         {version.text_length.toLocaleString("vi-VN")} ký tự,{" "}
                         {version.word_count.toLocaleString("vi-VN")} từ
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => void restoreVersion(version.id)}
-                        className="mt-2 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05]"
-                      >
-                        Khôi phục
-                      </button>
+                      <p className="mt-1 text-[11px] font-bold text-[#5f4c82]">
+                        {version.actor_name || "Người dùng"}
+                        {version.change_source === "shared"
+                          ? " · Liên kết chia sẻ"
+                          : version.change_source === "restore"
+                            ? " · Khôi phục"
+                            : " · Trình chỉnh sửa"}
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void compareVersion(version.id)}
+                          disabled={versionComparingId !== null}
+                          className="inline-flex items-center justify-center gap-1 rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05] disabled:opacity-50"
+                        >
+                          <GitCompare className="h-3.5 w-3.5" />
+                          {versionComparingId === version.id
+                            ? "Đang so sánh"
+                            : "So sánh"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void restoreVersion(version.id)}
+                          className="rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05]"
+                        >
+                          Khôi phục
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -2261,12 +3507,13 @@ function TranscriptEditorPage() {
                   </p>
                 )}
               </div>
-            </section>
+            </TranscriptSidebarSection>
 
-            <section className="rounded-lg border border-[#e1dbea] bg-white p-4">
-              <h2 className="flex items-center gap-2 text-sm font-black">
-                <Languages className="h-4 w-4 text-[#8067aa]" /> Bản dịch
-              </h2>
+            <TranscriptSidebarSection
+              icon={<Languages className="h-4 w-4" />}
+              title="Bản dịch"
+              meta={transcript.translated_text ? "Sẵn sàng" : "Chưa có"}
+            >
               {transcript.translated_text ? (
                 <div className="mt-3">
                   <p className="mb-2 text-xs font-bold text-[#8a7da1]">
@@ -2321,7 +3568,7 @@ function TranscriptEditorPage() {
                   )}
                 </div>
               )}
-            </section>
+            </TranscriptSidebarSection>
           </aside>
         </div>
       </main>

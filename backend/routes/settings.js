@@ -1,6 +1,10 @@
 require("../config/env");
 const express = require("express");
+const bcrypt = require("bcryptjs");
+const fs = require("fs");
+const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { resolveStoredAudioPath } = require("../services/transcriptionService");
 const {
   getUserSettings,
   normalizeDictionaryText,
@@ -82,7 +86,10 @@ router.get("/privacy", requireAuth, async (req, res) => {
 
 router.patch("/privacy", requireAuth, async (req, res) => {
   try {
-    const settings = await savePrivacySettings(req.user.id, req.body || {});
+    const settings = await savePrivacySettings(
+      req.user.id,
+      req.body?.privacySettings ?? req.body?.settings ?? req.body ?? {},
+    );
     await writeSecurityAudit({
       event: "privacy.settings_updated",
       outcome: "success",
@@ -159,6 +166,63 @@ router.delete("/privacy/transcripts", requireAuth, async (req, res) => {
   } catch (error) {
     console.error("Privacy transcript delete error:", error);
     return res.status(500).json({ error: "Không xóa được dữ liệu" });
+  }
+});
+
+router.delete("/privacy/account", requireAuth, async (req, res) => {
+  if (String(req.body?.confirmation || "").trim() !== "XOA TAI KHOAN") {
+    return res.status(400).json({ error: "Hãy nhập đúng XOA TAI KHOAN để xác nhận" });
+  }
+  const client = await pool.connect();
+  let audioFiles = [];
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT id, password, role FROM users WHERE id = $1 FOR UPDATE`,
+      [req.user.id],
+    );
+    const user = rows[0];
+    if (!user) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Tài khoản không tồn tại" });
+    }
+    if (user.password) {
+      const valid = await bcrypt.compare(String(req.body?.password || ""), user.password);
+      if (!valid) {
+        await client.query("ROLLBACK");
+        return res.status(401).json({ error: "Mật khẩu không chính xác" });
+      }
+    }
+    if (user.role === "super_admin") {
+      const adminCount = await client.query(
+        `SELECT COUNT(*)::int AS count FROM users
+         WHERE role = 'super_admin' AND account_status = 'active'`,
+      );
+      if (adminCount.rows[0].count <= 1) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Không thể xóa quản trị viên cao nhất cuối cùng" });
+      }
+    }
+    const media = await client.query(
+      `SELECT audio_filename FROM transcriptions
+       WHERE user_id = $1 AND audio_filename IS NOT NULL`,
+      [req.user.id],
+    );
+    audioFiles = media.rows.map((row) => row.audio_filename);
+    await client.query("DELETE FROM users WHERE id = $1", [req.user.id]);
+    await client.query("COMMIT");
+    await Promise.all(
+      audioFiles.map((filename) =>
+        fs.promises.unlink(resolveStoredAudioPath(filename)).catch(() => {}),
+      ),
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("Privacy account deletion error:", error.message);
+    return res.status(500).json({ error: "Không thể xóa tài khoản" });
+  } finally {
+    client.release();
   }
 });
 

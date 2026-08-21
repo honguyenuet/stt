@@ -113,8 +113,8 @@ function LoginPage() {
         <span key={i} className={`absolute ${s.size} hidden rounded-full bg-primary animate-twinkle pointer-events-none`} style={{ top: s.top, left: s.left, animationDelay: `${s.delay}s` }} />
       ))}
 
-      <div className="relative z-10 grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-        <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
+      <div className="relative z-10 grid min-w-0 w-full max-w-5xl items-center gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="flex min-w-0 flex-col items-center text-center lg:items-start lg:text-left">
           <div className="relative mb-5 flex h-28 w-44 items-center justify-center">
             <img src={vbeeLogo} alt="Vbee" className="relative h-24 w-auto object-contain" />
           </div>
@@ -130,23 +130,23 @@ function LoginPage() {
             Đăng nhập bằng email, Google, Facebook hoặc Apple để tiếp tục vào không gian làm việc.
           </p>
 
-          <div className="mt-6 grid w-full max-w-sm grid-cols-3 gap-2">
-            <div className="rounded-lg border border-border bg-white p-3 text-center">
+          <div className="mt-6 grid w-full min-w-0 max-w-full grid-cols-3 gap-2 sm:max-w-sm">
+            <div className="min-w-0 rounded-lg border border-border bg-white p-2 text-center sm:p-3">
               <div className="text-xl font-bold text-foreground">50+</div>
               <div className="text-xs text-muted-foreground">Ngôn ngữ</div>
             </div>
-            <div className="rounded-lg border border-border bg-white p-3 text-center">
+            <div className="min-w-0 rounded-lg border border-border bg-white p-2 text-center sm:p-3">
               <div className="text-xl font-bold text-foreground">~3s</div>
               <div className="text-xs text-muted-foreground">Xử lý</div>
             </div>
-            <div className="rounded-lg border border-border bg-white p-3 text-center">
+            <div className="min-w-0 rounded-lg border border-border bg-white p-2 text-center sm:p-3">
               <div className="text-xl font-bold text-foreground">98%</div>
               <div className="text-xs text-muted-foreground">Chính xác</div>
             </div>
           </div>
         </div>
 
-        <div className="w-full">
+        <div className="min-w-0 w-full">
           <div className="rounded-lg border border-border bg-white p-5 shadow-soft md:p-6">
             <div className="mb-5">
               <h2 className="text-2xl font-bold text-foreground">Đăng nhập</h2>
@@ -172,6 +172,7 @@ function LoginPage() {
                   <input
                     name="email"
                     type="email"
+                    autoComplete="email"
                     value={form.email}
                     onChange={handleChange}
                     required
@@ -197,6 +198,7 @@ function LoginPage() {
                   <input
                     name="password"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
                     value={form.password}
                     onChange={handleChange}
                     required

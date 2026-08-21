@@ -31,6 +31,7 @@ test("managed storage cleanup applies the CMS queue retention window", async () 
       }
       if (/WITH expired_audio AS/i.test(sql)) return { rows: [] };
       if (/DELETE FROM transcription_jobs/i.test(sql)) return { rowCount: 4 };
+      if (/DELETE FROM transcriptions transcript/i.test(sql)) return { rowCount: 0, rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     },
   };

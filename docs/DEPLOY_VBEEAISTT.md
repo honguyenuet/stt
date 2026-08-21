@@ -111,4 +111,3 @@ FACEBOOK_CALLBACK_URL=https://api.vbeeaistt.com/api/auth/facebook/callback
 APPLE_CALLBACK_URL=https://api.vbeeaistt.com/api/auth/apple/callback
 PAYOS_WEBHOOK_URL=https://api.vbeeaistt.com/api/billing/payos/webhook
 ```
-

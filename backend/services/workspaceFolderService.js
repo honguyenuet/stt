@@ -26,6 +26,13 @@ function normalizeFolderName(value, { allowDefault = false } = {}) {
   return name;
 }
 
+function normalizeFolderAccess(visibility, teamPermission) {
+  return {
+    visibility: visibility === "team" ? "team" : "private",
+    teamPermission: teamPermission === "view" ? "view" : "edit",
+  };
+}
+
 function normalizeFolderRow(row) {
   return row
     ? {
@@ -44,7 +51,7 @@ async function getOrCreateDefaultFolder(userId, { db = pool } = {}) {
     [userId, DEFAULT_FOLDER_NAME],
   );
   const { rows } = await db.query(
-    `SELECT id, name, created_at, updated_at
+    `SELECT id, user_id AS owner_user_id, name, visibility, team_permission, created_at, updated_at
      FROM transcription_folders
      WHERE user_id = $1 AND LOWER(name) = LOWER($2)
      ORDER BY id ASC
@@ -66,9 +73,21 @@ async function resolveUserFolder(userId, folderId, { db = pool } = {}) {
     throw createFolderError("Thư mục không hợp lệ");
   }
   const { rows } = await db.query(
-    `SELECT id, name, created_at, updated_at
+    `SELECT folder.id, folder.user_id AS owner_user_id, folder.name, folder.visibility, folder.team_permission,
+            folder.created_at, folder.updated_at
      FROM transcription_folders
-     WHERE id = $1 AND user_id = $2
+     AS folder
+     WHERE folder.id = $1 AND (
+       folder.user_id = $2 OR (
+         folder.visibility = 'team' AND folder.team_permission = 'edit'
+         AND EXISTS (
+           SELECT 1 FROM workspace_members requester
+           JOIN workspace_members owner_member
+             ON owner_member.workspace_id = requester.workspace_id
+           WHERE requester.user_id = $2 AND owner_member.user_id = folder.user_id
+         )
+       )
+     )
      LIMIT 1`,
     [id, userId],
   );
@@ -76,14 +95,19 @@ async function resolveUserFolder(userId, folderId, { db = pool } = {}) {
   return normalizeFolderRow(rows[0]);
 }
 
-async function createUserFolder(userId, rawName, { db = pool } = {}) {
+async function createUserFolder(
+  userId,
+  rawName,
+  { db = pool, visibility = "private", teamPermission = "edit" } = {},
+) {
   const name = normalizeFolderName(rawName);
+  const access = normalizeFolderAccess(visibility, teamPermission);
   try {
     const { rows } = await db.query(
-      `INSERT INTO transcription_folders (user_id, name)
-       VALUES ($1, $2)
-       RETURNING id, name, created_at, updated_at`,
-      [userId, name],
+      `INSERT INTO transcription_folders (user_id, name, visibility, team_permission)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, user_id AS owner_user_id, name, visibility, team_permission, created_at, updated_at`,
+      [userId, name, access.visibility, access.teamPermission],
     );
     return normalizeFolderRow(rows[0]);
   } catch (error) {
@@ -97,11 +121,20 @@ async function createUserFolder(userId, rawName, { db = pool } = {}) {
 async function listUserFolders(userId, { db = pool } = {}) {
   await getOrCreateDefaultFolder(userId, { db });
   const { rows } = await db.query(
-    `SELECT folder.id, folder.name, folder.created_at, folder.updated_at,
-            COUNT(transcript.id)::integer AS item_count
+    `SELECT folder.id, folder.user_id AS owner_user_id, folder.name, folder.visibility, folder.team_permission,
+            folder.created_at, folder.updated_at,
+            COUNT(transcript.id) FILTER (WHERE transcript.user_id = $1)::integer AS item_count
      FROM transcription_folders folder
      LEFT JOIN transcriptions transcript ON transcript.folder_id = folder.id
-     WHERE folder.user_id = $1
+     WHERE folder.user_id = $1 OR (
+       folder.visibility = 'team'
+       AND EXISTS (
+         SELECT 1 FROM workspace_members requester
+         JOIN workspace_members owner_member
+           ON owner_member.workspace_id = requester.workspace_id
+         WHERE requester.user_id = $1 AND owner_member.user_id = folder.user_id
+       )
+     )
      GROUP BY folder.id
      ORDER BY CASE WHEN LOWER(folder.name) = LOWER($2) THEN 0 ELSE 1 END,
               folder.created_at ASC, folder.id ASC`,
@@ -116,6 +149,7 @@ module.exports = {
   createUserFolder,
   getOrCreateDefaultFolder,
   listUserFolders,
+  normalizeFolderAccess,
   normalizeFolderName,
   resolveUserFolder,
 };

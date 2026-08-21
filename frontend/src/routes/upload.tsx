@@ -14,8 +14,6 @@ import {
   Folder,
   FolderPlus,
   HardDrive,
-  Heart,
-  Home,
   Info,
   Languages,
   ListChecks,
@@ -39,12 +37,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { VbeePreferencesSidebar } from "@/components/vbee-preferences-layout";
 import {
   formatMediaDuration as formatDuration,
   normalizeMediaDuration,
 } from "@/lib/format-duration";
-import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import { fetchQuota, formatQuotaTime, type QuotaStatus } from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
   TRANSLATION_LANGUAGE_OPTIONS,
@@ -52,6 +49,12 @@ import {
   type TranslationResult,
 } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import {
+  buildDashboardHistoryPath,
+  normalizeDashboardFolders,
+  selectDashboardFolder,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
 const API_URL = getApiBaseUrl();
 const MAX_MB = 200;
@@ -145,6 +148,10 @@ interface UploadQueueResponse {
     createdAt?: string;
   }>;
   rejected?: Array<{ filename: string; error: string }>;
+}
+
+interface UploadHistoryResponse {
+  items: HistoryItem[];
 }
 
 type UploadStatus =
@@ -278,6 +285,7 @@ function UploadPage() {
   const [audioMode, setAudioMode] = useState<AudioMode>("speech");
   const [transcriptionLanguage, setTranscriptionLanguage] = useState("auto");
   const [translateTo, setTranslateTo] = useState("none");
+  const [transcriptTemplate, setTranscriptTemplate] = useState("meeting");
   const [translation, setTranslation] = useState<TranslationResult | null>(
     null,
   );
@@ -296,7 +304,11 @@ function UploadPage() {
   const [linkMetadataLoading, setLinkMetadataLoading] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
-  const [activeFolder, setActiveFolder] = useState("Dự án mới");
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const [folderError, setFolderError] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const [actionDialog, setActionDialog] = useState<ActionDialogState | null>(
     null,
   );
@@ -324,6 +336,45 @@ function UploadPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const editRef = useRef<HTMLDivElement>(null);
+  const spanRefs = useRef<HTMLSpanElement[]>([]);
+  const activeIdxRef = useRef(-1);
+  const activeFolder = selectDashboardFolder(folders, activeFolderId);
+
+  const loadFolders = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folders?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tải được danh sách thư mục");
+      }
+      const nextFolders = normalizeDashboardFolders(body.folders);
+      setFolders(nextFolders);
+      setActiveFolderId((current) =>
+        selectDashboardFolder(nextFolders, current)?.id ?? null,
+      );
+      setFolderError("");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error
+          ? error.message
+          : "Không tải được danh sách thư mục",
+      );
+    } finally {
+      setFoldersLoaded(true);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (user && token) void loadFolders();
+  }, [loadFolders, token, user]);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -335,26 +386,49 @@ function UploadPage() {
   }, [user, isLoading, navigate]);
 
   useEffect(() => {
-    if (!user || !token) return;
+    if (!token) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchQuota(token)
+      .then((nextQuota) => {
+        if (!cancelled) setQuota(nextQuota);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quotaRefreshKey, token]);
+
+  useEffect(() => {
+    if (!user || !token || !foldersLoaded) return;
     let active = true;
     const loadHistory = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/transcribe/history`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const body = (await response.json().catch(() => [])) as
-          | HistoryItem[]
+        const response = await fetch(
+          `${API_URL}${buildDashboardHistoryPath(activeFolder?.id ?? null, 4)}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as
+          | UploadHistoryResponse
           | { error?: string };
-        if (!response.ok || !Array.isArray(body)) {
+        if (!response.ok || !("items" in body) || !Array.isArray(body.items)) {
           throw new Error(
-            !Array.isArray(body) && body.error
+            "error" in body && body.error
               ? body.error
               : "Không tải được lịch sử chuyển đổi",
           );
         }
         if (active) {
-          setHistory(body.slice(0, 4));
+          setHistory(body.items.slice(0, 4));
           setHistoryError("");
         }
       } catch (error) {
@@ -375,7 +449,7 @@ function UploadPage() {
       window.clearInterval(interval);
       window.removeEventListener("focus", loadHistory);
     };
-  }, [historyRetryKey, user, token]);
+  }, [activeFolder?.id, foldersLoaded, historyRetryKey, user, token]);
 
   useEffect(() => {
     return () => {
@@ -726,7 +800,11 @@ function UploadPage() {
         formData.append("audioMode", audioMode);
         formData.append("language", transcriptionLanguage);
         formData.append("translateTo", translateTo);
+        formData.append("transcriptTemplate", transcriptTemplate);
         formData.append("uploadFingerprint", uploadFingerprint);
+        if (activeFolder?.id) {
+          formData.append("folderId", String(activeFolder.id));
+        }
         if (normalizedExpectedDuration) {
           formData.append(
             "expectedDuration",
@@ -749,7 +827,9 @@ function UploadPage() {
             audioMode,
             language: transcriptionLanguage,
             translateTo,
+            transcriptTemplate,
             uploadFingerprint,
+            folderId: activeFolder?.id ?? null,
           }),
         });
         data = (await res.json()) as UploadQueueResponse;
@@ -980,12 +1060,42 @@ function UploadPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function handleCreateFolder() {
+  async function handleCreateFolder() {
     const name = folderName.trim();
-    if (!name) return;
-    setActiveFolder(name);
-    setFolderOpen(false);
-    setFolderName("Dự án mới");
+    if (!name || !token || creatingFolder) return;
+    setCreatingFolder(true);
+    setFolderError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/folders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        folder?: unknown;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không tạo được thư mục");
+      }
+      const created = normalizeDashboardFolders(
+        body.folder ? [body.folder] : [],
+      )[0];
+      if (!created) throw new Error("Dữ liệu thư mục trả về không hợp lệ");
+      setFolders((current) => [...current, created]);
+      setActiveFolderId(created.id);
+      setFolderOpen(false);
+      setFolderName("Dự án mới");
+    } catch (error) {
+      setFolderError(
+        error instanceof Error ? error.message : "Không tạo được thư mục",
+      );
+    } finally {
+      setCreatingFolder(false);
+    }
   }
 
   async function handleVideoLink() {
@@ -1081,14 +1191,16 @@ function UploadPage() {
         }}
       />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-5">
-            <div className="mb-4 flex items-center gap-3">
-              <Heart className="h-8 w-8 text-[#ffcb05]" />
-              <h1 className="text-2xl font-light tracking-tight text-foreground md:text-3xl">
-                Chào mừng, {user.firstName}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-xl font-black tracking-tight sm:text-2xl">
+                Tải tệp
               </h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Chọn nguồn, kiểm tra tệp rồi bắt đầu chuyển thành văn bản.
+              </p>
             </div>
 
             <Link
@@ -1109,10 +1221,10 @@ function UploadPage() {
               </button>
               <button
                 onClick={() => setFolderOpen(true)}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-black text-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-white px-3 text-sm font-bold text-foreground transition hover:border-primary/50 hover:text-primary"
               >
                 <FolderPlus className="h-4 w-4" />
-                THƯ MỤC MỚI
+                Thư mục mới
               </button>
               <button
                 onClick={() => {
@@ -1128,36 +1240,59 @@ function UploadPage() {
                     to: "choose-file",
                   });
                 }}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-muted-foreground transition hover:border-primary/50 hover:text-primary"
                 title="Tải transcript"
               >
                 <Download className="h-4 w-4" />
               </button>
             </div>
-
-            <UploadWorkflowSteps
-              hasFile={hasSelectedSource}
-              status={uploadStatus}
-            />
           </div>
 
           <div className="overflow-hidden rounded-lg border border-border bg-white shadow-soft">
             <div className="border-b border-border bg-white px-5 py-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
-                    Dự án mới
+                  <p className="text-xs font-black uppercase text-primary">
+                    Nguồn chuyển đổi
                   </p>
-                  <div className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                  <label className="mt-1 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                     <Folder className="h-4 w-4 text-primary" />
-                    {activeFolder}
-                  </div>
+                    <span className="sr-only">Thư mục lưu transcript</span>
+                    <select
+                      value={activeFolder?.id ?? ""}
+                      onChange={(event) =>
+                        setActiveFolderId(Number(event.target.value) || null)
+                      }
+                      disabled={!folders.length || uploadStatus === "uploading"}
+                      className="max-w-56 rounded-md border-0 bg-transparent py-1 pr-7 font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      {!folders.length && <option value="">Đang tải thư mục...</option>}
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name} ({folder.item_count})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 <div className="rounded-full border border-border bg-white px-3 py-1 text-xs font-bold text-primary">
                   {history.length + (hasSelectedSource ? 1 : 0)} items
                 </div>
               </div>
             </div>
+
+            {folderError && (
+              <div className="m-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <span>{folderError}</span>
+                <button
+                  type="button"
+                  onClick={() => void loadFolders()}
+                  className="shrink-0 rounded-md border border-destructive/30 bg-white px-3 py-1.5 text-xs font-bold"
+                >
+                  Tải lại
+                </button>
+              </div>
+            )}
 
             {historyError && (
               <div className="m-4 flex flex-col gap-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
@@ -1182,19 +1317,18 @@ function UploadPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-black text-foreground">
-                        1. Chọn nguồn cần chuyển đổi
+                        Chọn nguồn cần chuyển đổi
                       </p>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Chọn file, nhiều track của cùng một buổi ghi, hoặc link
-                        video công khai.
+                        Một tệp, nhiều track hoặc link video công khai.
                       </p>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary">
+                    <span className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-primary sm:inline-flex">
                       <ListChecks className="h-3.5 w-3.5" />
                       Bước đầu tiên
                     </span>
                   </div>
-                  <div className="mt-4">
+                  <div className="mt-3">
                     <UploadModeSelector
                       mode={uploadMode}
                       setMode={setUploadMode}
@@ -1407,6 +1541,19 @@ function UploadPage() {
                         </select>
                       </label>
                     </div>
+                    <label className="block rounded-xl border border-border bg-background/45 px-4 py-3 text-left">
+                      <span className="text-sm font-bold">Mẫu transcript</span>
+                      <select
+                        value={transcriptTemplate}
+                        onChange={(event) => setTranscriptTemplate(event.target.value)}
+                        className="mt-2 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold outline-none focus:border-primary"
+                      >
+                        <option value="meeting">Cuộc họp · quyết định và việc cần làm</option>
+                        <option value="interview">Phỏng vấn · câu hỏi và câu trả lời</option>
+                        <option value="podcast">Podcast · chương và chủ đề</option>
+                        <option value="lecture">Bài giảng · ý chính và thuật ngữ</option>
+                      </select>
+                    </label>
                     <p className="rounded-lg border border-primary/20 bg-white px-3 py-2 text-xs leading-5 text-muted-foreground">
                       Bản dịch được thực hiện sau khi transcript gốc đã tạo
                       xong. Chọn “Tự nhận diện nhiều ngôn ngữ” khi một file có
@@ -1684,11 +1831,6 @@ function UploadPage() {
           </div>
         </section>
 
-        <VbeePreferencesSidebar
-          firstName={user.firstName}
-          refreshKey={quotaRefreshKey}
-          onQuotaChange={setQuota}
-        />
       </main>
 
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
@@ -1716,8 +1858,9 @@ function UploadPage() {
               <button
                 onClick={handleCreateFolder}
                 className="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-black text-primary-foreground transition hover:opacity-90"
+                disabled={!folderName.trim() || creatingFolder}
               >
-                Tạo folder
+                {creatingFolder ? "Đang tạo..." : "Tạo folder"}
               </button>
             </div>
           </div>
@@ -2386,7 +2529,7 @@ function UploadModeSelector({
   ];
 
   return (
-    <div className="grid gap-2 md:grid-cols-3">
+    <div className="grid grid-cols-3 gap-2">
       {modes.map((item) => {
         const Icon = item.icon;
         const active = mode === item.value;
@@ -2394,15 +2537,19 @@ function UploadModeSelector({
           <button
             key={item.value}
             onClick={() => setMode(item.value)}
-            className={`rounded-lg border p-3 text-left transition ${
+            className={`min-w-0 rounded-lg border p-2 text-left transition sm:p-3 ${
               active
                 ? "border-primary/40 bg-white text-foreground"
                 : "border-border bg-white text-muted-foreground hover:border-primary/40"
             }`}
           >
-            <Icon className="mb-3 h-5 w-5 text-primary" />
-            <p className="font-black">{item.title}</p>
-            <p className="mt-1 text-xs leading-5">{item.desc}</p>
+            <Icon className="mb-2 h-4 w-4 text-primary sm:h-5 sm:w-5" />
+            <p className="truncate text-xs font-black sm:text-sm">
+              {item.title}
+            </p>
+            <p className="mt-1 hidden text-xs leading-5 sm:block">
+              {item.desc}
+            </p>
           </button>
         );
       })}
@@ -2410,7 +2557,7 @@ function UploadModeSelector({
   );
 }
 
-function VbeeStyleFooter() {
+export function VbeeStyleFooter() {
   return (
     <footer className="mt-8 border-t border-border bg-white px-4 py-6 text-center text-sm text-muted-foreground">
       <p>© 2026 Vbee Voice. Đã đăng ký bản quyền.</p>

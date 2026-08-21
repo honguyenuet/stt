@@ -12,12 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as UploadRouteImport } from './routes/upload'
 import { Route as TranscriptionSettingsRouteImport } from './routes/transcription-settings'
+import { Route as TeamRouteImport } from './routes/team'
 import { Route as SupportRouteImport } from './routes/support'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ReferralRouteImport } from './routes/referral'
 import { Route as RecordRouteImport } from './routes/record'
 import { Route as RealtimeRouteImport } from './routes/realtime'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as LoginRouteImport } from './routes/login'
@@ -26,12 +28,14 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CustomDictionaryRouteImport } from './routes/custom-dictionary'
 import { Route as ContactRouteImport } from './routes/contact'
+import { Route as BatchRouteImport } from './routes/batch'
 import { Route as ApiRouteImport } from './routes/api'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as TranscriptIdRouteImport } from './routes/transcript.$id'
+import { Route as SharedTokenRouteImport } from './routes/shared.$token'
 import { Route as CheckoutOrderIdRouteImport } from './routes/checkout.$orderId'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminUsageRouteImport } from './routes/admin.usage'
@@ -58,6 +62,11 @@ const UploadRoute = UploadRouteImport.update({
 const TranscriptionSettingsRoute = TranscriptionSettingsRouteImport.update({
   id: '/transcription-settings',
   path: '/transcription-settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamRoute = TeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SupportRoute = SupportRouteImport.update({
@@ -88,6 +97,11 @@ const RecordRoute = RecordRouteImport.update({
 const RealtimeRoute = RealtimeRouteImport.update({
   id: '/realtime',
   path: '/realtime',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PricingRoute = PricingRouteImport.update({
@@ -130,6 +144,11 @@ const ContactRoute = ContactRouteImport.update({
   path: '/contact',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BatchRoute = BatchRouteImport.update({
+  id: '/batch',
+  path: '/batch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiRoute = ApiRouteImport.update({
   id: '/api',
   path: '/api',
@@ -158,6 +177,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
 const TranscriptIdRoute = TranscriptIdRouteImport.update({
   id: '/transcript/$id',
   path: '/transcript/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SharedTokenRoute = SharedTokenRouteImport.update({
+  id: '/shared/$token',
+  path: '/shared/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CheckoutOrderIdRoute = CheckoutOrderIdRouteImport.update({
@@ -226,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/about': typeof AboutRoute
   '/admin': typeof AdminRouteWithChildren
   '/api': typeof ApiRoute
+  '/batch': typeof BatchRoute
   '/contact': typeof ContactRoute
   '/custom-dictionary': typeof CustomDictionaryRoute
   '/dashboard': typeof DashboardRoute
@@ -234,12 +259,14 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/support': typeof SupportRoute
+  '/team': typeof TeamRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
   '/verify-email': typeof VerifyEmailRoute
@@ -255,6 +282,7 @@ export interface FileRoutesByFullPath {
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/shared/$token': typeof SharedTokenRoute
   '/transcript/$id': typeof TranscriptIdRoute
   '/admin/': typeof AdminIndexRoute
 }
@@ -262,6 +290,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/api': typeof ApiRoute
+  '/batch': typeof BatchRoute
   '/contact': typeof ContactRoute
   '/custom-dictionary': typeof CustomDictionaryRoute
   '/dashboard': typeof DashboardRoute
@@ -270,12 +299,14 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/support': typeof SupportRoute
+  '/team': typeof TeamRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
   '/verify-email': typeof VerifyEmailRoute
@@ -291,6 +322,7 @@ export interface FileRoutesByTo {
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/shared/$token': typeof SharedTokenRoute
   '/transcript/$id': typeof TranscriptIdRoute
   '/admin': typeof AdminIndexRoute
 }
@@ -300,6 +332,7 @@ export interface FileRoutesById {
   '/about': typeof AboutRoute
   '/admin': typeof AdminRouteWithChildren
   '/api': typeof ApiRoute
+  '/batch': typeof BatchRoute
   '/contact': typeof ContactRoute
   '/custom-dictionary': typeof CustomDictionaryRoute
   '/dashboard': typeof DashboardRoute
@@ -308,12 +341,14 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/realtime': typeof RealtimeRoute
   '/record': typeof RecordRoute
   '/referral': typeof ReferralRoute
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
   '/support': typeof SupportRoute
+  '/team': typeof TeamRoute
   '/transcription-settings': typeof TranscriptionSettingsRoute
   '/upload': typeof UploadRoute
   '/verify-email': typeof VerifyEmailRoute
@@ -329,6 +364,7 @@ export interface FileRoutesById {
   '/admin/usage': typeof AdminUsageRoute
   '/admin/users': typeof AdminUsersRoute
   '/checkout/$orderId': typeof CheckoutOrderIdRoute
+  '/shared/$token': typeof SharedTokenRoute
   '/transcript/$id': typeof TranscriptIdRoute
   '/admin/': typeof AdminIndexRoute
 }
@@ -339,6 +375,7 @@ export interface FileRouteTypes {
     | '/about'
     | '/admin'
     | '/api'
+    | '/batch'
     | '/contact'
     | '/custom-dictionary'
     | '/dashboard'
@@ -347,12 +384,14 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
+    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
     | '/register'
     | '/reset-password'
     | '/support'
+    | '/team'
     | '/transcription-settings'
     | '/upload'
     | '/verify-email'
@@ -368,6 +407,7 @@ export interface FileRouteTypes {
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/shared/$token'
     | '/transcript/$id'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
@@ -375,6 +415,7 @@ export interface FileRouteTypes {
     | '/'
     | '/about'
     | '/api'
+    | '/batch'
     | '/contact'
     | '/custom-dictionary'
     | '/dashboard'
@@ -383,12 +424,14 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
+    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
     | '/register'
     | '/reset-password'
     | '/support'
+    | '/team'
     | '/transcription-settings'
     | '/upload'
     | '/verify-email'
@@ -404,6 +447,7 @@ export interface FileRouteTypes {
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/shared/$token'
     | '/transcript/$id'
     | '/admin'
   id:
@@ -412,6 +456,7 @@ export interface FileRouteTypes {
     | '/about'
     | '/admin'
     | '/api'
+    | '/batch'
     | '/contact'
     | '/custom-dictionary'
     | '/dashboard'
@@ -420,12 +465,14 @@ export interface FileRouteTypes {
     | '/login'
     | '/onboarding'
     | '/pricing'
+    | '/privacy'
     | '/realtime'
     | '/record'
     | '/referral'
     | '/register'
     | '/reset-password'
     | '/support'
+    | '/team'
     | '/transcription-settings'
     | '/upload'
     | '/verify-email'
@@ -441,6 +488,7 @@ export interface FileRouteTypes {
     | '/admin/usage'
     | '/admin/users'
     | '/checkout/$orderId'
+    | '/shared/$token'
     | '/transcript/$id'
     | '/admin/'
   fileRoutesById: FileRoutesById
@@ -450,6 +498,7 @@ export interface RootRouteChildren {
   AboutRoute: typeof AboutRoute
   AdminRoute: typeof AdminRouteWithChildren
   ApiRoute: typeof ApiRoute
+  BatchRoute: typeof BatchRoute
   ContactRoute: typeof ContactRoute
   CustomDictionaryRoute: typeof CustomDictionaryRoute
   DashboardRoute: typeof DashboardRoute
@@ -458,16 +507,19 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   OnboardingRoute: typeof OnboardingRoute
   PricingRoute: typeof PricingRoute
+  PrivacyRoute: typeof PrivacyRoute
   RealtimeRoute: typeof RealtimeRoute
   RecordRoute: typeof RecordRoute
   ReferralRoute: typeof ReferralRoute
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SupportRoute: typeof SupportRoute
+  TeamRoute: typeof TeamRoute
   TranscriptionSettingsRoute: typeof TranscriptionSettingsRoute
   UploadRoute: typeof UploadRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   CheckoutOrderIdRoute: typeof CheckoutOrderIdRoute
+  SharedTokenRoute: typeof SharedTokenRoute
   TranscriptIdRoute: typeof TranscriptIdRoute
 }
 
@@ -492,6 +544,13 @@ declare module '@tanstack/react-router' {
       path: '/transcription-settings'
       fullPath: '/transcription-settings'
       preLoaderRoute: typeof TranscriptionSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/team': {
+      id: '/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof TeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/support': {
@@ -534,6 +593,13 @@ declare module '@tanstack/react-router' {
       path: '/realtime'
       fullPath: '/realtime'
       preLoaderRoute: typeof RealtimeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pricing': {
@@ -592,6 +658,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContactRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/batch': {
+      id: '/batch'
+      path: '/batch'
+      fullPath: '/batch'
+      preLoaderRoute: typeof BatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api': {
       id: '/api'
       path: '/api'
@@ -632,6 +705,13 @@ declare module '@tanstack/react-router' {
       path: '/transcript/$id'
       fullPath: '/transcript/$id'
       preLoaderRoute: typeof TranscriptIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/shared/$token': {
+      id: '/shared/$token'
+      path: '/shared/$token'
+      fullPath: '/shared/$token'
+      preLoaderRoute: typeof SharedTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/checkout/$orderId': {
@@ -758,6 +838,7 @@ const rootRouteChildren: RootRouteChildren = {
   AboutRoute: AboutRoute,
   AdminRoute: AdminRouteWithChildren,
   ApiRoute: ApiRoute,
+  BatchRoute: BatchRoute,
   ContactRoute: ContactRoute,
   CustomDictionaryRoute: CustomDictionaryRoute,
   DashboardRoute: DashboardRoute,
@@ -766,16 +847,19 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   OnboardingRoute: OnboardingRoute,
   PricingRoute: PricingRoute,
+  PrivacyRoute: PrivacyRoute,
   RealtimeRoute: RealtimeRoute,
   RecordRoute: RecordRoute,
   ReferralRoute: ReferralRoute,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SupportRoute: SupportRoute,
+  TeamRoute: TeamRoute,
   TranscriptionSettingsRoute: TranscriptionSettingsRoute,
   UploadRoute: UploadRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   CheckoutOrderIdRoute: CheckoutOrderIdRoute,
+  SharedTokenRoute: SharedTokenRoute,
   TranscriptIdRoute: TranscriptIdRoute,
 }
 export const routeTree = rootRouteImport

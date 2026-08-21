@@ -34,6 +34,11 @@ import {
 } from "@/lib/format-duration";
 import { languageLabel } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { canOpenTranscriptEditor } from "@/lib/transcript-history";
+import {
+  normalizeDashboardFolders,
+  type DashboardFolder,
+} from "@/lib/dashboard-folders";
 
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -60,6 +65,9 @@ interface HistoryItem {
   job_id: number | null;
   folder_id?: number | null;
   folder_name?: string | null;
+  transcript_template?: string;
+  tags?: string[];
+  search_start_ms?: number | null;
   queue_position?: number;
   estimated_remaining_seconds?: number;
   created_at: string;
@@ -124,6 +132,12 @@ function HistoryPage() {
   const [editorText, setEditorText] = useState("");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [folders, setFolders] = useState<DashboardFolder[]>([]);
+  const [folderId, setFolderId] = useState("");
+  const [speakerFilter, setSpeakerFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [createdAfter, setCreatedAfter] = useState("");
+  const [createdBefore, setCreatedBefore] = useState("");
   const [page, setPage] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -140,6 +154,27 @@ function HistoryPage() {
   const historyInFlightRef = useRef(false);
   const detailRequestRef = useRef<AbortController | null>(null);
   const audioRequestRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void fetch(`${API_URL}/api/transcribe/folders`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => ({}))) as {
+          folders?: unknown;
+        };
+        if (active && response.ok) {
+          setFolders(normalizeDashboardFolders(body.folders));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [token]);
   const expandedSummary =
     expanded === null ? null : items.find((item) => item.id === expanded);
   const expandedItemStatus = expandedSummary?.status ?? null;
@@ -183,6 +218,11 @@ function HistoryPage() {
           limit: String(HISTORY_PAGE_SIZE),
         });
         if (debouncedSearch) query.set("q", debouncedSearch);
+        if (folderId) query.set("folderId", folderId);
+        if (speakerFilter.trim()) query.set("speaker", speakerFilter.trim());
+        if (tagFilter.trim()) query.set("tag", tagFilter.trim());
+        if (createdAfter) query.set("createdAfter", createdAfter);
+        if (createdBefore) query.set("createdBefore", createdBefore);
         const res = await fetch(
           `${API_URL}/api/transcribe/history?${query.toString()}`,
           {
@@ -231,7 +271,17 @@ function HistoryPage() {
         }
       }
     },
-    [debouncedSearch, page, token, user],
+    [
+      createdAfter,
+      createdBefore,
+      debouncedSearch,
+      folderId,
+      page,
+      speakerFilter,
+      tagFilter,
+      token,
+      user,
+    ],
   );
 
   useEffect(() => {
@@ -241,6 +291,10 @@ function HistoryPage() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [createdAfter, createdBefore, folderId, speakerFilter, tagFilter]);
 
   useEffect(() => {
     if (!isLoading && !user)
@@ -632,32 +686,31 @@ function HistoryPage() {
   ).length;
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-background">
-      <div className="absolute inset-0 bg-gradient-hero opacity-45 pointer-events-none" />
-      <div className="absolute top-[8%] left-[4%] hidden h-80 w-80 rounded-full bg-primary/15 blur-3xl animate-float pointer-events-none" />
+    <div className="relative min-h-screen overflow-x-hidden bg-[#f7f7fb]">
+      <div className="pointer-events-none absolute inset-0 hidden bg-gradient-hero opacity-45" />
+      <div className="pointer-events-none absolute left-[4%] top-[8%] hidden h-80 w-80 animate-float rounded-full bg-primary/15 blur-3xl" />
       <div
-        className="absolute bottom-[6%] right-[4%] hidden h-64 w-64 rounded-full bg-primary/10 blur-3xl animate-float pointer-events-none"
+        className="pointer-events-none absolute bottom-[6%] right-[4%] hidden h-64 w-64 animate-float rounded-full bg-primary/10 blur-3xl"
         style={{ animationDelay: "1.5s" }}
       />
 
       <AuthenticatedHeader />
 
-      <main className="relative z-10 mx-auto max-w-5xl px-4 py-6 md:px-6">
+      <main className="relative z-10 mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
         {/* Heading */}
-        <div className="mb-6">
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-medium text-primary mb-4">
+        <div className="mb-4">
+          <div className="hidden items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-medium text-primary">
             <History className="h-3 w-3" /> Lịch sử chuyển đổi
           </div>
-          <h1 className="text-2xl font-bold text-foreground md:text-3xl">
-            Lịch sử <span className="font-display text-primary">của bạn</span>
+          <h1 className="text-xl font-black text-foreground sm:text-2xl">
+            Lịch sử <span className="font-display text-primary">chuyển đổi</span>
           </h1>
-          <p className="mt-2 text-muted-foreground">
-            Tất cả bản chuyển đổi gần đây — nhấn để xem, chỉnh sửa hoặc nghe
-            lại.
+          <p className="mt-1 text-sm text-muted-foreground">
+            Tìm, mở và quản lý các bản chép lời gần đây.
           </p>
 
           {/* Search */}
-          <div className="relative mt-5 max-w-lg">
+          <div className="relative mt-3 max-w-lg">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <input
               type="text"
@@ -675,6 +728,60 @@ function HistoryPage() {
               </button>
             )}
           </div>
+          <div className="mt-2 grid max-w-4xl grid-cols-2 gap-2 md:grid-cols-5">
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Dự án
+              <select
+                value={folderId}
+                onChange={(event) => setFolderId(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              >
+                <option value="">Tất cả thư mục</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Người nói
+              <input
+                value={speakerFilter}
+                onChange={(event) => setSpeakerFilter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+                placeholder="VD: Lan"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Tag
+              <input
+                value={tagFilter}
+                onChange={(event) => setTagFilter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+                placeholder="VD: khách hàng"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Từ ngày
+              <input
+                type="date"
+                value={createdAfter}
+                onChange={(event) => setCreatedAfter(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-muted-foreground">
+              Đến ngày
+              <input
+                type="date"
+                value={createdBefore}
+                min={createdAfter || undefined}
+                onChange={(event) => setCreatedBefore(event.target.value)}
+                className="mt-1 h-9 w-full rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground outline-none focus:border-primary"
+              />
+            </label>
+          </div>
           {search && !loading && (
             <p className="mt-2 text-xs text-muted-foreground">
               Tìm thấy{" "}
@@ -686,13 +793,13 @@ function HistoryPage() {
 
         <Link
           to="/dashboard"
-          className="mb-3 flex items-center justify-center rounded-md border border-border bg-white px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
+          className="hidden items-center justify-center rounded-md border border-border bg-white px-4 py-2 text-sm font-bold text-foreground/85 shadow-soft transition hover:border-primary/45 hover:bg-primary/5 hover:text-primary"
         >
           <Home className="mr-2 h-4 w-4 text-primary" />
           Không gian làm việc
         </Link>
 
-        <div className="mb-5 grid grid-cols-[1fr_1fr_44px] gap-2 sm:flex">
+        <div className="hidden">
           <Link
             to="/upload"
             className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-3 text-sm font-black text-primary-foreground shadow-glow transition hover:opacity-90"
@@ -716,7 +823,7 @@ function HistoryPage() {
           </Link>
         </div>
 
-        <div className="mb-6 grid gap-3 md:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           {[
             ["Tổng số tệp", String(totalItems)],
             ["Đã chuyển đổi", String(completedCount)],
@@ -725,12 +832,12 @@ function HistoryPage() {
           ].map(([label, value]) => (
             <div
               key={label}
-              className="rounded-lg border border-border bg-white px-4 py-3 shadow-soft"
+              className="rounded-lg border border-border bg-white px-3 py-2.5"
             >
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">
+              <p className="text-[11px] font-black uppercase text-muted-foreground">
                 {label}
               </p>
-              <p className="mt-1 text-lg font-black text-primary">{value}</p>
+              <p className="mt-0.5 text-base font-black text-primary">{value}</p>
             </div>
           ))}
         </div>
@@ -836,6 +943,7 @@ function HistoryPage() {
             {filtered.map((item) => {
               const isOpen = expanded === item.id;
               const isCompleted = item.status === "completed";
+              const canOpenEditor = canOpenTranscriptEditor(item);
               const isActive =
                 item.status === "queued" || item.status === "processing";
               const statusLabel =
@@ -872,10 +980,16 @@ function HistoryPage() {
                     />
                     <button
                       onClick={() =>
-                        isCompleted
+                        canOpenEditor
                           ? void navigate({
                               to: "/transcript/$id",
                               params: { id: String(item.id) },
+                              search: {
+                                at:
+                                  Number(item.search_start_ms) >= 0
+                                    ? Number(item.search_start_ms)
+                                    : undefined,
+                              },
                             })
                           : setExpanded(isOpen ? null : item.id)
                       }
@@ -986,19 +1100,20 @@ function HistoryPage() {
                       )}
                       <button
                         onClick={() =>
-                          isCompleted
+                          canOpenEditor
                             ? void navigate({
-                                to: "/transcript/$id",
-                                params: { id: String(item.id) },
-                              })
+                              to: "/transcript/$id",
+                              params: { id: String(item.id) },
+                              search: { at: undefined },
+                            })
                             : setExpanded(isOpen ? null : item.id)
                         }
                         title={
-                          isCompleted ? "Mở trình biên tập" : "Xem trạng thái"
+                          canOpenEditor ? "Mở trình biên tập" : "Xem trạng thái"
                         }
                         className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-card transition"
                       >
-                        {isCompleted ? (
+                        {canOpenEditor ? (
                           <ArrowRight className="h-4 w-4" />
                         ) : isOpen ? (
                           <ChevronUp className="h-4 w-4" />

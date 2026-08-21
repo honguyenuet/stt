@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Gift } from "lucide-react";
 import { PhilosophyQuoteCard } from "@/components/philosophy-quote-card";
 import { QuotaStatusPanel } from "@/components/quota-status-panel";
+import { VbeePublicFooter } from "@/components/vbee-public-chrome";
 import type { QuotaStatus } from "@/lib/quota";
 
 type AccountUsageCardProps = {
@@ -96,30 +97,5 @@ export function VbeePreferencesSidebar({
 }
 
 export function VbeePreferencesFooter() {
-  return (
-    <footer className="border-t border-border px-4 py-8 text-center text-sm text-muted-foreground">
-      <p>© 2026 Vbee AIVoice. Đã đăng ký bản quyền.</p>
-      <div className="mt-2 flex flex-wrap justify-center gap-4">
-        {[
-          "Vbee.ai",
-          "Bảng giá",
-          "Giới thiệu",
-          "Bảo mật",
-          "Điều khoản",
-          "Hỗ trợ",
-        ].map((item) => (
-          <Link
-            key={item}
-            to="/"
-            className="font-semibold text-primary hover:underline"
-          >
-            {item}
-          </Link>
-        ))}
-      </div>
-      <p className="mt-5">
-        Được phát triển cho trải nghiệm chuyển giọng nói thành văn bản rõ ràng.
-      </p>
-    </footer>
-  );
+  return <VbeePublicFooter />;
 }

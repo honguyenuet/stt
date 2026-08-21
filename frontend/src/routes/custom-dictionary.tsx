@@ -2,10 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Check, HelpCircle, X } from "lucide-react";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
-import {
-  VbeePreferencesFooter,
-  VbeePreferencesSidebar,
-} from "@/components/vbee-preferences-layout";
 import { useAuth } from "@/context/AuthContext";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 
@@ -122,25 +118,25 @@ function CustomDictionaryPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-4 py-6 md:px-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+      <main className="mx-auto max-w-4xl px-3 py-4 sm:px-5 sm:py-5">
         <section className="min-w-0">
-          <div className="mb-5 border-b-2 border-[#ffcb05] pb-4">
-            <h1 className="text-2xl font-light tracking-tight md:text-3xl">
+          <div className="mb-3 border-b-2 border-[#ffcb05] pb-3">
+            <h1 className="text-xl font-black tracking-tight sm:text-2xl">
               Từ điển riêng
             </h1>
           </div>
 
-          <div className="max-w-3xl">
+          <div>
             <p className="text-sm leading-7 text-muted-foreground">
               Thêm các từ hoặc cụm từ thường xuất hiện trong tệp của bạn.
               Vbee sẽ ưu tiên nhận diện các tên riêng, thuật ngữ chuyên ngành,
               cụm từ hiếm và cách viết đặc biệt khi chuyển giọng nói thành văn bản.
             </p>
 
-            <div className="mt-6">
+            <div className="mt-4">
               <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <h2 className="text-lg font-black uppercase tracking-[0.08em]">
@@ -161,7 +157,7 @@ function CustomDictionaryPage() {
               </div>
 
               <div className="overflow-hidden rounded-t-lg border border-border bg-white">
-                <div className="grid min-h-[300px] grid-cols-[48px_1fr]">
+                <div className="grid min-h-[240px] grid-cols-[48px_1fr]">
                   <div className="select-none border-r border-border bg-[#fbf8ef] px-3 py-4 text-right font-mono text-xs leading-6 text-muted-foreground/70">
                     {Array.from({ length: lineCount }, (_, index) => (
                       <div key={index}>{index + 1}</div>
@@ -171,7 +167,7 @@ function CustomDictionaryPage() {
                     value={dictionary}
                     onChange={(event) => setDictionary(event.target.value)}
                     placeholder="Mỗi dòng một từ hoặc cụm từ"
-                    className="min-h-[300px] w-full resize-y bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50"
+                    className="min-h-[240px] w-full resize-y bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50"
                     spellCheck={false}
                   />
                 </div>
@@ -231,10 +227,7 @@ function CustomDictionaryPage() {
           </div>
         </section>
 
-        <VbeePreferencesSidebar firstName={user.firstName} />
       </main>
-
-      <VbeePreferencesFooter />
     </div>
   );
 }
