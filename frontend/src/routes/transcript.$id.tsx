@@ -2337,7 +2337,7 @@ function TranscriptEditorPage() {
 
         <section
           data-testid="transcript-audio-player"
-          className="sticky top-14 z-30 mb-3 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-3 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] sm:top-[61px] sm:mb-4 sm:p-4 print:hidden"
+          className="mb-3 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-3 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] sm:mb-4 sm:p-4 print:hidden"
         >
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
