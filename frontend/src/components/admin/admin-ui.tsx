@@ -252,7 +252,7 @@ function AdminLayout({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="absolute inset-x-3 bottom-1 rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="absolute inset-x-3 bottom-0 rounded-md border border-slate-200 bg-slate-50 p-3">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
             Signed in
           </p>
