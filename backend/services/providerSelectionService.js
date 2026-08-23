@@ -77,6 +77,7 @@ function createAudioSelectionProfile(input = {}) {
       (translateTo !== "auto" &&
         translateTo !== language &&
         translateTo !== "multi"),
+    hasCustomVocabulary: normalizeBoolean(input.hasCustomVocabulary),
     durationSeconds: boundedPositiveNumber(
       input.durationSeconds,
       MAX_DURATION_SECONDS,
@@ -224,6 +225,22 @@ function applyAudioScore(candidate, profile) {
       candidate,
       translationScores[provider] || 0,
       "integrated_translation",
+    );
+  }
+
+  if (profile.hasCustomVocabulary) {
+    const vocabularyScores = {
+      assemblyai: 55,
+      deepgram: 50,
+      sonix: 45,
+      vbee: -100,
+    };
+    addScore(
+      candidate,
+      vocabularyScores[provider] || 0,
+      provider === "vbee"
+        ? "custom_vocabulary_unsupported"
+        : "custom_vocabulary",
     );
   }
 

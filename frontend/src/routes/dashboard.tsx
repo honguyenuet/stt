@@ -1838,7 +1838,7 @@ function DashboardPage() {
                 className="mt-2 h-11 w-full rounded-xl border border-border bg-background px-4 text-sm"
               >
                 <option value="private">Riêng tư · chỉ mình bạn</option>
-                <option value="team">Nhóm · thành viên có thể tải tệp vào</option>
+                <option value="team">Nhóm · chia sẻ với thành viên</option>
               </select>
             </label>
             {folderVisibility === "team" && (

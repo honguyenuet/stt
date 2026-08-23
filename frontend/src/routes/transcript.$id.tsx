@@ -70,7 +70,12 @@ import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
 import {
   getAdaptiveTranscriptEditorHeight,
   getPlainTranscriptEditorHeight,
+  TRANSCRIPT_AUDIO_PLAYER_CLASS_NAME,
 } from "@/lib/transcript-editor-layout";
+import {
+  canEditTranscript,
+  isTranscriptOwner as checkTranscriptOwner,
+} from "@/lib/transcript-access";
 import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
@@ -135,6 +140,8 @@ interface TranscriptDetail {
   status: "queued" | "processing" | "completed" | "failed" | "cancelled";
   error_message: string | null;
   created_at: string;
+  owner_user_id: number;
+  can_edit: boolean;
 }
 
 type TranscriptTemplate = "meeting" | "interview" | "podcast" | "lecture";
@@ -198,11 +205,13 @@ interface TranscriptSegment {
 const EditableTimedWord = memo(function EditableTimedWord({
   word,
   active,
+  readOnly,
   onCommit,
   onSeek,
 }: {
   word: IndexedWord;
   active: boolean;
+  readOnly: boolean;
   onCommit: (index: number, text: string) => void;
   onSeek: (milliseconds: number) => void;
 }) {
@@ -237,6 +246,7 @@ const EditableTimedWord = memo(function EditableTimedWord({
   );
 
   function commit() {
+    if (readOnly) return;
     const nextValue = value.trim();
     if (!nextValue) {
       setValue(word.text);
@@ -252,7 +262,8 @@ const EditableTimedWord = memo(function EditableTimedWord({
       value={value}
       data-word-index={word.index}
       aria-current={active ? "true" : undefined}
-      aria-label={`Chỉnh sửa từ ${word.text}`}
+      aria-label={readOnly ? `Từ ${word.text}` : `Chỉnh sửa từ ${word.text}`}
+      readOnly={readOnly}
       onChange={(event) => {
         valueRef.current = event.target.value;
         setValue(event.target.value);
@@ -278,7 +289,9 @@ const EditableTimedWord = memo(function EditableTimedWord({
           ? "bg-[#ffcb05] font-black text-[#21104a] shadow-[0_0_0_3px_rgba(255,203,5,.22)]"
           : isLowConfidence
             ? "bg-red-50 text-red-800 ring-1 ring-red-200 hover:bg-red-100 focus:bg-white focus:ring-2 focus:ring-red-300"
-          : "bg-transparent text-[#342752] hover:bg-[#fff3bb] focus:bg-white focus:ring-2 focus:ring-[#ffcb05]"
+            : readOnly
+              ? "cursor-pointer bg-transparent text-[#342752]"
+              : "bg-transparent text-[#342752] hover:bg-[#fff3bb] focus:bg-white focus:ring-2 focus:ring-[#ffcb05]"
       }`}
     />
   );
@@ -289,6 +302,7 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
   segmentIndex,
   start,
   activeWordIndex,
+  readOnly,
   onCommit,
   onSeek,
   onMeasure,
@@ -297,6 +311,7 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
   segmentIndex: number;
   start: number;
   activeWordIndex: number;
+  readOnly: boolean;
   onCommit: (index: number, text: string) => void;
   onSeek: (milliseconds: number) => void;
   onMeasure: (index: number, size: number) => void;
@@ -343,6 +358,7 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
             key={`${word.start}-${word.index}`}
             word={word}
             active={activeWordIndex === word.index}
+            readOnly={readOnly}
             onCommit={onCommit}
             onSeek={onSeek}
           />
@@ -552,7 +568,8 @@ function interpolateWordTiming(
   }
 
   const firstStart = baseWords[0]?.start ?? 0;
-  const lastEnd = baseWords[baseWords.length - 1]?.end ?? firstStart + total * 450;
+  const lastEnd =
+    baseWords[baseWords.length - 1]?.end ?? firstStart + total * 450;
   const span = Math.max(total * 120, lastEnd - firstStart);
   const slot = span / Math.max(1, total);
   const start = Math.round(firstStart + slot * index);
@@ -567,7 +584,12 @@ function alignTokensToBaseWords(tokens: string[], baseWords: TranscriptWord[]) {
     return tokens.map((_, index) =>
       Math.min(
         baseWords.length - 1,
-        Math.max(0, Math.round((index / Math.max(1, tokens.length - 1)) * (baseWords.length - 1))),
+        Math.max(
+          0,
+          Math.round(
+            (index / Math.max(1, tokens.length - 1)) * (baseWords.length - 1),
+          ),
+        ),
       ),
     );
   }
@@ -626,7 +648,12 @@ function deriveTimedWordsFromPlainText(
   const aligned = alignTokensToBaseWords(tokens, baseWords);
   const nextWords = tokens.map((token, index) => {
     const baseIndex = aligned[index];
-    const timing = interpolateWordTiming(index, tokens.length, baseWords, baseIndex);
+    const timing = interpolateWordTiming(
+      index,
+      tokens.length,
+      baseWords,
+      baseIndex,
+    );
     const base =
       baseIndex !== null && baseWords[baseIndex] ? baseWords[baseIndex] : null;
     return {
@@ -660,7 +687,9 @@ function splitTranslationIntoSegments(
   const groups: string[] = [];
   const unitCount = Math.max(1, Math.ceil(units.length / count));
   for (let index = 0; index < count; index += 1) {
-    groups.push(units.slice(index * unitCount, (index + 1) * unitCount).join(" "));
+    groups.push(
+      units.slice(index * unitCount, (index + 1) * unitCount).join(" "),
+    );
   }
   return groups.map((item) => item.trim()).filter(Boolean);
 }
@@ -769,6 +798,10 @@ function TranscriptEditorPage() {
 
   const words = useMemo(() => transcript?.words ?? [], [transcript?.words]);
   const activeTranscriptId = transcript?.id ?? null;
+  const canEdit = canEditTranscript(transcript?.can_edit);
+  const isTranscriptOwner =
+    Boolean(transcript && user) &&
+    checkTranscriptOwner(transcript?.owner_user_id, user?.id);
   const syncAvailable = canUseSyncEditor(words.length);
   const segments = useMemo(() => buildSegments(words), [words]);
   const activeSegmentIndex = useMemo(
@@ -818,11 +851,14 @@ function TranscriptEditorPage() {
       : 0;
   const activeSegmentSize =
     activeSegmentIndex >= 0
-      ? (segmentSizes.get(activeSegmentIndex) ??
-        VIRTUAL_SEGMENT_ESTIMATED_SIZE)
+      ? (segmentSizes.get(activeSegmentIndex) ?? VIRTUAL_SEGMENT_ESTIMATED_SIZE)
       : 0;
   const translationSegments = useMemo(
-    () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
+    () =>
+      splitTranslationIntoSegments(
+        transcript?.translated_text,
+        segments.length,
+      ),
     [segments.length, transcript?.translated_text],
   );
   const shouldHighlightPlainText = useDeferredValue(
@@ -870,7 +906,8 @@ function TranscriptEditorPage() {
     [transcript?.reviewed_word_indexes, words],
   );
   const lowConfidenceReviewIndex = useMemo(
-    () => lowConfidenceWords.findIndex((word) => word.index === activeWordIndex),
+    () =>
+      lowConfidenceWords.findIndex((word) => word.index === activeWordIndex),
     [activeWordIndex, lowConfidenceWords],
   );
   const searchMatches = useMemo(() => {
@@ -1026,9 +1063,7 @@ function TranscriptEditorPage() {
             detail.duration,
             MAX_EDITABLE_TIMED_WORDS,
           );
-      detail.words = providerWords.length
-        ? providerWords
-        : estimatedWords;
+      detail.words = providerWords.length ? providerWords : estimatedWords;
       savedWordsRef.current = providerWords.map((word) => ({ ...word }));
       timelineNeedsInitializationRef.current =
         !providerWords.length && estimatedWords.length > 0;
@@ -1040,7 +1075,9 @@ function TranscriptEditorPage() {
       );
       try {
         const remembered = normalizeSpeakerMemory(
-          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+          JSON.parse(
+            window.localStorage.getItem("vbee-speaker-labels") || "{}",
+          ),
         );
         detail.words = applyRememberedSpeakerLabels(detail.words, remembered);
       } catch {
@@ -1059,9 +1096,7 @@ function TranscriptEditorPage() {
         detail.insights && typeof detail.insights === "object"
           ? detail.insights
           : null;
-      detail.reviewed_word_indexes = Array.isArray(
-        detail.reviewed_word_indexes,
-      )
+      detail.reviewed_word_indexes = Array.isArray(detail.reviewed_word_indexes)
         ? detail.reviewed_word_indexes.filter(
             (value) => Number.isSafeInteger(value) && value >= 0,
           )
@@ -1081,11 +1116,7 @@ function TranscriptEditorPage() {
       setSearchIndex(-1);
       setInsightsError("");
       setTagDraft(detail.tags.join(", "));
-      setEditorMode(
-        canUseSyncEditor(detail.words.length)
-          ? "sync"
-          : "edit",
-      );
+      setEditorMode(canUseSyncEditor(detail.words.length) ? "sync" : "edit");
     } catch (error) {
       if (controller.signal.aborted && !timedOut) return;
       setLoadError(
@@ -1252,11 +1283,7 @@ function TranscriptEditorPage() {
 
   const loadAudio = useCallback(
     async (playWhenReady = false, seekMilliseconds: number | null = null) => {
-      if (
-        !token ||
-        !transcript?.audio_filename ||
-        audioLoadingRef.current
-      ) {
+      if (!token || !transcript?.audio_filename || audioLoadingRef.current) {
         return;
       }
       if (seekMilliseconds !== null) {
@@ -1284,9 +1311,7 @@ function TranscriptEditorPage() {
           throw new Error(body.error || "Không tạo được đường dẫn audio");
         }
         const expiresAt = body.expiresAt ? Date.parse(body.expiresAt) : NaN;
-        setAudioAccessExpiresAt(
-          Number.isFinite(expiresAt) ? expiresAt : null,
-        );
+        setAudioAccessExpiresAt(Number.isFinite(expiresAt) ? expiresAt : null);
         const resolvedUrl = body.url.startsWith("http")
           ? body.url
           : `${API_URL}${body.url}`;
@@ -1403,7 +1428,7 @@ function TranscriptEditorPage() {
 
   const saveTranscript = useCallback(
     async (text: string, timedWords = wordsRef.current) => {
-      if (!token || !activeTranscriptId) return;
+      if (!token || !activeTranscriptId || !canEdit) return;
       saveRequestRef.current?.abort();
       const controller = new AbortController();
       saveRequestRef.current = controller;
@@ -1477,18 +1502,30 @@ function TranscriptEditorPage() {
         }
       }
     },
-    [activeTranscriptId, loadVersions, token],
+    [activeTranscriptId, canEdit, loadVersions, token],
   );
 
   useEffect(() => {
-    if (!transcript || (editorText === savedText && dirtyRevision === 0)) return;
+    if (
+      !transcript ||
+      !canEdit ||
+      (editorText === savedText && dirtyRevision === 0)
+    )
+      return;
     setSaveStatus("unsaved");
     const timer = window.setTimeout(
       () => void saveTranscript(editorText),
       AUTO_SAVE_DELAY_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [dirtyRevision, editorText, saveTranscript, savedText, transcript]);
+  }, [
+    canEdit,
+    dirtyRevision,
+    editorText,
+    saveTranscript,
+    savedText,
+    transcript,
+  ]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -1504,6 +1541,7 @@ function TranscriptEditorPage() {
       loadRequestRef.current?.abort();
       const pendingText = editorTextRef.current;
       if (
+        canEdit &&
         token &&
         Number.isFinite(transcriptId) &&
         (pendingText !== savedTextRef.current || dirtyRevision > 0)
@@ -1529,7 +1567,7 @@ function TranscriptEditorPage() {
         }).catch(() => {});
       }
     },
-    [dirtyRevision, token, transcriptId],
+    [canEdit, dirtyRevision, token, transcriptId],
   );
 
   function handleTimeUpdate() {
@@ -1659,11 +1697,7 @@ function TranscriptEditorPage() {
       Number.isFinite(audio.duration) && audio.duration > 0
         ? audio.duration
         : audioDurationSeconds;
-    const nextTime = clampSeekTime(
-      audio.currentTime,
-      deltaSeconds,
-      duration,
-    );
+    const nextTime = clampSeekTime(audio.currentTime, deltaSeconds, duration);
     if (audioAccessNeedsRefresh(audioAccessExpiresAt)) {
       void loadAudio(
         playbackRequestedRef.current,
@@ -1729,7 +1763,9 @@ function TranscriptEditorPage() {
       const currentIndex =
         lowConfidenceReviewIndex >= 0
           ? lowConfidenceReviewIndex
-          : lowConfidenceWords.findIndex((word) => word.index > activeWordIndex);
+          : lowConfidenceWords.findIndex(
+              (word) => word.index > activeWordIndex,
+            );
       const baseIndex = currentIndex >= 0 ? currentIndex : 0;
       const nextIndex =
         (baseIndex + offset + lowConfidenceWords.length) %
@@ -1803,6 +1839,7 @@ function TranscriptEditorPage() {
   }
 
   function updateSpeakerName(previousSpeaker: string, nextSpeaker: string) {
+    if (!canEdit) return;
     const cleanSpeaker = nextSpeaker.trim().slice(0, 100);
     if (!cleanSpeaker || cleanSpeaker === previousSpeaker) return;
     const currentWords = wordsRef.current;
@@ -1815,7 +1852,9 @@ function TranscriptEditorPage() {
     if (rememberSpeakerLabels) {
       try {
         const remembered = renameRememberedSpeakerLabel(
-          JSON.parse(window.localStorage.getItem("vbee-speaker-labels") || "{}"),
+          JSON.parse(
+            window.localStorage.getItem("vbee-speaker-labels") || "{}",
+          ),
           previousSpeaker,
           cleanSpeaker,
         );
@@ -1830,7 +1869,13 @@ function TranscriptEditorPage() {
   }
 
   function mergeSpeakers() {
-    if (!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget) return;
+    if (!canEdit) return;
+    if (
+      !speakerMergeSource ||
+      !speakerMergeTarget ||
+      speakerMergeSource === speakerMergeTarget
+    )
+      return;
     const nextWords = wordsRef.current.map((word) =>
       String(word.speaker ?? "") === speakerMergeSource
         ? { ...word, speaker: speakerMergeTarget }
@@ -1841,8 +1886,12 @@ function TranscriptEditorPage() {
   }
 
   function splitSpeakerAtActiveWord() {
-    if (activeWordIndex < 0 || activeWordIndex >= wordsRef.current.length) return;
-    const currentSpeaker = String(wordsRef.current[activeWordIndex].speaker ?? "");
+    if (!canEdit) return;
+    if (activeWordIndex < 0 || activeWordIndex >= wordsRef.current.length)
+      return;
+    const currentSpeaker = String(
+      wordsRef.current[activeWordIndex].speaker ?? "",
+    );
     if (!currentSpeaker) return;
     const nextSpeaker = `${speakerLabel(currentSpeaker)} (phần 2)`;
     let segmentEnd = activeWordIndex + 1;
@@ -1860,76 +1909,88 @@ function TranscriptEditorPage() {
     applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
   }
 
-  const saveWorkflow = useCallback(async (values: {
-    template?: TranscriptTemplate;
-    tags?: string[];
-    reviewedWordIndexes?: number[];
-  }) => {
-    if (!token || !activeTranscriptId) return;
-    const response = await fetch(
-      `${API_URL}/api/transcribe/${activeTranscriptId}/workflow`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(values),
-      },
-    );
-    const body = (await response.json().catch(() => ({}))) as {
+  const saveWorkflow = useCallback(
+    async (values: {
       template?: TranscriptTemplate;
       tags?: string[];
       reviewedWordIndexes?: number[];
-      error?: string;
-    };
-    if (!response.ok) {
-      throw new Error(body.error || "Không lưu được thiết lập transcript");
-    }
-    setTranscript((current) =>
-      current
-        ? {
-            ...current,
-            transcript_template: body.template ?? current.transcript_template,
-            tags: body.tags ?? current.tags,
-            reviewed_word_indexes:
-              body.reviewedWordIndexes ?? current.reviewed_word_indexes,
-          }
-        : current,
-    );
-  }, [activeTranscriptId, token]);
-
-  const markLowConfidenceReviewed = useCallback(async (wordIndex: number) => {
-    if (!transcript || transcript.reviewed_word_indexes.includes(wordIndex)) {
-      return;
-    }
-    const reviewedWordIndexes = [
-      ...transcript.reviewed_word_indexes,
-      wordIndex,
-    ].sort((left, right) => left - right);
-    setTranscript((current) =>
-      current ? { ...current, reviewed_word_indexes: reviewedWordIndexes } : current,
-    );
-    try {
-      await saveWorkflow({ reviewedWordIndexes });
-    } catch (error) {
+    }) => {
+      if (!token || !activeTranscriptId || !canEdit) return;
+      const response = await fetch(
+        `${API_URL}/api/transcribe/${activeTranscriptId}/workflow`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(values),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        template?: TranscriptTemplate;
+        tags?: string[];
+        reviewedWordIndexes?: number[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Không lưu được thiết lập transcript");
+      }
       setTranscript((current) =>
         current
           ? {
               ...current,
-              reviewed_word_indexes: current.reviewed_word_indexes.filter(
-                (index) => index !== wordIndex,
-              ),
+              transcript_template: body.template ?? current.transcript_template,
+              tags: body.tags ?? current.tags,
+              reviewed_word_indexes:
+                body.reviewedWordIndexes ?? current.reviewed_word_indexes,
             }
           : current,
       );
-      setSaveError(
-        error instanceof Error
-          ? error.message
-          : "Không lưu được trạng thái review",
+    },
+    [activeTranscriptId, canEdit, token],
+  );
+
+  const markLowConfidenceReviewed = useCallback(
+    async (wordIndex: number) => {
+      if (
+        !canEdit ||
+        !transcript ||
+        transcript.reviewed_word_indexes.includes(wordIndex)
+      ) {
+        return;
+      }
+      const reviewedWordIndexes = [
+        ...transcript.reviewed_word_indexes,
+        wordIndex,
+      ].sort((left, right) => left - right);
+      setTranscript((current) =>
+        current
+          ? { ...current, reviewed_word_indexes: reviewedWordIndexes }
+          : current,
       );
-    }
-  }, [saveWorkflow, transcript]);
+      try {
+        await saveWorkflow({ reviewedWordIndexes });
+      } catch (error) {
+        setTranscript((current) =>
+          current
+            ? {
+                ...current,
+                reviewed_word_indexes: current.reviewed_word_indexes.filter(
+                  (index) => index !== wordIndex,
+                ),
+              }
+            : current,
+        );
+        setSaveError(
+          error instanceof Error
+            ? error.message
+            : "Không lưu được trạng thái review",
+        );
+      }
+    },
+    [canEdit, saveWorkflow, transcript],
+  );
 
   useEffect(() => {
     function handleReviewShortcut(event: KeyboardEvent) {
@@ -1967,7 +2028,7 @@ function TranscriptEditorPage() {
   ]);
 
   async function generateInsights(template: TranscriptTemplate) {
-    if (!token || !activeTranscriptId) return;
+    if (!token || !activeTranscriptId || !canEdit) return;
     setInsightsGenerating(true);
     setInsightsError("");
     try {
@@ -2034,7 +2095,7 @@ function TranscriptEditorPage() {
   }
 
   async function restoreVersion(versionId: number) {
-    if (!token || !activeTranscriptId) return;
+    if (!token || !activeTranscriptId || !canEdit) return;
     pushUndoSnapshot(true);
     setVersionError("");
     try {
@@ -2139,6 +2200,7 @@ function TranscriptEditorPage() {
   }
 
   async function retryTranslation() {
+    if (!canEdit) return;
     if (
       !token ||
       !transcript ||
@@ -2190,9 +2252,7 @@ function TranscriptEditorPage() {
       );
     } catch (error) {
       setTranslationRetryError(
-        error instanceof Error
-          ? error.message
-          : "Không tạo được bản dịch mới.",
+        error instanceof Error ? error.message : "Không tạo được bản dịch mới.",
       );
     } finally {
       setTranslationRetrying(false);
@@ -2263,22 +2323,20 @@ function TranscriptEditorPage() {
   }
 
   function buildExportBodyContent(options: ExportOptions) {
-    return (
-      options.layout === "segments"
-        ? buildExportSegmentLines(options).join("\n\n")
-        : options.translationMode === "translation"
-          ? String(transcript?.translated_text || "").trim()
-          : options.translationMode === "bilingual"
-            ? [
-                "Transcript gốc",
-                editorText.trim(),
-                `Bản dịch (${languageLabel(transcript?.translation_target_language)})`,
-                String(transcript?.translated_text || "").trim(),
-              ]
-                .filter(Boolean)
-                .join("\n\n")
-            : editorText.trim()
-    );
+    return options.layout === "segments"
+      ? buildExportSegmentLines(options).join("\n\n")
+      : options.translationMode === "translation"
+        ? String(transcript?.translated_text || "").trim()
+        : options.translationMode === "bilingual"
+          ? [
+              "Transcript gốc",
+              editorText.trim(),
+              `Bản dịch (${languageLabel(transcript?.translation_target_language)})`,
+              String(transcript?.translated_text || "").trim(),
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : editorText.trim();
   }
 
   function buildExportTextContent() {
@@ -2297,16 +2355,16 @@ function TranscriptEditorPage() {
       title,
       ...exportMetadataLines(),
       "",
-      ...(frontMatter
-        ? [frontMatter, "", "NỘI DUNG TRANSCRIPT", ""]
-        : []),
+      ...(frontMatter ? [frontMatter, "", "NỘI DUNG TRANSCRIPT", ""] : []),
       buildExportBodyContent(options),
     ].join("\n");
   }
 
   function exportText() {
     downloadBlob(
-      new Blob([buildExportTextContent()], { type: "text/plain;charset=utf-8" }),
+      new Blob([buildExportTextContent()], {
+        type: "text/plain;charset=utf-8",
+      }),
       `${baseFilename()}.txt`,
     );
   }
@@ -2369,7 +2427,10 @@ function TranscriptEditorPage() {
     if (options.layout === "segments") {
       buildExportSegmentLines(options).forEach((segmentBlock, index) => {
         const [firstLine, ...bodyLines] = segmentBlock.split("\n");
-        if (firstLine && (firstLine.startsWith("[") || firstLine.includes("Người nói"))) {
+        if (
+          firstLine &&
+          (firstLine.startsWith("[") || firstLine.includes("Người nói"))
+        ) {
           paragraphs.push(
             new Paragraph({
               children: [
@@ -2392,7 +2453,9 @@ function TranscriptEditorPage() {
           );
         });
         if (index < segments.length - 1) {
-          paragraphs.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
+          paragraphs.push(
+            new Paragraph({ children: [new TextRun({ text: "" })] }),
+          );
         }
       });
     } else {
@@ -2523,45 +2586,50 @@ function TranscriptEditorPage() {
           <div className="flex items-center gap-2 text-xs font-bold">
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 ${
-                saveStatus === "error"
-                  ? "bg-destructive/10 text-destructive"
-                  : saveStatus === "saved"
-                    ? "bg-emerald-50 text-emerald-700"
-                    : "bg-[#fff7d6] text-[#7b5e00]"
+                !canEdit
+                  ? "bg-[#eeeaf5] text-[#5f4c82]"
+                  : saveStatus === "error"
+                    ? "bg-destructive/10 text-destructive"
+                    : saveStatus === "saved"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-[#fff7d6] text-[#7b5e00]"
               }`}
             >
-              {saveStatus === "saving" ? (
+              {!canEdit ? null : saveStatus === "saving" ? (
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-current/25 border-t-current" />
               ) : saveStatus === "saved" ? (
                 <Check className="h-3.5 w-3.5" />
               ) : (
                 <Save className="h-3.5 w-3.5" />
               )}
-              {saveStatus === "saving"
-                ? "Đang lưu"
-                : saveStatus === "saved"
-                  ? "Đã tự động lưu"
-                  : saveStatus === "error"
-                    ? "Lưu thất bại"
-                    : "Chưa lưu"}
+              {!canEdit
+                ? "Chỉ xem · không có quyền chỉnh sửa"
+                : saveStatus === "saving"
+                  ? "Đang lưu"
+                  : saveStatus === "saved"
+                    ? "Đã tự động lưu"
+                    : saveStatus === "error"
+                      ? "Lưu thất bại"
+                      : "Chưa lưu"}
             </span>
             <button
               type="button"
               onClick={() => void saveTranscript(editorText)}
               disabled={
+                !canEdit ||
                 saveStatus === "saving" ||
                 (editorText === savedText && dirtyRevision === 0)
               }
               className="rounded-full bg-[#21104a] px-4 py-2 text-white transition hover:bg-[#321b67] disabled:cursor-not-allowed disabled:opacity-45"
             >
-              Lưu ngay
+              {canEdit ? "Lưu ngay" : "Chỉ xem"}
             </button>
           </div>
         </div>
 
         <section
           data-testid="transcript-audio-player"
-          className="mb-3 overflow-hidden rounded-lg border border-[#3b2868] bg-[#21104a] p-3 text-white shadow-[0_14px_32px_rgba(33,16,74,.16)] sm:mb-4 sm:p-4 print:hidden"
+          className={TRANSCRIPT_AUDIO_PLAYER_CLASS_NAME}
         >
           <div className="mb-3 flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-2">
@@ -2736,7 +2804,7 @@ function TranscriptEditorPage() {
                 <button
                   type="button"
                   onClick={undoEdit}
-                  disabled={!undoStack.length}
+                  disabled={!canEdit || !undoStack.length}
                   title="Hoàn tác"
                   aria-label="Hoàn tác"
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-[#ded5e9] bg-white px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
@@ -2746,7 +2814,7 @@ function TranscriptEditorPage() {
                 <button
                   type="button"
                   onClick={redoEdit}
-                  disabled={!redoStack.length}
+                  disabled={!canEdit || !redoStack.length}
                   title="Làm lại"
                   aria-label="Làm lại"
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-[#ded5e9] bg-white px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
@@ -2766,7 +2834,9 @@ function TranscriptEditorPage() {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      selectSearchMatch(searchIndex + (event.shiftKey ? -1 : 1));
+                      selectSearchMatch(
+                        searchIndex + (event.shiftKey ? -1 : 1),
+                      );
                     }
                   }}
                   placeholder="Tìm trong transcript"
@@ -2843,6 +2913,7 @@ function TranscriptEditorPage() {
                         segmentIndex={virtualSegment.index}
                         start={virtualSegment.start}
                         activeWordIndex={activeWordIndex}
+                        readOnly={!canEdit}
                         onCommit={commitTimedWord}
                         onSeek={seekTo}
                         onMeasure={handleSegmentMeasure}
@@ -2875,11 +2946,16 @@ function TranscriptEditorPage() {
                   <textarea
                     ref={plainTextAreaRef}
                     value={editorText}
+                    readOnly={!canEdit}
                     onWheel={pauseTranscriptFollow}
                     onTouchStart={pauseTranscriptFollow}
                     onPointerDown={pauseTranscriptFollow}
                     onChange={(event) =>
-                      applyEditorChange(event.target.value, wordsRef.current, true)
+                      applyEditorChange(
+                        event.target.value,
+                        wordsRef.current,
+                        true,
+                      )
                     }
                     onScroll={(event) => {
                       if (plainTextMirrorRef.current) {
@@ -2897,7 +2973,9 @@ function TranscriptEditorPage() {
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-[#8a7da1]">
                   <span>{editorText.length.toLocaleString("vi-VN")} ký tự</span>
-                  <span>Tự động lưu sau 1,2 giây</span>
+                  <span>
+                    {canEdit ? "Tự động lưu sau 1,2 giây" : "Chế độ chỉ xem"}
+                  </span>
                 </div>
               </div>
             )}
@@ -2913,10 +2991,7 @@ function TranscriptEditorPage() {
                 <div>
                   <dt className="text-[#8a7da1]">Thời lượng</dt>
                   <dd className="mt-1 font-bold">
-                    {formatMediaDuration(
-                      transcript.duration,
-                      "Chưa xác định",
-                    )}
+                    {formatMediaDuration(transcript.duration, "Chưa xác định")}
                   </dd>
                 </div>
                 <div>
@@ -2944,7 +3019,7 @@ function TranscriptEditorPage() {
               </div>
             </TranscriptSidebarSection>
 
-            {token && (
+            {token && isTranscriptOwner && (
               <TranscriptSidebarSection
                 icon={<Users className="h-4 w-4" />}
                 title="Chia sẻ và cộng tác"
@@ -2969,6 +3044,7 @@ function TranscriptEditorPage() {
                   Mẫu transcript
                   <select
                     value={transcript.transcript_template}
+                    disabled={!canEdit}
                     onChange={(event) => {
                       const template = event.target.value as TranscriptTemplate;
                       setTranscript((current) =>
@@ -2990,7 +3066,7 @@ function TranscriptEditorPage() {
                   onClick={() =>
                     void generateInsights(transcript.transcript_template)
                   }
-                  disabled={insightsGenerating}
+                  disabled={!canEdit || insightsGenerating}
                   className="mt-[18px] inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#ffcb05] px-3 text-xs font-black text-[#21104a] disabled:cursor-wait disabled:opacity-60"
                 >
                   <Sparkles
@@ -3005,6 +3081,7 @@ function TranscriptEditorPage() {
                 <div className="mt-1 flex gap-2">
                   <input
                     value={tagDraft}
+                    disabled={!canEdit}
                     onChange={(event) => setTagDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -3018,6 +3095,7 @@ function TranscriptEditorPage() {
                   <button
                     type="button"
                     onClick={() => void saveTags()}
+                    disabled={!canEdit}
                     className="rounded-md border border-[#ded5e9] bg-white px-2.5 text-xs font-black"
                     aria-label="Lưu tag"
                   >
@@ -3063,7 +3141,9 @@ function TranscriptEditorPage() {
                                 {item.owner
                                   ? `Phụ trách: ${item.owner}`
                                   : "Chưa rõ người phụ trách"}
-                                {item.deadline ? ` · Hạn: ${item.deadline}` : ""}
+                                {item.deadline
+                                  ? ` · Hạn: ${item.deadline}`
+                                  : ""}
                               </span>
                             )}
                           </li>
@@ -3118,7 +3198,8 @@ function TranscriptEditorPage() {
                   {transcript.insights.questions.length > 0 && (
                     <details>
                       <summary className="cursor-pointer font-black text-[#21104a]">
-                        Câu hỏi trong transcript ({transcript.insights.questions.length})
+                        Câu hỏi trong transcript (
+                        {transcript.insights.questions.length})
                       </summary>
                       <ul className="mt-1 list-disc space-y-1 pl-4">
                         {transcript.insights.questions.map((question) => (
@@ -3166,8 +3247,8 @@ function TranscriptEditorPage() {
                       onChange={(event) =>
                         setExportOptions((current) => ({
                           ...current,
-                          translationMode:
-                            event.target.value as ExportTranslationMode,
+                          translationMode: event.target
+                            .value as ExportTranslationMode,
                         }))
                       }
                       className="mt-1 w-full rounded-md border border-[#ded5e9] bg-white px-2 py-2 text-xs font-bold text-[#21104a]"
@@ -3287,6 +3368,7 @@ function TranscriptEditorPage() {
                       </span>
                       <input
                         defaultValue={speakerLabel(speaker)}
+                        readOnly={!canEdit}
                         onBlur={(event) =>
                           updateSpeakerName(speaker, event.currentTarget.value)
                         }
@@ -3311,8 +3393,11 @@ function TranscriptEditorPage() {
                   <label className="flex items-center gap-2 text-xs font-bold text-[#5f4c82]">
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={rememberSpeakerLabels}
-                      onChange={(event) => setRememberSpeakerLabels(event.target.checked)}
+                      onChange={(event) =>
+                        setRememberSpeakerLabels(event.target.checked)
+                      }
                       className="h-4 w-4 accent-[#21104a]"
                     />
                     Nhớ tên cho transcript sau trên thiết bị này
@@ -3321,24 +3406,43 @@ function TranscriptEditorPage() {
                     <div className="grid grid-cols-2 gap-2">
                       <select
                         value={speakerMergeSource}
-                        onChange={(event) => setSpeakerMergeSource(event.target.value)}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setSpeakerMergeSource(event.target.value)
+                        }
                         className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
                       >
                         <option value="">Gộp người…</option>
-                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                        {speakers.map((speaker) => (
+                          <option key={speaker} value={speaker}>
+                            {speakerLabel(speaker)}
+                          </option>
+                        ))}
                       </select>
                       <select
                         value={speakerMergeTarget}
-                        onChange={(event) => setSpeakerMergeTarget(event.target.value)}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setSpeakerMergeTarget(event.target.value)
+                        }
                         className="h-8 rounded-md border border-[#ded5e9] bg-white px-2 text-[11px] font-bold"
                       >
                         <option value="">vào người…</option>
-                        {speakers.map((speaker) => <option key={speaker} value={speaker}>{speakerLabel(speaker)}</option>)}
+                        {speakers.map((speaker) => (
+                          <option key={speaker} value={speaker}>
+                            {speakerLabel(speaker)}
+                          </option>
+                        ))}
                       </select>
                       <button
                         type="button"
                         onClick={mergeSpeakers}
-                        disabled={!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget}
+                        disabled={
+                          !canEdit ||
+                          !speakerMergeSource ||
+                          !speakerMergeTarget ||
+                          speakerMergeSource === speakerMergeTarget
+                        }
                         className="col-span-2 rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
                       >
                         Gộp hai người nói
@@ -3348,7 +3452,7 @@ function TranscriptEditorPage() {
                   <button
                     type="button"
                     onClick={splitSpeakerAtActiveWord}
-                    disabled={activeWordIndex < 0}
+                    disabled={!canEdit || activeWordIndex < 0}
                     className="w-full rounded-md border border-[#ded5e9] px-2 py-1.5 text-[11px] font-black disabled:opacity-40"
                   >
                     Tách đoạn tại từ đang chọn
@@ -3363,7 +3467,8 @@ function TranscriptEditorPage() {
               meta={`${lowConfidenceWords.length} từ`}
             >
               <p className="text-xs leading-5 text-[#8a7da1]">
-                Confidence thấp hơn {Math.round(LOW_CONFIDENCE_THRESHOLD * 100)}%.
+                Confidence thấp hơn {Math.round(LOW_CONFIDENCE_THRESHOLD * 100)}
+                %.
               </p>
               <div className="mt-3 max-h-72 space-y-2 overflow-auto">
                 {lowConfidenceWords.length ? (
@@ -3392,7 +3497,10 @@ function TranscriptEditorPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => void markLowConfidenceReviewed(word.index)}
+                        onClick={() =>
+                          void markLowConfidenceReviewed(word.index)
+                        }
+                        disabled={!canEdit}
                         className="mt-2 w-full rounded-md bg-white px-2 py-1.5 text-[11px] font-black text-red-800"
                       >
                         Đánh dấu đã xem
@@ -3479,7 +3587,9 @@ function TranscriptEditorPage() {
               )}
               <div className="mt-3 max-h-80 space-y-2 overflow-auto">
                 {versionsLoading ? (
-                  <p className="text-xs text-[#8a7da1]">Đang tải phiên bản...</p>
+                  <p className="text-xs text-[#8a7da1]">
+                    Đang tải phiên bản...
+                  </p>
                 ) : versions.length ? (
                   versions.map((version) => (
                     <div
@@ -3497,7 +3607,7 @@ function TranscriptEditorPage() {
                       <p className="mt-1 text-[11px] font-bold text-[#5f4c82]">
                         {version.actor_name || "Người dùng"}
                         {version.change_source === "shared"
-                          ? " · Liên kết chia sẻ"
+                          ? " · Cộng tác"
                           : version.change_source === "restore"
                             ? " · Khôi phục"
                             : " · Trình chỉnh sửa"}
@@ -3517,6 +3627,7 @@ function TranscriptEditorPage() {
                         <button
                           type="button"
                           onClick={() => void restoreVersion(version.id)}
+                          disabled={!canEdit}
                           className="rounded-md border border-[#ded5e9] bg-white px-2 py-1.5 text-[11px] font-black hover:border-[#ffcb05]"
                         >
                           Khôi phục
@@ -3557,7 +3668,7 @@ function TranscriptEditorPage() {
                     <button
                       type="button"
                       onClick={() => void retryTranslation()}
-                      disabled={translationRetrying}
+                      disabled={!canEdit || translationRetrying}
                       className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#ffcb05] px-3.5 py-2 text-xs font-black text-[#21104a] transition hover:bg-[#ffda45] disabled:cursor-wait disabled:opacity-65"
                     >
                       <RefreshCw
@@ -3577,15 +3688,13 @@ function TranscriptEditorPage() {
                       Dịch lại chưa thành công. Vui lòng thử lại sau.
                     </p>
                   )}
-                  {(translationRetryError ||
-                    transcript.translation_error) && (
+                  {(translationRetryError || transcript.translation_error) && (
                     <details className="mt-3 text-[11px] text-[#8a7da1]">
                       <summary className="cursor-pointer font-bold text-[#5f4c82]">
                         Chi tiết kỹ thuật
                       </summary>
                       <p className="mt-2 break-words leading-5">
-                        {translationRetryError ||
-                          transcript.translation_error}
+                        {translationRetryError || transcript.translation_error}
                       </p>
                     </details>
                   )}

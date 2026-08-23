@@ -84,7 +84,10 @@ async function resolveUserFolder(userId, folderId, { db = pool } = {}) {
            SELECT 1 FROM workspace_members requester
            JOIN workspace_members owner_member
              ON owner_member.workspace_id = requester.workspace_id
-           WHERE requester.user_id = $2 AND owner_member.user_id = folder.user_id
+            AND owner_member.status = 'active'
+           WHERE requester.user_id = $2
+             AND requester.status = 'active'
+             AND owner_member.user_id = folder.user_id
          )
        )
      )
@@ -123,7 +126,7 @@ async function listUserFolders(userId, { db = pool } = {}) {
   const { rows } = await db.query(
     `SELECT folder.id, folder.user_id AS owner_user_id, folder.name, folder.visibility, folder.team_permission,
             folder.created_at, folder.updated_at,
-            COUNT(transcript.id) FILTER (WHERE transcript.user_id = $1)::integer AS item_count
+            COUNT(transcript.id)::integer AS item_count
      FROM transcription_folders folder
      LEFT JOIN transcriptions transcript ON transcript.folder_id = folder.id
      WHERE folder.user_id = $1 OR (
@@ -132,7 +135,10 @@ async function listUserFolders(userId, { db = pool } = {}) {
          SELECT 1 FROM workspace_members requester
          JOIN workspace_members owner_member
            ON owner_member.workspace_id = requester.workspace_id
-         WHERE requester.user_id = $1 AND owner_member.user_id = folder.user_id
+          AND owner_member.status = 'active'
+         WHERE requester.user_id = $1
+           AND requester.status = 'active'
+           AND owner_member.user_id = folder.user_id
        )
      )
      GROUP BY folder.id
