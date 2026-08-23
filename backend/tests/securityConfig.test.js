@@ -8,6 +8,7 @@ const managedKeys = [
   "PROVIDER_FILE_SIGNING_SECRET",
   "PROVIDER_SECRET_KEY",
   "AUDIO_URL_SECRET",
+  "REQUEST_LOG_IP_SALT",
   "FRONTEND_URL",
   "CORS_ALLOWED_ORIGINS",
   "GOOGLE_CLIENT_ID",
@@ -39,6 +40,7 @@ function configureSafeProduction(overrides = {}) {
     PROVIDER_FILE_SIGNING_SECRET: "f".repeat(64),
     PROVIDER_SECRET_KEY: "p".repeat(64),
     AUDIO_URL_SECRET: "u".repeat(64),
+    REQUEST_LOG_IP_SALT: "i".repeat(64),
     FRONTEND_URL: "https://app.example.test",
     CORS_ALLOWED_ORIGINS: "",
     GOOGLE_CLIENT_ID: "",
@@ -54,11 +56,12 @@ function configureSafeProduction(overrides = {}) {
   });
 }
 
-test("production requires independent CMS provider and audio URL secrets", (t) => {
+test("production requires independent purpose-specific secrets", (t) => {
   t.after(restoreEnvironment);
   configureSafeProduction();
   delete process.env.PROVIDER_SECRET_KEY;
   delete process.env.AUDIO_URL_SECRET;
+  delete process.env.REQUEST_LOG_IP_SALT;
 
   delete require.cache[require.resolve("../config/security")];
   const { validateSecurityConfig } = require("../config/security");
@@ -68,6 +71,7 @@ test("production requires independent CMS provider and audio URL secrets", (t) =
     (error) => {
       assert.match(error.message, /PROVIDER_SECRET_KEY/);
       assert.match(error.message, /AUDIO_URL_SECRET/);
+      assert.match(error.message, /REQUEST_LOG_IP_SALT/);
       return true;
     },
   );

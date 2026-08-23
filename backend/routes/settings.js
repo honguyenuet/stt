@@ -9,7 +9,6 @@ const {
   getUserSettings,
   normalizeDictionaryText,
   saveCustomDictionary,
-  savePrivacySettings,
   saveTranscriptionSettings,
 } = require("../services/userSettingsService");
 const {
@@ -75,85 +74,98 @@ router.patch("/transcription", requireAuth, async (req, res) => {
   }
 });
 
+router.get("/privacy", requireAuth, async (req, res) => {
+  try {
+    const settings = await getPrivacySettings(req.user.id);
+    return res.json({ privacy: settings });
+  } catch (error) {
+    console.error("Privacy settings load error:", error);
+    return res.status(500).json({ error: "Không tải được privacy center" });
+  }
+});
+
 router.patch("/privacy", requireAuth, async (req, res) => {
   try {
     const settings = await savePrivacySettings(
       req.user.id,
-      req.body.privacySettings ?? req.body.settings ?? {},
+      req.body?.privacySettings ?? req.body?.settings ?? req.body ?? {},
     );
-    return res.json(settings);
+    await writeSecurityAudit({
+      event: "privacy.settings_updated",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: { privacy: settings },
+    });
+    return res.json({ privacy: settings });
   } catch (error) {
-    console.error("Privacy settings save error:", error.message);
-    return res.status(500).json({ error: "Không lưu được cài đặt quyền riêng tư" });
+    console.error("Privacy settings save error:", error);
+    return res.status(500).json({ error: "Không lưu được privacy center" });
   }
 });
 
 router.get("/privacy/export", requireAuth, async (req, res) => {
   try {
-    const [account, settings, transcripts, folders] = await Promise.all([
-      pool.query(
-        `SELECT id, first_name, last_name, email, avatar, plan, role,
-                account_status, email_verified, created_at
-         FROM users WHERE id = $1`,
-        [req.user.id],
-      ),
-      getUserSettings(req.user.id),
-      pool.query(
-        `SELECT id, folder_id, filename, file_size, duration, processing_seconds,
-                text, words, segments, speaker_names, source_language,
-                translated_text, translation_target_language,
-                transcript_template, insights, reviewed_word_indexes, tags,
-                status, error_message, created_at, completed_at
-         FROM transcriptions WHERE user_id = $1 ORDER BY created_at ASC`,
-        [req.user.id],
-      ),
-      pool.query(
-        `SELECT id, name, created_at, updated_at
-         FROM transcription_folders WHERE user_id = $1 ORDER BY created_at ASC`,
-        [req.user.id],
-      ),
-    ]);
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      account: account.rows[0] || null,
-      settings,
-      folders: folders.rows,
-      transcripts: transcripts.rows,
-    };
-    const date = new Date().toISOString().slice(0, 10);
-    res.setHeader("Cache-Control", "no-store");
+    const archive = await buildUserDataExport(req.user.id);
+    await writeSecurityAudit({
+      event: "privacy.data_exported",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: { bytes: archive.length },
+    });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Type", "application/zip");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="vbee-data-${date}.json"`,
+      `attachment; filename="vbee-data-export-${req.user.id}.zip"`,
     );
-    return res.json(payload);
+    return res.send(archive);
   } catch (error) {
     console.error("Privacy export error:", error.message);
-    return res.status(500).json({ error: "Không thể xuất dữ liệu tài khoản" });
+    return res.status(500).json({ error: "Không export được dữ liệu" });
   }
 });
 
 router.delete("/privacy/media", requireAuth, async (req, res) => {
-  if (String(req.body.confirmation || "").trim() !== "XOA AM THANH") {
-    return res.status(400).json({ error: "Hãy nhập đúng XOA AM THANH để xác nhận" });
+  try {
+    const result = await deleteTranscriptMedia(req.user.id, {
+      olderThanDays: req.query.olderThanDays,
+    });
+    await writeSecurityAudit({
+      event: "privacy.media_deleted",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: result,
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error("Privacy media delete error:", error);
+    return res.status(500).json({ error: "Không xóa được media" });
+  }
+});
+
+router.delete("/privacy/transcripts", requireAuth, async (req, res) => {
+  const confirmation = String(req.body?.confirmation || "");
+  if (confirmation !== "DELETE") {
+    return res.status(400).json({
+      error: "Nhập confirmation=DELETE để xác nhận xóa vĩnh viễn.",
+    });
   }
   try {
-    const { rows } = await pool.query(
-      `UPDATE transcriptions
-       SET audio_filename = NULL
-       WHERE user_id = $1 AND audio_filename IS NOT NULL
-       RETURNING audio_filename`,
-      [req.user.id],
-    );
-    await Promise.all(
-      rows.map(({ audio_filename: filename }) =>
-        fs.promises.unlink(resolveStoredAudioPath(filename)).catch(() => {}),
-      ),
-    );
-    return res.json({ success: true, deletedFiles: rows.length });
+    const result = await deleteAllUserTranscriptionData(req.user.id);
+    await writeSecurityAudit({
+      event: "privacy.transcripts_deleted",
+      outcome: "success",
+      req,
+      userId: req.user.id,
+      metadata: result,
+    });
+    return res.json(result);
   } catch (error) {
-    console.error("Privacy media deletion error:", error.message);
-    return res.status(500).json({ error: "Không thể xóa dữ liệu âm thanh" });
+    console.error("Privacy transcript delete error:", error);
+    return res.status(500).json({ error: "Không xóa được dữ liệu" });
   }
 });
 

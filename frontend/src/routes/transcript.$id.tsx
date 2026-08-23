@@ -57,6 +57,7 @@ import {
   indexTimedWordTextRanges,
   MAX_EDITABLE_TIMED_WORDS,
   nextTranscriptFollowMode,
+  normalizeTimedWordBounds,
   replaceTimedWordInText,
   type TranscriptFollowMode,
 } from "@/lib/transcript-playback";
@@ -749,6 +750,7 @@ function TranscriptEditorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const plainTextMirrorRef = useRef<HTMLDivElement>(null);
   const playWhenReadyRef = useRef(false);
   const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
@@ -1742,37 +1744,6 @@ function TranscriptEditorPage() {
     ],
   );
 
-  useEffect(() => {
-    function handleReviewShortcut(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName?.toLowerCase();
-      if (tagName === "input" || tagName === "textarea" || target?.isContentEditable) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (key === "n") {
-        event.preventDefault();
-        selectLowConfidenceByOffset(1);
-      } else if (key === "p") {
-        event.preventDefault();
-        selectLowConfidenceByOffset(-1);
-      } else if (key === "m" && lowConfidenceReviewIndex >= 0) {
-        event.preventDefault();
-        markLowConfidenceReviewed(activeWordIndex, true);
-      }
-    }
-    window.addEventListener("keydown", handleReviewShortcut);
-    return () => window.removeEventListener("keydown", handleReviewShortcut);
-  }, [
-    activeWordIndex,
-    lowConfidenceReviewIndex,
-    markLowConfidenceReviewed,
-    selectLowConfidenceByOffset,
-  ]);
-
   function undoEdit() {
     setUndoStack((current) => {
       const previous = current[current.length - 1];
@@ -1889,11 +1860,11 @@ function TranscriptEditorPage() {
     applyEditorChange(buildTextFromTimedWords(nextWords), nextWords, true);
   }
 
-  async function saveWorkflow(values: {
+  const saveWorkflow = useCallback(async (values: {
     template?: TranscriptTemplate;
     tags?: string[];
     reviewedWordIndexes?: number[];
-  }) {
+  }) => {
     if (!token || !activeTranscriptId) return;
     const response = await fetch(
       `${API_URL}/api/transcribe/${activeTranscriptId}/workflow`,
@@ -1926,9 +1897,9 @@ function TranscriptEditorPage() {
           }
         : current,
     );
-  }
+  }, [activeTranscriptId, token]);
 
-  async function markLowConfidenceReviewed(wordIndex: number) {
+  const markLowConfidenceReviewed = useCallback(async (wordIndex: number) => {
     if (!transcript || transcript.reviewed_word_indexes.includes(wordIndex)) {
       return;
     }
@@ -1958,7 +1929,42 @@ function TranscriptEditorPage() {
           : "Không lưu được trạng thái review",
       );
     }
-  }
+  }, [saveWorkflow, transcript]);
+
+  useEffect(() => {
+    function handleReviewShortcut(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (
+        tagName === "input" ||
+        tagName === "textarea" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(1);
+      } else if (key === "p") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(-1);
+      } else if (key === "m" && lowConfidenceReviewIndex >= 0) {
+        event.preventDefault();
+        void markLowConfidenceReviewed(activeWordIndex);
+      }
+    }
+    window.addEventListener("keydown", handleReviewShortcut);
+    return () => window.removeEventListener("keydown", handleReviewShortcut);
+  }, [
+    activeWordIndex,
+    lowConfidenceReviewIndex,
+    markLowConfidenceReviewed,
+    selectLowConfidenceByOffset,
+  ]);
 
   async function generateInsights(template: TranscriptTemplate) {
     if (!token || !activeTranscriptId) return;

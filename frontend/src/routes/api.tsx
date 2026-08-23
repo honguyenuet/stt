@@ -10,6 +10,7 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  PlugZap,
   RefreshCw,
   Sparkles,
   Trash2,

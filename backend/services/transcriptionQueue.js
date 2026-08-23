@@ -152,10 +152,23 @@ async function cleanupExpiredAudioFiles({
                ELSE $1::integer
              END,
              CASE
+               WHEN settings.privacy_settings->>'mediaRetentionPolicy' = 'delete_after_transcription' THEN 0
+               WHEN settings.privacy_settings->>'mediaRetentionPolicy' = 'delete_after_days'
+                 THEN GREATEST(
+                   1,
+                   LEAST(
+                     3650,
+                     CASE
+                       WHEN settings.privacy_settings->>'mediaRetentionDays' ~ '^[0-9]+$'
+                         THEN (settings.privacy_settings->>'mediaRetentionDays')::integer
+                       ELSE 365
+                     END
+                   )
+                 )
                WHEN settings.privacy_settings->>'keepAudioAfterTranscription' = 'false' THEN 0
                WHEN settings.privacy_settings->>'audioRetentionDays' IN ('0', '7', '30', '90', '365')
                  THEN (settings.privacy_settings->>'audioRetentionDays')::integer
-               ELSE 36500
+               ELSE 3650
              END
            )
          )::integer * INTERVAL '1 day')

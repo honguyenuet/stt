@@ -143,8 +143,17 @@ async function deleteAllUserTranscriptionData(userId, db = pool) {
 }
 
 async function buildUserDataExport(userId, db = pool) {
-  const [settings, transcripts, folders, apiKeys, auditEvents] =
+  const [account, settings, transcripts, folders, apiKeys, auditEvents] =
     await Promise.all([
+      db.query(
+        `SELECT id, first_name, last_name, email, avatar, organization,
+                job_role, usage_purpose, preferred_language, plan,
+                plan_started_at, plan_expires_at, account_status,
+                email_verified, created_at
+         FROM users
+         WHERE id = $1`,
+        [userId],
+      ),
       getPrivacySettings(userId, db),
       db.query(
         `SELECT id, filename, file_size, duration, processing_seconds, text,
@@ -180,6 +189,10 @@ async function buildUserDataExport(userId, db = pool) {
     ]);
 
   const entries = [
+    {
+      name: "account.json",
+      data: JSON.stringify(account.rows[0] || null, null, 2),
+    },
     {
       name: "privacy-settings.json",
       data: JSON.stringify(settings, null, 2),

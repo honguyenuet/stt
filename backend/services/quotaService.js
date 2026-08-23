@@ -2,7 +2,10 @@ const pool = require("../db");
 const { rewardReferralAfterFirstUsage } = require("./referralService");
 const { syncQuotaAlertState } = require("./quotaAlertService");
 const { getAdminSettings } = require("./adminSettingsService");
-const { resolveQuotaScope } = require("./workspaceTeamService");
+const {
+  requireWorkspaceBillingRole,
+  resolveUserWorkspace,
+} = require("./workspaceBillingService");
 
 const SYSTEM_MAX_UPLOAD_MB = getEnvInt("MAX_UPLOAD_MB", 2048);
 
@@ -238,13 +241,18 @@ async function getUserBilling(userId, db = pool) {
   };
 }
 
-async function getUsageSeconds(userId, db = pool, memberIds = [userId], periodStartedAt = null) {
+async function getUsageSeconds(userId, db = pool) {
+  const workspace = await resolveUserWorkspace(userId, db);
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(usage.seconds), 0)::float AS used_seconds
      FROM quota_usage_ledger usage
-     WHERE usage.user_id = ANY($1::int[])
-       AND ($2::timestamptz IS NULL OR usage.period_started_at = $2::timestamptz)`,
-    [memberIds, periodStartedAt],
+     JOIN workspaces workspace ON workspace.id = $2
+     WHERE (
+        usage.workspace_id = $2
+        OR (usage.workspace_id IS NULL AND usage.user_id = $1)
+       )
+       AND usage.period_started_at = workspace.plan_started_at`,
+    [userId, workspace.id],
   );
   return Math.max(0, Math.round(Number(rows[0]?.used_seconds || 0)));
 }
@@ -279,9 +287,9 @@ async function getReservedSeconds(
   excludeJobId = null,
   db = pool,
   excludeBatchId = null,
-  memberIds = [userId],
 ) {
-  const values = [memberIds];
+  const workspace = await resolveUserWorkspace(userId, db);
+  const values = [workspace.id];
   const excludeJobClause =
     excludeJobId === null || excludeJobId === undefined
       ? ""
@@ -293,8 +301,11 @@ async function getReservedSeconds(
     `WITH normal_reservations AS (
        SELECT COALESCE(job.expected_duration_seconds, 0)::float AS seconds
        FROM transcription_jobs job
-       WHERE job.user_id = ANY($1::int[])
-         AND job.status IN ('queued', 'processing')
+       JOIN workspace_members member
+         ON member.user_id = job.user_id
+        AND member.workspace_id = $1
+        AND member.status = 'active'
+       WHERE job.status IN ('queued', 'processing')
          AND job.cancel_requested = FALSE
          AND COALESCE(job.payload->>'batchKind', '') <> 'multitrack'
          ${excludeJobClause}
@@ -305,8 +316,11 @@ async function getReservedSeconds(
        JOIN transcription_jobs job
          ON job.payload->>'batchId' = batch.id::text
         AND job.payload->>'batchKind' = 'multitrack'
-       WHERE batch.user_id = ANY($1::int[])
-         AND batch.status IN ('queued', 'processing', 'merging')
+       JOIN workspace_members member
+         ON member.user_id = batch.user_id
+        AND member.workspace_id = $1
+        AND member.status = 'active'
+       WHERE batch.status IN ('queued', 'processing', 'merging')
          AND job.cancel_requested = FALSE
          ${excludeBatchClause}
        GROUP BY batch.id
@@ -326,21 +340,14 @@ async function getQuotaStatus(
   userId,
   { excludeJobId = null, excludeBatchId = null, db = pool } = {},
 ) {
-  const scope = await resolveQuotaScope(userId, db);
-  const billing = await getUserBilling(scope.billingOwnerUserId, db);
-  const usedSeconds = await getUsageSeconds(
-    userId,
-    db,
-    scope.memberIds,
-    billing.planStartedAt,
-  );
-  const topUp = await getTopUpCreditStatus(scope.billingOwnerUserId, db);
+  const billing = await getUserBilling(userId, db);
+  const usedSeconds = await getUsageSeconds(userId, db);
+  const topUp = await getTopUpCreditStatus(userId, db);
   const reservedSeconds = await getReservedSeconds(
     userId,
     excludeJobId,
     db,
     excludeBatchId,
-    scope.memberIds,
   );
   const baseRemainingSeconds = Math.max(0, billing.quotaSeconds - usedSeconds);
   const rawRemainingSeconds = baseRemainingSeconds + topUp.remainingSeconds;
@@ -358,11 +365,6 @@ async function getQuotaStatus(
 
   return {
     ...billing,
-    userId,
-    billingOwnerUserId: scope.billingOwnerUserId,
-    workspaceId: scope.workspaceId,
-    workspaceName: scope.workspaceName,
-    sharedMemberCount: scope.memberIds.length,
     baseQuotaSeconds: billing.quotaSeconds,
     quotaSeconds: totalQuotaSeconds,
     topUpGrantedSeconds: topUp.grantedSeconds,
@@ -502,8 +504,9 @@ async function updateQuotaAlert(userId, alertSeconds) {
     ? Math.max(60, Math.min(maxAlertSeconds, raw))
     : DEFAULT_ALERT_SECONDS;
   await pool.query(
-    `UPDATE users SET quota_alert_seconds = $1 WHERE id = $2`,
-    [clean, quota.billingOwnerUserId || userId],
+    `UPDATE workspaces SET quota_alert_seconds = $1, updated_at = NOW()
+     WHERE id = $2`,
+    [clean, quota.workspaceId],
   );
   return getQuotaStatus(userId);
 }
@@ -523,31 +526,22 @@ async function recordQuotaUsage({
     );
   }
 
-  const scope = await resolveQuotaScope(userId, db);
-  await db.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [
-    scope.billingOwnerUserId,
+  const workspace = await resolveUserWorkspace(userId, db);
+  await db.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [
+    workspace.id,
   ]);
-  const billing = await getUserBilling(scope.billingOwnerUserId, db);
-  const usedBefore = await getUsageSeconds(
-    userId,
-    db,
-    scope.memberIds,
-    billing.planStartedAt,
-  );
+  const billing = await getUserBilling(userId, db);
+  const usedBefore = await getUsageSeconds(userId, db);
   const { rows } = await db.query(
     `INSERT INTO quota_usage_ledger (
        user_id, workspace_id, transcription_id, seconds, period_started_at, period_ends_at
      )
-     VALUES ($1, $2, $3, $4, $5)
+     SELECT $1, $2, $3, $4, plan_started_at, plan_expires_at
+     FROM workspaces
+     WHERE id = $2
      ON CONFLICT (transcription_id) DO NOTHING
      RETURNING id, seconds, period_started_at, period_ends_at`,
-    [
-      userId,
-      transcriptionId,
-      seconds,
-      billing.planStartedAt,
-      billing.planExpiresAt,
-    ],
+    [userId, billing.workspaceId, transcriptionId, seconds],
   );
   if (!rows[0]) return null;
 
@@ -570,7 +564,7 @@ async function recordQuotaUsage({
          AND (expires_at IS NULL OR expires_at > NOW())
        ORDER BY expires_at ASC NULLS LAST, id ASC
        FOR UPDATE`,
-      [scope.billingOwnerUserId],
+      [userId, billing.workspaceId],
     );
 
     for (const credit of credits.rows) {

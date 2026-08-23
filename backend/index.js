@@ -28,6 +28,7 @@ const adminRoutes = require("./routes/admin");
 const referralRoutes = require("./routes/referrals");
 const collaborationRoutes = require("./routes/collaboration");
 const teamRoutes = require("./routes/team");
+const workspaceRoutes = require("./routes/workspace");
 const initDatabase = require("./initDb");
 const {
   assertTranscriptionProviderReady,
@@ -82,6 +83,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/collaboration", collaborationRoutes);
 app.use("/api/team", teamRoutes);
+app.use("/api/workspace", workspaceRoutes);
 app.use("/api/v1", publicApiRoutes);
 
 app.get("/", (_req, res) => {

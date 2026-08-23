@@ -82,6 +82,17 @@ const {
 
 const router = express.Router();
 
+function normalizeExportIds(value) {
+  const values = Array.isArray(value) ? value : String(value || "").split(",");
+  return [
+    ...new Set(
+      values
+        .map((item) => Number.parseInt(item, 10))
+        .filter((item) => Number.isSafeInteger(item) && item > 0),
+    ),
+  ].slice(0, 100);
+}
+
 const upload = createPlanAwareMediaUpload(async (req) => {
   const quota = await getQuotaStatus(req.user.id);
   return {

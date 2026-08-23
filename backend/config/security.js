@@ -118,6 +118,7 @@ function validateSecurityConfig() {
     process.env.PROVIDER_SECRET_KEY || "",
   ).trim();
   const audioUrlSecret = String(process.env.AUDIO_URL_SECRET || "").trim();
+  const requestLogIpSalt = String(process.env.REQUEST_LOG_IP_SALT || "").trim();
   const auditSecret = String(process.env.AUDIT_HASH_SECRET || "").trim();
 
   if (!isStrongSecret(JWT_SECRET)) {
@@ -167,6 +168,14 @@ function validateSecurityConfig() {
   ) {
     errors.push(
       "AUDIO_URL_SECRET must be strong and separate from JWT_SECRET.",
+    );
+  }
+  if (
+    IS_PRODUCTION &&
+    (!isStrongSecret(requestLogIpSalt) || requestLogIpSalt === JWT_SECRET)
+  ) {
+    errors.push(
+      "REQUEST_LOG_IP_SALT must be strong and separate from JWT_SECRET.",
     );
   }
   if (

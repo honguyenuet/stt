@@ -140,6 +140,11 @@ export function summarizeConfidence(
 }
 
 export function findActiveWordIndex(words: TimedWord[], milliseconds: number) {
+  if (!Number.isFinite(milliseconds)) return -1;
+
+  const toleranceMilliseconds = 80;
+  const lowerBound = milliseconds - toleranceMilliseconds;
+  const upperBound = milliseconds + toleranceMilliseconds;
   let low = 0;
   let high = words.length - 1;
   let candidate = -1;

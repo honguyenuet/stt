@@ -173,6 +173,18 @@ async function initDatabase() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, account_status);`);
 
+  const workspaceSchema = await pool.query(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'workspaces'
+        AND column_name = 'plan'
+    ) AS has_billing_columns;
+  `);
+  const shouldBackfillWorkspaceBilling =
+    !workspaceSchema.rows[0]?.has_billing_columns;
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workspaces (
       id BIGSERIAL PRIMARY KEY,
@@ -190,6 +202,47 @@ async function initDatabase() {
       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan VARCHAR(20) NOT NULL DEFAULT 'free';`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS quota_seconds INTEGER NOT NULL DEFAULT ${FREE_PLAN_SECONDS};`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS quota_alert_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_QUOTA_ALERT_SECONDS};`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan_started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan_cancellation_requested_at TIMESTAMP WITH TIME ZONE;`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_class index_relation
+        JOIN pg_index index_metadata
+          ON index_metadata.indexrelid = index_relation.oid
+        WHERE index_relation.relname = 'idx_workspaces_owner'
+          AND index_metadata.indisunique
+      ) THEN
+        DROP INDEX idx_workspaces_owner;
+      END IF;
+    END
+    $$;
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);`);
+  if (shouldBackfillWorkspaceBilling) {
+    await pool.query(`
+      UPDATE workspaces workspace
+      SET plan = COALESCE(account.plan, workspace.plan),
+          quota_seconds = COALESCE(account.quota_seconds, workspace.quota_seconds),
+          quota_alert_seconds = COALESCE(account.quota_alert_seconds, workspace.quota_alert_seconds),
+          plan_started_at = COALESCE(account.plan_started_at, workspace.plan_started_at),
+          plan_expires_at = COALESCE(account.plan_expires_at, workspace.plan_expires_at),
+          plan_cancel_at_period_end = COALESCE(account.plan_cancel_at_period_end, workspace.plan_cancel_at_period_end),
+          plan_cancellation_requested_at = COALESCE(account.plan_cancellation_requested_at, workspace.plan_cancellation_requested_at)
+      FROM users account
+      WHERE account.id = workspace.owner_user_id;
+    `);
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workspace_members (
       id BIGSERIAL PRIMARY KEY,
@@ -204,6 +257,12 @@ async function initDatabase() {
       UNIQUE (workspace_id, user_id)
     );
   `);
+  await pool.query(`ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS id BIGSERIAL;`);
+  await pool.query(`ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';`);
+  await pool.query(`ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE workspace_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();`);
+  await pool.query(`ALTER TABLE workspace_members DROP CONSTRAINT IF EXISTS workspace_members_user_id_key;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_members_id ON workspace_members(id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_user_active ON workspace_members(user_id, status);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_active ON workspace_members(workspace_id, status);`);
   await pool.query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS invoice_company_name VARCHAR(200);`);
@@ -1073,7 +1132,7 @@ async function initDatabase() {
       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
     );
   `);
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1083,7 +1142,7 @@ async function initDatabase() {
       PRIMARY KEY (workspace_id, user_id)
     );
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id, joined_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id, created_at);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_settings (

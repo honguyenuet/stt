@@ -8,15 +8,24 @@ import { getApiBaseUrl } from "@/lib/api-base-url";
 const API_URL = getApiBaseUrl();
 
 type PrivacySettings = {
-  audioRetentionDays: number;
-  keepAudioAfterTranscription: boolean;
+  mediaRetentionPolicy:
+    | "keep_until_deleted"
+    | "delete_after_days"
+    | "delete_after_transcription";
+  mediaRetentionDays: number;
+  transcriptRetentionPolicy: "keep_until_deleted" | "delete_after_days";
+  transcriptRetentionDays: number;
   allowProductAnalytics: boolean;
+  securityPolicyAcknowledgedAt: string | null;
 };
 
 const DEFAULT_SETTINGS: PrivacySettings = {
-  audioRetentionDays: 30,
-  keepAudioAfterTranscription: true,
+  mediaRetentionPolicy: "keep_until_deleted",
+  mediaRetentionDays: 365,
+  transcriptRetentionPolicy: "keep_until_deleted",
+  transcriptRetentionDays: 365,
   allowProductAnalytics: false,
+  securityPolicyAcknowledgedAt: null,
 };
 
 export const Route = createFileRoute("/privacy")({ component: PrivacyPage });
@@ -42,16 +51,16 @@ function PrivacyPage() {
   useEffect(() => {
     if (!token) return;
     let ignore = false;
-    void fetch(`${API_URL}/api/settings`, {
+    void fetch(`${API_URL}/api/settings/privacy`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (response) => {
         const data = (await response.json()) as {
-          privacySettings?: PrivacySettings;
+          privacy?: PrivacySettings;
           error?: string;
         };
         if (!response.ok) throw new Error(data.error || "Không tải được cài đặt");
-        if (!ignore) setSettings(data.privacySettings || DEFAULT_SETTINGS);
+        if (!ignore) setSettings(data.privacy || DEFAULT_SETTINGS);
       })
       .catch((cause: unknown) => {
         if (!ignore) setError(cause instanceof Error ? cause.message : "Không tải được cài đặt");
@@ -85,7 +94,7 @@ function PrivacyPage() {
     try {
       await request("/api/settings/privacy", {
         method: "PATCH",
-        body: JSON.stringify({ privacySettings: settings }),
+        body: JSON.stringify(settings),
       });
       setMessage("Đã lưu lựa chọn quyền riêng tư");
     } catch (cause) {
@@ -109,7 +118,7 @@ function PrivacyPage() {
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `vbee-data-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.download = `vbee-data-${new Date().toISOString().slice(0, 10)}.zip`;
       anchor.click();
       URL.revokeObjectURL(url);
       setMessage("Đã tạo bản xuất dữ liệu");
@@ -173,17 +182,23 @@ function PrivacyPage() {
           <div>
             <label htmlFor="retention" className="text-sm font-black">Thời gian giữ tệp âm thanh</label>
             <p className="mb-2 text-xs text-muted-foreground">Văn bản không bị xóa khi tệp âm thanh hết hạn.</p>
-            <select id="retention" value={settings.audioRetentionDays} onChange={(event) => setSettings((current) => ({ ...current, audioRetentionDays: Number(event.target.value) }))} className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm sm:max-w-xs">
-              <option value={0}>Xóa ngay sau khi xử lý</option><option value={7}>7 ngày</option><option value={30}>30 ngày</option><option value={90}>90 ngày</option><option value={365}>1 năm</option>
+            <select id="retention" value={settings.mediaRetentionPolicy === "keep_until_deleted" ? -1 : settings.mediaRetentionPolicy === "delete_after_transcription" ? 0 : settings.mediaRetentionDays} onChange={(event) => { const days = Number(event.target.value); setSettings((current) => ({ ...current, mediaRetentionPolicy: days < 0 ? "keep_until_deleted" : days === 0 ? "delete_after_transcription" : "delete_after_days", mediaRetentionDays: days > 0 ? days : current.mediaRetentionDays })); }} className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm sm:max-w-xs">
+              <option value={-1}>Giữ đến khi tôi tự xóa</option><option value={0}>Xóa ngay sau khi xử lý</option><option value={7}>7 ngày</option><option value={30}>30 ngày</option><option value={90}>90 ngày</option><option value={365}>1 năm</option>
             </select>
           </div>
-          <label className="flex items-start gap-3"><input type="checkbox" checked={settings.keepAudioAfterTranscription} onChange={(event) => setSettings((current) => ({ ...current, keepAudioAfterTranscription: event.target.checked }))} className="mt-1 h-4 w-4 accent-[#ffcb05]" /><span><strong className="block text-sm">Giữ âm thanh sau khi chuyển đổi</strong><span className="text-xs text-muted-foreground">Tắt để ưu tiên tối đa việc giảm dữ liệu lưu trên máy chủ.</span></span></label>
+          <div>
+            <label htmlFor="transcript-retention" className="text-sm font-black">Thời gian giữ transcript</label>
+            <p className="mb-2 text-xs text-muted-foreground">Chọn thời điểm tự động xóa văn bản đã chuyển đổi.</p>
+            <select id="transcript-retention" value={settings.transcriptRetentionPolicy === "keep_until_deleted" ? -1 : settings.transcriptRetentionDays} onChange={(event) => { const days = Number(event.target.value); setSettings((current) => ({ ...current, transcriptRetentionPolicy: days < 0 ? "keep_until_deleted" : "delete_after_days", transcriptRetentionDays: days > 0 ? days : current.transcriptRetentionDays })); }} className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm sm:max-w-xs">
+              <option value={-1}>Giữ đến khi tôi tự xóa</option><option value={7}>7 ngày</option><option value={30}>30 ngày</option><option value={90}>90 ngày</option><option value={365}>1 năm</option>
+            </select>
+          </div>
           <label className="flex items-start gap-3"><input type="checkbox" checked={settings.allowProductAnalytics} onChange={(event) => setSettings((current) => ({ ...current, allowProductAnalytics: event.target.checked }))} className="mt-1 h-4 w-4 accent-[#ffcb05]" /><span><strong className="block text-sm">Cho phép phân tích cải thiện sản phẩm</strong><span className="text-xs text-muted-foreground">Không bao gồm nội dung âm thanh hoặc văn bản.</span></span></label>
           <button type="button" onClick={() => void saveSettings()} disabled={Boolean(busy)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#ffcb05] px-4 text-sm font-black disabled:opacity-50">{busy === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Lưu lựa chọn</button>
         </section>
 
         <section className="mt-4 rounded-xl border border-border bg-white p-4 sm:p-6">
-          <h2 className="font-black">Tải dữ liệu cá nhân</h2><p className="mt-1 text-sm text-muted-foreground">Nhận tệp JSON gồm hồ sơ, cài đặt, thư mục và toàn bộ transcript.</p>
+          <h2 className="font-black">Tải dữ liệu cá nhân</h2><p className="mt-1 text-sm text-muted-foreground">Nhận tệp ZIP gồm cài đặt, thư mục, lịch sử bảo mật và toàn bộ transcript.</p>
           <button type="button" onClick={() => void exportData()} disabled={Boolean(busy)} className="mt-3 inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-black"><Download className="h-4 w-4" /> Xuất dữ liệu</button>
         </section>
 

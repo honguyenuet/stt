@@ -1221,6 +1221,7 @@ function HistoryPage() {
                                   void navigate({
                                     to: "/transcript/$id",
                                     params: { id: String(item.id) },
+                                    search: { at: undefined },
                                   })
                                 }
                                 className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90"

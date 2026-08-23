@@ -7,6 +7,7 @@ import {
   BookOpen,
   Camera,
   Check,
+  Database,
   Eye,
   EyeOff,
   Folder,
@@ -74,6 +75,59 @@ interface AuthSession {
   lastSeenAt: string;
   expiresAt: string;
   revokedAt: string | null;
+}
+
+type WorkspaceRole = "owner" | "admin" | "member";
+
+interface WorkspaceMember {
+  id: number;
+  userId: number;
+  role: WorkspaceRole;
+  status: "active" | "removed";
+  name: string;
+  email: string;
+  avatar: string | null;
+  joinedAt: string;
+}
+
+interface WorkspaceSummary {
+  id: number;
+  name: string;
+  ownerUserId: number;
+  role: WorkspaceRole;
+  plan: string;
+  quotaSeconds: number;
+  quotaAlertSeconds: number;
+  planStartedAt?: string | null;
+  planExpiresAt?: string | null;
+  members: WorkspaceMember[];
+  pendingInvites?: Array<{
+    id: number;
+    email: string;
+    role: Exclude<WorkspaceRole, "owner">;
+    status: "pending";
+    expiresAt: string;
+    createdAt: string;
+  }>;
+  invoiceProfile?: {
+    companyName: string;
+    taxCode: string;
+    address: string;
+    invoiceEmail: string;
+    billingContactEmail: string;
+  };
+}
+
+interface PrivacySettings {
+  mediaRetentionPolicy:
+    | "keep_until_deleted"
+    | "delete_after_days"
+    | "delete_after_transcription";
+  mediaRetentionDays: number;
+  transcriptRetentionPolicy: "keep_until_deleted" | "delete_after_days";
+  transcriptRetentionDays: number;
+  allowProductAnalytics: boolean;
+  securityPolicyAcknowledgedAt: string | null;
 }
 
 function formatDate(value: string) {

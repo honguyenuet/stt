@@ -1,0 +1,40 @@
+module.exports = [
+  {
+    ignores: ["node_modules/**", "uploads/**"],
+  },
+  {
+    files: ["**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "commonjs",
+      globals: {
+        AbortController: "readonly",
+        AbortSignal: "readonly",
+        Blob: "readonly",
+        Buffer: "readonly",
+        FormData: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        __dirname: "readonly",
+        clearInterval: "readonly",
+        clearTimeout: "readonly",
+        console: "readonly",
+        crypto: "readonly",
+        exports: "writable",
+        fetch: "readonly",
+        global: "readonly",
+        module: "writable",
+        performance: "readonly",
+        process: "readonly",
+        require: "readonly",
+        setImmediate: "readonly",
+        setInterval: "readonly",
+        setTimeout: "readonly",
+        structuredClone: "readonly",
+      },
+    },
+    rules: {
+      "no-undef": "error",
+    },
+  },
+];

@@ -12,6 +12,7 @@ import {
   formatPlaybackTime,
   indexTimedWordTextRanges,
   nextTranscriptFollowMode,
+  normalizeTimedWordBounds,
   summarizeConfidence,
   replaceTimedWordInText,
 } from "./transcript-playback";

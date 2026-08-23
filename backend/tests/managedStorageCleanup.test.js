@@ -31,6 +31,9 @@ test("managed storage cleanup applies the CMS queue retention window", async () 
       }
       if (/WITH expired_audio AS/i.test(sql)) return { rows: [] };
       if (/DELETE FROM transcription_jobs/i.test(sql)) return { rowCount: 4 };
+      if (/DELETE FROM transcriptions transcript/i.test(sql)) {
+        return { rowCount: 2, rows: [{ id: 11 }, { id: 12 }] };
+      }
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
@@ -39,6 +42,9 @@ test("managed storage cleanup applies the CMS queue retention window", async () 
   const jobCleanup = calls.find(({ sql }) =>
     /DELETE FROM transcription_jobs/i.test(sql),
   );
+  const privacyCleanup = calls.find(({ sql }) =>
+    /DELETE FROM transcriptions transcript/i.test(sql),
+  );
 
   assert.deepEqual(jobCleanup.params, [7_200_000]);
   assert.match(jobCleanup.sql, /status IN \('completed', 'failed', 'cancelled'\)/i);
@@ -46,9 +52,13 @@ test("managed storage cleanup applies the CMS queue retention window", async () 
     jobCleanup.sql,
     /job\.status <> 'failed' OR transcript\.audio_filename IS NULL/i,
   );
+  assert.match(
+    privacyCleanup.sql,
+    /transcriptRetentionPolicy' = 'delete_after_days'/i,
+  );
   assert.deepEqual(result, {
     deletedMedia: 0,
     deletedJobs: 4,
-    deletedTranscripts: 0,
+    deletedTranscripts: 2,
   });
 });
