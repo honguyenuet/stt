@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getAdaptiveTranscriptEditorHeight } from "./transcript-editor-layout";
+import {
+  getAdaptiveTranscriptEditorHeight,
+  getPlainTranscriptEditorHeight,
+} from "./transcript-editor-layout";
 
 describe("adaptive transcript editor height", () => {
   it("grows with short transcript content instead of keeping a fixed desktop panel", () => {
@@ -27,5 +30,14 @@ describe("adaptive transcript editor height", () => {
         viewportHeight: 900,
       }),
     ).toBe(720);
+  });
+
+  it("keeps the plain-text editor comfortably tall after switching modes", () => {
+    expect(
+      getPlainTranscriptEditorHeight({
+        contentHeight: 180,
+        viewportHeight: 900,
+      }),
+    ).toBe(520);
   });
 });

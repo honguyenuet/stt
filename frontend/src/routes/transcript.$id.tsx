@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -64,7 +65,10 @@ import {
   editableTimedWordWidthCh,
 } from "@/lib/transcript-typography";
 import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
-import { getAdaptiveTranscriptEditorHeight } from "@/lib/transcript-editor-layout";
+import {
+  getAdaptiveTranscriptEditorHeight,
+  getPlainTranscriptEditorHeight,
+} from "@/lib/transcript-editor-layout";
 import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
@@ -682,6 +686,14 @@ function TranscriptEditorPage() {
       }),
     [browserViewportHeight, virtualSegments.totalSize],
   );
+  const plainEditorHeight = useMemo(
+    () =>
+      getPlainTranscriptEditorHeight({
+        contentHeight: virtualSegments.totalSize + 32,
+        viewportHeight: browserViewportHeight,
+      }),
+    [browserViewportHeight, virtualSegments.totalSize],
+  );
   const firstVirtualSegment = virtualSegments.items[0]?.index ?? -1;
   const lastVirtualSegment = virtualSegments.items.at(-1)?.index ?? -1;
   const activeSegmentStart =
@@ -697,12 +709,19 @@ function TranscriptEditorPage() {
     () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
     [segments.length, transcript?.translated_text],
   );
+  const shouldHighlightPlainText = useDeferredValue(
+    editorMode === "edit" &&
+      syncAvailable &&
+      isPlaying &&
+      activeWordIndex >= 0 &&
+      transcriptFollowMode === "following",
+  );
   const plainTextWordRanges = useMemo(
     () =>
-      editorMode === "edit" && syncAvailable
+      shouldHighlightPlainText
         ? indexTimedWordTextRanges(editorText, words)
         : [],
-    [editorMode, editorText, syncAvailable, words],
+    [editorText, shouldHighlightPlainText, words],
   );
   const plainTextActiveRange =
     activeWordIndex >= 0
@@ -1598,6 +1617,13 @@ function TranscriptEditorPage() {
     });
   }
 
+  function openPlainTextEditor() {
+    setEditorMode("edit");
+    window.requestAnimationFrame(() => {
+      plainTextAreaRef.current?.focus({ preventScroll: true });
+    });
+  }
+
   function selectSearchMatch(nextIndex: number) {
     if (!searchMatches.length) return;
     const boundedIndex =
@@ -2457,15 +2483,7 @@ function TranscriptEditorPage() {
           </div>
         )}
 
-        <div
-          className={`grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px] ${
-            editorMode === "sync" && syncAvailable
-              ? "items-start"
-              : transcript.audio_filename
-                ? "lg:min-h-[360px] lg:h-[calc(100dvh-345px)]"
-                : "lg:min-h-[360px] lg:h-[calc(100dvh-290px)]"
-          }`}
-        >
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
           <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
             <div className="flex flex-col gap-3 border-b border-[#ece7f2] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex w-fit rounded-md bg-[#f3f0f7] p-1">
@@ -2484,7 +2502,7 @@ function TranscriptEditorPage() {
                 <button
                   type="button"
                   data-testid="editor-mode-edit"
-                  onClick={() => setEditorMode("edit")}
+                  onClick={openPlainTextEditor}
                   className={`inline-flex items-center gap-2 rounded px-3 py-2 text-xs font-black transition ${
                     editorMode === "edit"
                       ? "bg-white text-[#21104a] shadow-sm"
@@ -2636,8 +2654,13 @@ function TranscriptEditorPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-[420px] flex-col p-3 sm:min-h-[520px] sm:p-4 md:p-6 lg:min-h-0 lg:flex-1">
-                <div className="relative min-h-[360px] sm:min-h-[460px] lg:min-h-0 lg:flex-1">
+              <div
+                data-testid="plain-transcript-editor"
+                data-editor-height={plainEditorHeight}
+                style={{ height: `${plainEditorHeight}px` }}
+                className="flex min-h-0 flex-col p-3 sm:p-4 md:p-6"
+              >
+                <div className="relative min-h-0 flex-1">
                   {syncAvailable && (
                     <div
                       aria-hidden="true"
@@ -2667,7 +2690,7 @@ function TranscriptEditorPage() {
                     }}
                     aria-label="Nội dung transcript"
                     spellCheck
-                    className={`relative h-full min-h-[360px] w-full resize-y rounded-lg border border-[#ded5e9] px-4 py-3 text-[15px] leading-7 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:min-h-[460px] sm:px-5 sm:py-4 sm:leading-8 lg:min-h-0 lg:resize-none ${
+                    className={`relative h-full min-h-0 w-full resize-none rounded-lg border border-[#ded5e9] px-4 py-3 text-[15px] leading-7 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:px-5 sm:py-4 sm:leading-8 ${
                       syncAvailable
                         ? "bg-transparent text-transparent caret-[#21104a] selection:bg-[#8067aa]/20"
                         : "bg-[#fbfaf7] text-[#342752]"
