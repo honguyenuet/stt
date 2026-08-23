@@ -219,6 +219,25 @@ function DashboardPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState("");
   const [sessionActionId, setSessionActionId] = useState("");
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [memberEmail, setMemberEmail] = useState("");
+  const [memberRole, setMemberRole] = useState<WorkspaceRole>("member");
+  const [invoiceProfile, setInvoiceProfile] = useState({
+    companyName: "",
+    taxCode: "",
+    address: "",
+    invoiceEmail: "",
+    billingContactEmail: "",
+  });
+  const [workspaceSaving, setWorkspaceSaving] = useState(false);
+  const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
+  const [privacyLoading, setPrivacyLoading] = useState(false);
+  const [privacySaving, setPrivacySaving] = useState(false);
+  const [privacyError, setPrivacyError] = useState("");
+  const [privacyMessage, setPrivacyMessage] = useState("");
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderName, setFolderName] = useState("Dự án mới");
   const [folderVisibility, setFolderVisibility] = useState<"private" | "team">("private");
@@ -250,6 +269,209 @@ function DashboardPage() {
       setEditForm({ firstName: user.firstName, lastName: user.lastName });
   }, [user]);
 
+  const loadWorkspace = useCallback(async () => {
+    if (!token) return;
+    setWorkspaceLoading(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không tải được workspace");
+      }
+      setWorkspace(data.workspace);
+      setWorkspaceName(data.workspace.name);
+      setInvoiceProfile({
+        companyName: data.workspace.invoiceProfile?.companyName || "",
+        taxCode: data.workspace.invoiceProfile?.taxCode || "",
+        address: data.workspace.invoiceProfile?.address || "",
+        invoiceEmail: data.workspace.invoiceProfile?.invoiceEmail || "",
+        billingContactEmail:
+          data.workspace.invoiceProfile?.billingContactEmail || "",
+      });
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : "Không tải được workspace",
+      );
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) void loadWorkspace();
+  }, [loadWorkspace, token]);
+
+  const loadPrivacy = useCallback(async () => {
+    if (!token) return;
+    setPrivacyLoading(true);
+    setPrivacyError("");
+    try {
+      const response = await fetch(`${API_URL}/api/settings/privacy`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        privacy?: PrivacySettings;
+        error?: string;
+      };
+      if (!response.ok || !data.privacy) {
+        throw new Error(data.error || "Không tải được privacy center");
+      }
+      setPrivacy(data.privacy);
+    } catch (error) {
+      setPrivacyError(
+        error instanceof Error ? error.message : "Không tải được privacy center",
+      );
+    } finally {
+      setPrivacyLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) void loadPrivacy();
+  }, [loadPrivacy, token]);
+
+  async function savePrivacy() {
+    if (!token || !privacy) return;
+    setPrivacySaving(true);
+    setPrivacyError("");
+    setPrivacyMessage("");
+    try {
+      const response = await fetch(`${API_URL}/api/settings/privacy`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(privacy),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        privacy?: PrivacySettings;
+        error?: string;
+      };
+      if (!response.ok || !data.privacy) {
+        throw new Error(data.error || "Không lưu được privacy center");
+      }
+      setPrivacy(data.privacy);
+      setPrivacyMessage("Đã lưu chính sách dữ liệu.");
+    } catch (error) {
+      setPrivacyError(
+        error instanceof Error ? error.message : "Không lưu được privacy center",
+      );
+    } finally {
+      setPrivacySaving(false);
+    }
+  }
+
+  async function exportPrivacyData() {
+    if (!token) return;
+    setPrivacyError("");
+    try {
+      const response = await fetch(`${API_URL}/api/settings/privacy/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(data.error || "Không export được dữ liệu");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `vbee-data-export-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setPrivacyMessage("Đã tạo file export dữ liệu.");
+    } catch (error) {
+      setPrivacyError(
+        error instanceof Error ? error.message : "Không export được dữ liệu",
+      );
+    }
+  }
+
+  async function deletePrivacyMedia() {
+    if (!token) return;
+    if (!window.confirm("Xóa toàn bộ file media/audio đã lưu? Transcript vẫn được giữ lại.")) {
+      return;
+    }
+    setPrivacySaving(true);
+    setPrivacyError("");
+    setPrivacyMessage("");
+    try {
+      const response = await fetch(`${API_URL}/api/settings/privacy/media`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        affectedRecords?: number;
+        deletedFiles?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "Không xóa được media");
+      setPrivacyMessage(
+        `Đã xóa media khỏi ${data.affectedRecords || 0} transcript.`,
+      );
+    } catch (error) {
+      setPrivacyError(
+        error instanceof Error ? error.message : "Không xóa được media",
+      );
+    } finally {
+      setPrivacySaving(false);
+    }
+  }
+
+  async function deletePrivacyTranscripts() {
+    if (!token) return;
+    if (
+      window.prompt(
+        "Nhập DELETE để xóa vĩnh viễn toàn bộ transcript và media của bạn.",
+      ) !== "DELETE"
+    ) {
+      return;
+    }
+    setPrivacySaving(true);
+    setPrivacyError("");
+    setPrivacyMessage("");
+    try {
+      const response = await fetch(`${API_URL}/api/settings/privacy/transcripts`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ confirmation: "DELETE" }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        deletedTranscripts?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error || "Không xóa được dữ liệu");
+      }
+      setPrivacyMessage(
+        `Đã xóa ${data.deletedTranscripts || 0} transcript vĩnh viễn.`,
+      );
+      setHistoryRetryKey((value) => value + 1);
+    } catch (error) {
+      setPrivacyError(
+        error instanceof Error ? error.message : "Không xóa được dữ liệu",
+      );
+    } finally {
+      setPrivacySaving(false);
+    }
+  }
+
   const loadSessions = useCallback(async () => {
     if (!token) return;
     setSessionsLoading(true);
@@ -277,6 +499,198 @@ function DashboardPage() {
       setSessionsLoading(false);
     }
   }, [token]);
+
+  async function saveWorkspaceName() {
+    if (!token || !workspace || !workspaceName.trim()) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: workspaceName.trim() }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không lưu được workspace");
+      }
+      setWorkspace(data.workspace);
+      setWorkspaceName(data.workspace.name);
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : "Không lưu được workspace",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
+
+  async function addMember() {
+    if (!token || !memberEmail.trim()) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace/members`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email: memberEmail.trim(), role: memberRole }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không thêm được thành viên");
+      }
+      setWorkspace(data.workspace);
+      setMemberEmail("");
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : "Không thêm được thành viên",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
+
+  async function updateMember(memberId: number, role: WorkspaceRole) {
+    if (!token) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace/members/${memberId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không cập nhật được thành viên");
+      }
+      setWorkspace(data.workspace);
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error
+          ? error.message
+          : "Không cập nhật được thành viên",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
+
+  async function transferOwner(memberId: number) {
+    if (!token) return;
+    if (!window.confirm("Chuyển owner workspace cho thành viên này? Bạn sẽ trở thành admin.")) {
+      return;
+    }
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/workspace/members/${memberId}/transfer-owner`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không chuyển owner được");
+      }
+      setWorkspace(data.workspace);
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : "Không chuyển owner được",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
+
+  async function saveInvoiceProfile() {
+    if (!token) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace/invoice-profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ invoiceProfile }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không lưu được thông tin hóa đơn");
+      }
+      setWorkspace(data.workspace);
+      setInvoiceProfile({
+        companyName: data.workspace.invoiceProfile?.companyName || "",
+        taxCode: data.workspace.invoiceProfile?.taxCode || "",
+        address: data.workspace.invoiceProfile?.address || "",
+        invoiceEmail: data.workspace.invoiceProfile?.invoiceEmail || "",
+        billingContactEmail:
+          data.workspace.invoiceProfile?.billingContactEmail || "",
+      });
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error
+          ? error.message
+          : "Không lưu được thông tin hóa đơn",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
+
+  async function removeMember(memberId: number) {
+    if (!token) return;
+    setWorkspaceSaving(true);
+    setWorkspaceError("");
+    try {
+      const response = await fetch(`${API_URL}/api/workspace/members/${memberId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        workspace?: WorkspaceSummary;
+        error?: string;
+      };
+      if (!response.ok || !data.workspace) {
+        throw new Error(data.error || "Không gỡ được thành viên");
+      }
+      setWorkspace(data.workspace);
+    } catch (error) {
+      setWorkspaceError(
+        error instanceof Error ? error.message : "Không gỡ được thành viên",
+      );
+    } finally {
+      setWorkspaceSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!editOpen || !token) return;
@@ -653,7 +1067,7 @@ function DashboardPage() {
   // ── Loading ──────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <span className="h-10 w-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
           <p className="text-muted-foreground text-sm">
@@ -907,7 +1321,7 @@ function DashboardPage() {
           if (!open && !isChangingPassword) closeEdit();
         }}
       >
-        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto bg-card border-border text-foreground sm:max-w-md">
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto bg-white border-border text-foreground sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-foreground text-xl">
               Chỉnh sửa thông tin
@@ -921,10 +1335,10 @@ function DashboardPage() {
                   <img
                     src={avatarPreview ?? user.avatar!}
                     alt="avatar"
-                    className="h-20 w-20 rounded-full object-cover shadow-glow ring-2 ring-primary/40"
+                    className="h-20 w-20 rounded-full object-cover ring-2 ring-primary/40"
                   />
                 ) : (
-                  <span className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-primary text-2xl font-bold text-primary-foreground shadow-glow select-none">
+                  <span className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-2xl font-bold text-primary-foreground select-none">
                     {initials}
                   </span>
                 )}
@@ -932,7 +1346,7 @@ function DashboardPage() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isSavingAvatar}
-                  className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-border hover:bg-primary/10 transition disabled:opacity-50"
+                  className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-white border border-border hover:border-primary/50 transition disabled:opacity-50"
                   title="Thay ảnh đại diện"
                 >
                   {isSavingAvatar ? (
@@ -956,7 +1370,7 @@ function DashboardPage() {
               </div>
             )}
             {profileSuccess && (
-              <div className="flex items-center gap-2 rounded-xl bg-primary/10 border border-primary/20 px-3 py-2 text-sm text-primary">
+              <div className="flex items-center gap-2 rounded-xl bg-white border border-primary/20 px-3 py-2 text-sm text-primary">
                 <Check className="h-4 w-4 shrink-0" />
                 Đã lưu thành công!
               </div>
@@ -973,7 +1387,7 @@ function DashboardPage() {
                     setEditForm((p) => ({ ...p, firstName: e.target.value }));
                     setProfileError("");
                   }}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                  className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   placeholder="Tên"
                 />
               </div>
@@ -987,7 +1401,7 @@ function DashboardPage() {
                     setEditForm((p) => ({ ...p, lastName: e.target.value }));
                     setProfileError("");
                   }}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                  className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
                   placeholder="Họ"
                 />
               </div>
@@ -1000,7 +1414,7 @@ function DashboardPage() {
               <input
                 value={user.email}
                 disabled
-                className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
+                className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
               />
               <p className="text-xs text-muted-foreground/60">
                 Email liên kết với tài khoản, không thể thay đổi
@@ -1009,7 +1423,7 @@ function DashboardPage() {
 
             <section className="border-t border-border pt-4">
               <div className="mb-3 flex items-start gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#fff8d7] text-[#21104a]">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-[#21104a]">
                   <KeyRound className="h-4 w-4" />
                 </span>
                 <div>
@@ -1045,7 +1459,7 @@ function DashboardPage() {
                         setPasswordError("");
                         setPasswordSuccess("");
                       }}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      className="w-full rounded-lg border border-border bg-white px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
                     />
                     <button
                       type="button"
@@ -1093,7 +1507,7 @@ function DashboardPage() {
                           setPasswordError("");
                           setPasswordSuccess("");
                         }}
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
                       />
                       <button
                         type="button"
@@ -1140,7 +1554,7 @@ function DashboardPage() {
                           setPasswordError("");
                           setPasswordSuccess("");
                         }}
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 pr-10 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
                       />
                       <button
                         type="button"
@@ -1179,7 +1593,7 @@ function DashboardPage() {
                 {passwordSuccess && (
                   <div
                     role="status"
-                    className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-xs leading-5 text-primary"
+                    className="flex items-start gap-2 rounded-lg border border-primary/20 bg-white px-3 py-2 text-xs leading-5 text-primary"
                   >
                     <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     {passwordSuccess}
@@ -1190,7 +1604,7 @@ function DashboardPage() {
                   type="button"
                   onClick={() => void handleChangePassword()}
                   disabled={isChangingPassword || Boolean(passwordSuccess)}
-                  className="flex w-full items-center justify-center gap-2 rounded-full border border-[#e8decc] bg-[#fff8d7] py-2.5 text-sm font-bold text-[#21104a] transition hover:border-[#ffcb05] hover:bg-[#ffefad] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-2 rounded-full border border-border bg-white py-2.5 text-sm font-bold text-[#21104a] transition hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isChangingPassword ? (
                     <>
@@ -1209,7 +1623,7 @@ function DashboardPage() {
 
             <section className="border-t border-border pt-4">
               <div className="mb-3 flex items-start gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f7f4ff] text-[#21104a]">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-[#21104a]">
                   <MonitorSmartphone className="h-4 w-4" />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -1227,7 +1641,7 @@ function DashboardPage() {
                   type="button"
                   onClick={() => void loadSessions()}
                   disabled={sessionsLoading || Boolean(sessionActionId)}
-                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-border px-3 py-2 text-xs font-bold text-foreground transition hover:bg-background disabled:opacity-60"
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-border bg-white px-3 py-2 text-xs font-bold text-foreground transition hover:border-primary/50 disabled:opacity-60"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${sessionsLoading ? "animate-spin" : ""}`} />
                   Làm mới
@@ -1236,7 +1650,7 @@ function DashboardPage() {
                   type="button"
                   onClick={() => void revokeOtherSessions()}
                   disabled={sessionsLoading || Boolean(sessionActionId)}
-                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-[#e8decc] bg-[#fff8d7] px-3 py-2 text-xs font-bold text-[#21104a] transition hover:bg-[#ffefad] disabled:opacity-60"
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-border bg-white px-3 py-2 text-xs font-bold text-[#21104a] transition hover:border-primary/50 disabled:opacity-60"
                 >
                   <ShieldAlert className="h-3.5 w-3.5" />
                   Thu hồi thiết bị khác
@@ -1255,14 +1669,14 @@ function DashboardPage() {
 
               <div className="space-y-2">
                 {sessionsLoading && sessions.length === 0 ? (
-                  <div className="rounded-lg border border-border bg-background px-3 py-3 text-xs font-semibold text-muted-foreground">
+                  <div className="rounded-lg border border-border bg-white px-3 py-3 text-xs font-semibold text-muted-foreground">
                     Đang tải danh sách thiết bị...
                   </div>
                 ) : (
                   sessions.map((session) => (
                     <div
                       key={session.id}
-                      className="rounded-lg border border-border bg-background px-3 py-3"
+                      className="rounded-lg border border-border bg-white px-3 py-3"
                     >
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[#21104a]">
@@ -1321,7 +1735,7 @@ function DashboardPage() {
               <button
                 onClick={closeEdit}
                 disabled={isSavingProfile || isChangingPassword}
-                className="flex-1 rounded-full border border-border py-2.5 text-sm font-medium text-foreground hover:bg-card transition disabled:opacity-50"
+                className="flex-1 rounded-full border border-border bg-white py-2.5 text-sm font-medium text-foreground transition hover:border-primary/50 disabled:opacity-50"
               >
                 Hủy
               </button>
@@ -1330,7 +1744,7 @@ function DashboardPage() {
                 disabled={
                   isSavingProfile || isSavingAvatar || isChangingPassword
                 }
-                className="flex-1 flex items-center justify-center gap-2 rounded-full bg-gradient-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:opacity-90 transition disabled:opacity-60"
+                className="flex-1 flex items-center justify-center gap-2 rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 transition disabled:opacity-60"
               >
                 {isSavingProfile ? (
                   <>
@@ -1347,7 +1761,7 @@ function DashboardPage() {
       </Dialog>
 
       <Dialog open={folderOpen} onOpenChange={setFolderOpen}>
-        <DialogContent className="border-border bg-card text-foreground sm:max-w-md">
+        <DialogContent className="border-border bg-white text-foreground sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Tạo folder mới</DialogTitle>
           </DialogHeader>
@@ -1359,7 +1773,7 @@ function DashboardPage() {
             <input
               value={folderName}
               onChange={(e) => setFolderName(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary"
+              className="w-full rounded-xl border border-border bg-white px-4 py-3 text-sm outline-none focus:border-primary"
               placeholder="Tên folder"
             />
             <label className="block text-sm font-bold">
@@ -1391,7 +1805,7 @@ function DashboardPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setFolderOpen(false)}
-                className="flex-1 rounded-full border border-border px-4 py-2.5 text-sm font-bold transition hover:bg-background"
+                className="flex-1 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-bold transition hover:border-primary/50"
               >
                 Hủy
               </button>
@@ -1466,11 +1880,494 @@ function DashboardPage() {
   );
 }
 
+function WorkspaceBillingPanel({
+  workspace,
+  loading,
+  error,
+  name,
+  memberEmail,
+  memberRole,
+  invoiceProfile,
+  saving,
+  onNameChange,
+  onMemberEmailChange,
+  onMemberRoleChange,
+  onInvoiceProfileChange,
+  onSaveName,
+  onAddMember,
+  onUpdateMember,
+  onTransferOwner,
+  onSaveInvoiceProfile,
+  onRemoveMember,
+  onRetry,
+}: {
+  workspace: WorkspaceSummary | null;
+  loading: boolean;
+  error: string;
+  name: string;
+  memberEmail: string;
+  memberRole: WorkspaceRole;
+  invoiceProfile: NonNullable<WorkspaceSummary["invoiceProfile"]>;
+  saving: boolean;
+  onNameChange: (value: string) => void;
+  onMemberEmailChange: (value: string) => void;
+  onMemberRoleChange: (value: WorkspaceRole) => void;
+  onInvoiceProfileChange: (value: NonNullable<WorkspaceSummary["invoiceProfile"]>) => void;
+  onSaveName: () => void;
+  onAddMember: () => void;
+  onUpdateMember: (memberId: number, role: WorkspaceRole) => void;
+  onTransferOwner: (memberId: number) => void;
+  onSaveInvoiceProfile: () => void;
+  onRemoveMember: (memberId: number) => void;
+  onRetry: () => void;
+}) {
+  const canManage = workspace?.role === "owner" || workspace?.role === "admin";
+  const roleLabel: Record<WorkspaceRole, string> = {
+    owner: "Owner",
+    admin: "Admin",
+    member: "Member",
+  };
+
+  return (
+    <div className="rounded-2xl border border-border bg-white p-5 shadow-soft">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
+            Workspace billing
+          </p>
+          <h2 className="mt-1 text-lg font-black text-foreground">
+            Team dùng chung quota
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-full border border-border bg-white p-2 text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+          title="Tải lại workspace"
+          aria-label="Tải lại workspace"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+          {error}
+        </p>
+      )}
+
+      {!workspace ? (
+        <p className="mt-4 text-sm text-muted-foreground">
+          {loading ? "Đang tải workspace..." : "Chưa có dữ liệu workspace."}
+        </p>
+      ) : (
+        <div className="mt-4 space-y-4">
+          <div className="rounded-xl border border-border bg-white p-3">
+            <label className="text-xs font-black text-muted-foreground">
+              Tên workspace
+            </label>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={name}
+                onChange={(event) => onNameChange(event.target.value)}
+                disabled={!canManage || saving}
+                className="min-w-0 flex-1 rounded-lg border border-border bg-white px-3 py-2 text-sm font-bold outline-none focus:border-primary disabled:opacity-60"
+              />
+              <button
+                type="button"
+                onClick={onSaveName}
+                disabled={!canManage || saving || !name.trim()}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground disabled:opacity-50"
+              >
+                Lưu
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg bg-[#fbf8ef] p-2">
+                <p className="font-bold text-muted-foreground">Gói</p>
+                <p className="mt-1 font-black text-foreground">
+                  {workspace.plan}
+                </p>
+              </div>
+              <div className="rounded-lg bg-[#fbf8ef] p-2">
+                <p className="font-bold text-muted-foreground">Quota team</p>
+                <p className="mt-1 font-black text-foreground">
+                  {formatDuration(workspace.quotaSeconds)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {canManage && (
+            <div className="rounded-xl border border-border bg-white p-3">
+              <label className="text-xs font-black text-muted-foreground">
+                Thêm hoặc mời thành viên
+              </label>
+              <input
+                value={memberEmail}
+                onChange={(event) => onMemberEmailChange(event.target.value)}
+                placeholder="email@company.com"
+                className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <div className="mt-2 flex gap-2">
+                <select
+                  value={memberRole}
+                  onChange={(event) =>
+                    onMemberRoleChange(event.target.value as WorkspaceRole)
+                  }
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={onAddMember}
+                  disabled={saving || !memberEmail.trim()}
+                  className="rounded-lg bg-[#21104a] px-3 py-2 text-xs font-black text-white disabled:opacity-50"
+                >
+                  Thêm
+                </button>
+              </div>
+            </div>
+          )}
+
+          {canManage && (
+            <div className="rounded-xl border border-border bg-white p-3">
+              <p className="text-xs font-black text-muted-foreground">
+                Thông tin hóa đơn workspace
+              </p>
+              <div className="mt-2 grid gap-2">
+                {[
+                  ["companyName", "Tên công ty"],
+                  ["taxCode", "Mã số thuế"],
+                  ["invoiceEmail", "Email nhận hóa đơn"],
+                  ["billingContactEmail", "Email phụ trách billing"],
+                ].map(([key, label]) => (
+                  <input
+                    key={key}
+                    value={invoiceProfile[key as keyof typeof invoiceProfile]}
+                    onChange={(event) =>
+                      onInvoiceProfileChange({
+                        ...invoiceProfile,
+                        [key]: event.target.value,
+                      })
+                    }
+                    placeholder={label}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+                  />
+                ))}
+                <textarea
+                  value={invoiceProfile.address}
+                  onChange={(event) =>
+                    onInvoiceProfileChange({
+                      ...invoiceProfile,
+                      address: event.target.value,
+                    })
+                  }
+                  placeholder="Địa chỉ xuất hóa đơn"
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={onSaveInvoiceProfile}
+                  disabled={saving}
+                  className="rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground disabled:opacity-50"
+                >
+                  Lưu thông tin hóa đơn
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!!workspace.pendingInvites?.length && (
+            <div className="rounded-xl border border-border bg-white p-3">
+              <p className="text-xs font-black text-muted-foreground">
+                Lời mời đang chờ
+              </p>
+              <div className="mt-2 space-y-2">
+                {workspace.pendingInvites.map((invite) => (
+                  <div
+                    key={invite.id}
+                    className="rounded-lg bg-[#fbf8ef] p-2 text-xs"
+                  >
+                    <p className="font-black text-foreground">
+                      {invite.email}
+                    </p>
+                    <p className="mt-1 font-semibold text-muted-foreground">
+                      {roleLabel[invite.role]} · hết hạn{" "}
+                      {formatDate(invite.expiresAt)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {workspace.members.map((member) => (
+              <div
+                key={member.id}
+                className="rounded-xl border border-border bg-white p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black">{member.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {member.email}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-md bg-[#fbf8ef] px-2 py-1 text-[11px] font-black text-primary">
+                    {roleLabel[member.role]}
+                  </span>
+                </div>
+                {canManage && member.role !== "owner" && (
+                  <div className="mt-3 flex gap-2">
+                    <select
+                      value={member.role}
+                      onChange={(event) =>
+                        onUpdateMember(
+                          member.id,
+                          event.target.value as WorkspaceRole,
+                        )
+                      }
+                      disabled={saving}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-white px-2 py-1.5 text-xs font-bold outline-none focus:border-primary"
+                    >
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveMember(member.id)}
+                      disabled={saving}
+                      className="rounded-lg border border-destructive/25 bg-white px-2 py-1.5 text-xs font-black text-destructive disabled:opacity-50"
+                    >
+                      Gỡ
+                    </button>
+                    {workspace.role === "owner" && (
+                      <button
+                        type="button"
+                        onClick={() => onTransferOwner(member.id)}
+                        disabled={saving}
+                        className="rounded-lg border border-primary/25 bg-white px-2 py-1.5 text-xs font-black text-primary disabled:opacity-50"
+                      >
+                        Chuyển owner
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrivacyCenterPanel({
+  privacy,
+  loading,
+  saving,
+  error,
+  message,
+  onChange,
+  onSave,
+  onExport,
+  onDeleteMedia,
+  onDeleteTranscripts,
+  onRetry,
+}: {
+  privacy: PrivacySettings | null;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  message: string;
+  onChange: (value: PrivacySettings) => void;
+  onSave: () => void;
+  onExport: () => void;
+  onDeleteMedia: () => void;
+  onDeleteTranscripts: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-white p-5 shadow-soft">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-primary">
+            Privacy center
+          </p>
+          <h2 className="mt-1 text-lg font-black text-foreground">
+            Giữ, xóa, export dữ liệu
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-full border border-border bg-white p-2 text-muted-foreground transition hover:border-primary/50 hover:text-primary"
+          title="Tải lại privacy center"
+          aria-label="Tải lại privacy center"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-3 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs font-semibold text-destructive">
+          {error}
+        </p>
+      )}
+      {message && (
+        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+          {message}
+        </p>
+      )}
+
+      {!privacy ? (
+        <p className="mt-4 text-sm text-muted-foreground">
+          {loading ? "Đang tải privacy center..." : "Chưa có dữ liệu privacy."}
+        </p>
+      ) : (
+        <div className="mt-4 space-y-3">
+          <label className="block rounded-xl border border-border bg-white p-3">
+            <span className="text-xs font-black text-muted-foreground">
+              Media/audio
+            </span>
+            <select
+              value={privacy.mediaRetentionPolicy}
+              onChange={(event) =>
+                onChange({
+                  ...privacy,
+                  mediaRetentionPolicy: event.target
+                    .value as PrivacySettings["mediaRetentionPolicy"],
+                })
+              }
+              className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+            >
+              <option value="keep_until_deleted">Giữ đến khi tự xóa</option>
+              <option value="delete_after_days">Tự xóa sau số ngày</option>
+              <option value="delete_after_transcription">
+                Xóa sau khi transcribe xong
+              </option>
+            </select>
+            {privacy.mediaRetentionPolicy === "delete_after_days" && (
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={privacy.mediaRetentionDays}
+                onChange={(event) =>
+                  onChange({
+                    ...privacy,
+                    mediaRetentionDays: Number(event.target.value),
+                  })
+                }
+                className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+              />
+            )}
+          </label>
+
+          <label className="block rounded-xl border border-border bg-white p-3">
+            <span className="text-xs font-black text-muted-foreground">
+              Transcript
+            </span>
+            <select
+              value={privacy.transcriptRetentionPolicy}
+              onChange={(event) =>
+                onChange({
+                  ...privacy,
+                  transcriptRetentionPolicy: event.target
+                    .value as PrivacySettings["transcriptRetentionPolicy"],
+                })
+              }
+              className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+            >
+              <option value="keep_until_deleted">Giữ đến khi tự xóa</option>
+              <option value="delete_after_days">Tự xóa sau số ngày</option>
+            </select>
+            {privacy.transcriptRetentionPolicy === "delete_after_days" && (
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={privacy.transcriptRetentionDays}
+                onChange={(event) =>
+                  onChange({
+                    ...privacy,
+                    transcriptRetentionDays: Number(event.target.value),
+                  })
+                }
+                className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+              />
+            )}
+          </label>
+
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-white p-3">
+            <span className="text-xs font-black text-muted-foreground">
+              Product analytics
+            </span>
+            <input
+              type="checkbox"
+              checked={privacy.allowProductAnalytics}
+              onChange={(event) =>
+                onChange({
+                  ...privacy,
+                  allowProductAnalytics: event.target.checked,
+                })
+              }
+              className="h-4 w-4 accent-primary"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-primary-foreground disabled:opacity-50"
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+            Lưu chính sách dữ liệu
+          </button>
+          <button
+            type="button"
+            onClick={onExport}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-black text-foreground transition hover:border-primary/50"
+          >
+            <Database className="h-3.5 w-3.5" />
+            Export data .zip
+          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onDeleteMedia}
+              disabled={saving}
+              className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-900 disabled:opacity-50"
+            >
+              Xóa media
+            </button>
+            <button
+              type="button"
+              onClick={onDeleteTranscripts}
+              disabled={saving}
+              className="rounded-xl border border-destructive/25 bg-white px-3 py-2 text-xs font-black text-destructive disabled:opacity-50"
+            >
+              Xóa vĩnh viễn
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkspaceFileRow({ item }: { item: HistoryItem }) {
   const Icon = item.filename.startsWith("recording.") ? Mic : AudioLines;
   const isActive = item.status === "queued" || item.status === "processing";
   const isFailed = item.status === "failed";
   const isCancelled = item.status === "cancelled";
+  const isCompleted = item.status === "completed";
   const statusLabel =
     item.status === "queued"
       ? "Đang chờ"
@@ -1484,8 +2381,9 @@ function WorkspaceFileRow({ item }: { item: HistoryItem }) {
 
   return (
     <Link
-      to="/history"
-      className="block border-t border-border px-5 py-5 transition hover:bg-primary/5"
+      to={isCompleted ? "/transcript/$id" : "/history"}
+      params={isCompleted ? { id: String(item.id) } : undefined}
+      className="block border-t border-border px-5 py-5 transition hover:bg-white"
     >
       <div className="grid gap-y-4 text-sm sm:grid-cols-[130px_minmax(0,1fr)]">
         <p className="font-black text-muted-foreground">Tên tệp</p>
@@ -1501,7 +2399,7 @@ function WorkspaceFileRow({ item }: { item: HistoryItem }) {
               isFailed || isCancelled
                 ? "bg-destructive/15 text-destructive"
                 : isActive
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-white text-primary"
                   : "bg-emerald-500 text-white"
             }`}
           >

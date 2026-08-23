@@ -39,6 +39,7 @@ const { startQuotaAlertDispatcher } = require("./services/quotaAlertService");
 const {
   startBillingReconciliationDispatcher,
 } = require("./services/billingService");
+const { requestMetrics } = require("./services/observabilityService");
 
 const app = express();
 app.disable("x-powered-by");
@@ -50,6 +51,7 @@ app.set(
 
 app.use(requestId);
 app.use(securityHeaders);
+app.use(requestMetrics());
 
 app.use(
   cors({

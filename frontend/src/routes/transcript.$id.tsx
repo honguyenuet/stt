@@ -11,6 +11,7 @@ import {
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRight,
   Captions,
   Check,
   Clock3,
@@ -385,7 +386,10 @@ export const Route = createFileRoute("/transcript/$id")({
   component: TranscriptEditorPage,
 });
 
-function normalizeWords(value: unknown): TranscriptWord[] {
+function normalizeWords(
+  value: unknown,
+  durationSeconds?: number | null,
+): TranscriptWord[] {
   if (!Array.isArray(value)) return [];
   const words: TranscriptWord[] = [];
   value.forEach((item) => {
@@ -406,7 +410,7 @@ function normalizeWords(value: unknown): TranscriptWord[] {
           : Number(word.confidence),
     });
   });
-  return words;
+  return normalizeTimedWordBounds(words, durationSeconds);
 }
 
 function buildSegments(words: TranscriptWord[]): TranscriptSegment[] {
@@ -524,6 +528,117 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function plainTextTokens(text: string) {
+  const matches = String(text || "").match(/\S+/g);
+  return matches || [];
+}
+
+function compareToken(value: string) {
+  return String(value || "")
+    .toLocaleLowerCase()
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
+function interpolateWordTiming(
+  index: number,
+  total: number,
+  baseWords: TranscriptWord[],
+  matchedBaseIndex: number | null,
+) {
+  if (matchedBaseIndex !== null && baseWords[matchedBaseIndex]) {
+    const base = baseWords[matchedBaseIndex];
+    return { start: base.start, end: base.end };
+  }
+
+  const firstStart = baseWords[0]?.start ?? 0;
+  const lastEnd = baseWords[baseWords.length - 1]?.end ?? firstStart + total * 450;
+  const span = Math.max(total * 120, lastEnd - firstStart);
+  const slot = span / Math.max(1, total);
+  const start = Math.round(firstStart + slot * index);
+  return { start, end: Math.round(start + Math.max(120, slot * 0.82)) };
+}
+
+function alignTokensToBaseWords(tokens: string[], baseWords: TranscriptWord[]) {
+  if (tokens.length === baseWords.length) {
+    return tokens.map((_, index) => index);
+  }
+  if (tokens.length > 800 || baseWords.length > 800) {
+    return tokens.map((_, index) =>
+      Math.min(
+        baseWords.length - 1,
+        Math.max(0, Math.round((index / Math.max(1, tokens.length - 1)) * (baseWords.length - 1))),
+      ),
+    );
+  }
+
+  const tokenKeys = tokens.map(compareToken);
+  const baseKeys = baseWords.map((word) => compareToken(word.text));
+  const dp = Array.from({ length: tokens.length + 1 }, () =>
+    Array(baseWords.length + 1).fill(0),
+  );
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    for (let j = baseWords.length - 1; j >= 0; j -= 1) {
+      dp[i][j] =
+        tokenKeys[i] && tokenKeys[i] === baseKeys[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const aligned = Array<number | null>(tokens.length).fill(null);
+  let i = 0;
+  let j = 0;
+  while (i < tokens.length && j < baseWords.length) {
+    if (tokenKeys[i] && tokenKeys[i] === baseKeys[j]) {
+      aligned[i] = j;
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+  return aligned;
+}
+
+function deriveTimedWordsFromPlainText(
+  text: string,
+  baseWords: TranscriptWord[],
+  durationSeconds?: number | null,
+) {
+  const tokens = plainTextTokens(text);
+  if (!tokens.length) return [];
+  if (!baseWords.length) {
+    return normalizeTimedWordBounds(
+      tokens.map((token, index) => ({
+        text: token,
+        start: index * 450,
+        end: index * 450 + 360,
+        speaker: null,
+        confidence: null,
+      })),
+      durationSeconds,
+    );
+  }
+
+  const aligned = alignTokensToBaseWords(tokens, baseWords);
+  const nextWords = tokens.map((token, index) => {
+    const baseIndex = aligned[index];
+    const timing = interpolateWordTiming(index, tokens.length, baseWords, baseIndex);
+    const base =
+      baseIndex !== null && baseWords[baseIndex] ? baseWords[baseIndex] : null;
+    return {
+      text: token,
+      start: timing.start,
+      end: Math.max(timing.start, timing.end),
+      speaker: base?.speaker ?? null,
+      confidence: base?.confidence ?? null,
+    };
+  });
+  return normalizeTimedWordBounds(nextWords, durationSeconds);
+}
+
 function splitTranslationIntoSegments(
   translatedText: string | null | undefined,
   count: number,
@@ -634,7 +749,6 @@ function TranscriptEditorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
-  const plainTextMirrorRef = useRef<HTMLDivElement>(null);
   const playWhenReadyRef = useRef(false);
   const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
@@ -752,6 +866,10 @@ function TranscriptEditorPage() {
         )
         .slice(0, 30),
     [transcript?.reviewed_word_indexes, words],
+  );
+  const lowConfidenceReviewIndex = useMemo(
+    () => lowConfidenceWords.findIndex((word) => word.index === activeWordIndex),
+    [activeWordIndex, lowConfidenceWords],
   );
   const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -1247,6 +1365,18 @@ function TranscriptEditorPage() {
     [pushUndoSnapshot],
   );
 
+  const applyPlainTextChange = useCallback(
+    (text: string) => {
+      const nextWords = deriveTimedWordsFromPlainText(
+        text,
+        wordsRef.current,
+        transcript?.duration,
+      );
+      applyEditorChange(text, nextWords, true);
+    },
+    [applyEditorChange, transcript?.duration],
+  );
+
   const commitTimedWord = useCallback(
     (wordIndex: number, nextText: string) => {
       const currentWords = wordsRef.current;
@@ -1580,6 +1710,68 @@ function TranscriptEditorPage() {
     },
     [audioAccessExpiresAt, audioUrl, loadAudio, resumeTranscriptFollow],
   );
+
+  const jumpToLowConfidenceWord = useCallback(
+    (word: IndexedWord | undefined) => {
+      if (!word) return;
+      setEditorMode("sync");
+      setActiveWordIndex(word.index);
+      seekTo(word.start);
+    },
+    [seekTo],
+  );
+
+  const selectLowConfidenceByOffset = useCallback(
+    (offset: number) => {
+      if (!lowConfidenceWords.length) return;
+      const currentIndex =
+        lowConfidenceReviewIndex >= 0
+          ? lowConfidenceReviewIndex
+          : lowConfidenceWords.findIndex((word) => word.index > activeWordIndex);
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex =
+        (baseIndex + offset + lowConfidenceWords.length) %
+        lowConfidenceWords.length;
+      jumpToLowConfidenceWord(lowConfidenceWords[nextIndex]);
+    },
+    [
+      activeWordIndex,
+      jumpToLowConfidenceWord,
+      lowConfidenceReviewIndex,
+      lowConfidenceWords,
+    ],
+  );
+
+  useEffect(() => {
+    function handleReviewShortcut(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === "input" || tagName === "textarea" || target?.isContentEditable) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(1);
+      } else if (key === "p") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(-1);
+      } else if (key === "m" && lowConfidenceReviewIndex >= 0) {
+        event.preventDefault();
+        markLowConfidenceReviewed(activeWordIndex, true);
+      }
+    }
+    window.addEventListener("keydown", handleReviewShortcut);
+    return () => window.removeEventListener("keydown", handleReviewShortcut);
+  }, [
+    activeWordIndex,
+    lowConfidenceReviewIndex,
+    markLowConfidenceReviewed,
+    selectLowConfidenceByOffset,
+  ]);
 
   function undoEdit() {
     setUndoStack((current) => {
@@ -3172,15 +3364,17 @@ function TranscriptEditorPage() {
                   lowConfidenceWords.map((word) => (
                     <div
                       key={`${word.index}-${word.start}`}
-                      className="rounded-md border border-red-100 bg-red-50 p-2"
+                      className={`rounded-md border p-2 transition ${
+                        activeWordIndex === word.index
+                          ? "border-[#ffcb05] bg-[#fff7cf] shadow-[0_0_0_3px_rgba(255,203,5,.18)]"
+                          : "border-red-100 bg-red-50"
+                      }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <button
                           type="button"
                           onClick={() => {
-                            setEditorMode("sync");
-                            setActiveWordIndex(word.index);
-                            seekTo(word.start);
+                            jumpToLowConfidenceWord(word);
                           }}
                           className="truncate text-left text-xs font-black text-red-800 underline"
                         >

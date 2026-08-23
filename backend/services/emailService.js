@@ -119,6 +119,44 @@ async function sendLoginAlertEmail({ to, firstName, session, loginTime }) {
   return true;
 }
 
+async function sendWorkspaceInviteEmail({
+  to,
+  inviterName,
+  workspaceName,
+  inviteUrl,
+  role,
+  expiresAt,
+}) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+
+  const safeInviter = escapeHtml(inviterName || "Một quản trị viên");
+  const safeWorkspace = escapeHtml(workspaceName || "workspace Vbee");
+  const safeUrl = escapeHtml(inviteUrl);
+  const safeRole = escapeHtml(role || "member");
+  const safeExpires = escapeHtml(
+    expiresAt ? new Date(expiresAt).toLocaleString("vi-VN") : "",
+  );
+
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `Lời mời tham gia workspace ${workspaceName || "Vbee"}`,
+    text: `${inviterName || "Một quản trị viên"} mời bạn tham gia workspace ${workspaceName || "Vbee"} với vai trò ${role || "member"}.\n\nMở liên kết: ${inviteUrl}\nLiên kết hết hạn: ${safeExpires}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#21104a;line-height:1.6">
+        <h2>Lời mời tham gia workspace</h2>
+        <p><strong>${safeInviter}</strong> mời bạn tham gia <strong>${safeWorkspace}</strong> với vai trò <strong>${safeRole}</strong>.</p>
+        <p style="margin:28px 0">
+          <a href="${safeUrl}" style="background:#ffcb05;color:#21104a;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:700">Chấp nhận lời mời</a>
+        </p>
+        <p style="color:#756894;font-size:13px">Liên kết hết hạn: ${safeExpires}</p>
+      </div>
+    `,
+  });
+  return true;
+}
+
 function formatDuration(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const hours = Math.floor(total / 3600);
@@ -192,11 +230,38 @@ async function sendJobFailureAdminAlertEmail({ recipients, job, user }) {
   return true;
 }
 
+async function sendOperationalAlertEmail({ recipients, alert }) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+  const safeCode = escapeHtml(alert.code || "operational_alert");
+  const safeLevel = escapeHtml(alert.level || "warning");
+  const safeMessage = escapeHtml(alert.message || "Hệ thống cần kiểm tra");
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: recipients,
+    subject: `[Vbee CMS] ${safeLevel.toUpperCase()}: ${alert.code}`,
+    text: `${alert.level || "warning"} - ${alert.code}\n${alert.message || ""}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#21104a;line-height:1.6">
+        <div style="border-top:6px solid #ef4444;border-radius:12px;border:1px solid #e5deef;padding:24px">
+          <p style="margin:0;color:#b91c1c;font-size:12px;font-weight:700;text-transform:uppercase">Vbee Observability</p>
+          <h2>${safeLevel}: ${safeCode}</h2>
+          <p>${safeMessage}</p>
+          <p style="color:#756894;font-size:13px">Mở Admin Dashboard để xem queue, provider, request id và webhook delivery gần đây.</p>
+        </div>
+      </div>
+    `,
+  });
+  return true;
+}
+
 module.exports = {
   hasSmtpConfig,
   sendLoginAlertEmail,
   sendEmailVerificationEmail,
   sendPasswordResetEmail,
   sendJobFailureAdminAlertEmail,
+  sendOperationalAlertEmail,
+  sendWorkspaceInviteEmail,
   sendQuotaAdminAlertEmail,
 };

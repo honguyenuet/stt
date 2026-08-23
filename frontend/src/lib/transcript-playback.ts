@@ -146,16 +146,52 @@ export function findActiveWordIndex(words: TimedWord[], milliseconds: number) {
 
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    if (words[middle].start <= milliseconds) {
+    if (words[middle].end >= lowerBound) {
       candidate = middle;
-      low = middle + 1;
-    } else {
       high = middle - 1;
+    } else {
+      low = middle + 1;
     }
   }
 
   if (candidate < 0) return -1;
-  return milliseconds <= words[candidate].end + 120 ? candidate : -1;
+  const word = words[candidate];
+  return word.start <= upperBound && word.end >= lowerBound ? candidate : -1;
+}
+
+export function normalizeTimedWordBounds<TWord extends TimedWord>(
+  words: TWord[],
+  durationSeconds?: number | null,
+) {
+  const duration = Number(durationSeconds);
+  const maxEnd = words.reduce((max, word) => {
+    const start = Number(word.start);
+    const end = Number(word.end);
+    return Math.max(
+      max,
+      Number.isFinite(start) ? start : 0,
+      Number.isFinite(end) ? end : 0,
+    );
+  }, 0);
+  const scale =
+    Number.isFinite(duration) &&
+    duration > 0 &&
+    maxEnd > 0 &&
+    maxEnd <= duration + 1
+      ? 1000
+      : 1;
+
+  return words.map((word) => {
+    const rawStart = Number(word.start) * scale;
+    const start = Number.isFinite(rawStart) ? Math.max(0, rawStart) : 0;
+    const rawEnd = Number(word.end) * scale;
+    const end = Number.isFinite(rawEnd) ? Math.max(start, rawEnd) : start;
+    return {
+      ...word,
+      start: Math.round(start),
+      end: Math.round(end),
+    };
+  });
 }
 
 export function clampSeekTime(

@@ -42,6 +42,10 @@ const {
 } = require("../services/adminAccess");
 const { requireAuth } = require("../middleware/auth");
 const { loginLimiter } = require("../middleware/security");
+const {
+  cleanupObservabilityLogs,
+  getOperationalMetrics,
+} = require("../services/observabilityService");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-in-production";
@@ -476,6 +480,7 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
       usageResult,
       processingResult,
       recentResult,
+      observability,
     ] = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS count FROM users"),
       pool.query("SELECT COUNT(*)::int AS count FROM transcriptions"),
@@ -510,6 +515,7 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
           ORDER BY t.created_at DESC
           LIMIT 10
         `),
+      getOperationalMetrics(),
     ]);
 
     const jobsByStatus = {
@@ -553,10 +559,26 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
       recent_failed_jobs: jobs
         .filter((job) => job.status === "failed")
         .slice(0, 5),
+      observability,
     });
   } catch (error) {
     console.error("Admin dashboard error:", error);
     return res.status(500).json({ error: "Không tải được dashboard" });
+  }
+});
+
+router.post("/observability/cleanup", requireAdmin, async (req, res) => {
+  try {
+    if (getEffectiveAdminRole(req.admin) !== "admin") {
+      return res.status(403).json({ error: "Chỉ admin được dọn log vận hành" });
+    }
+    const result = await cleanupObservabilityLogs({
+      retentionDays: req.body?.retentionDays,
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error("Observability cleanup error:", error.message);
+    return res.status(500).json({ error: "Không dọn được log vận hành" });
   }
 });
 

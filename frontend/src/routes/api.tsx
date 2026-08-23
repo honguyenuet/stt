@@ -68,6 +68,21 @@ type ApiUsageSummary = {
   daily: ApiUsageDaily[];
 };
 
+type WebhookDelivery = {
+  id: number;
+  jobId: number | null;
+  transcriptionId: number | null;
+  event: string;
+  callbackUrl: string;
+  status: "pending" | "delivered" | "failed";
+  responseStatus: number | null;
+  attempts: number;
+  errorMessage: string | null;
+  deliveredAt: string | null;
+  lastAttemptAt: string | null;
+  createdAt: string;
+};
+
 type ApiResult = {
   object?: "transcription" | "transcription_job";
   id?: number;
@@ -134,6 +149,8 @@ function ApiPage() {
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [usage, setUsage] = useState<ApiUsageSummary | null>(null);
+  const [webhookDeliveries, setWebhookDeliveries] = useState<WebhookDelivery[]>([]);
+  const [webhookLoading, setWebhookLoading] = useState(false);
 
   const [testKey, setTestKey] = useState("");
   const [testFile, setTestFile] = useState<File | null>(null);
@@ -171,6 +188,7 @@ function ApiPage() {
       }
       setKeys(data);
       void loadUsage();
+      void loadWebhookDeliveries();
     } catch {
       setMessage("Không kết nối được backend API");
     } finally {
@@ -188,6 +206,49 @@ function ApiPage() {
       if (res.ok && "totals" in data) setUsage(data);
     } catch {
       setUsage(null);
+    }
+  }
+
+  async function loadWebhookDeliveries() {
+    const key = testKey.trim() || createdKey;
+    if (!key) return;
+    setWebhookLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/webhooks/deliveries?limit=20`, {
+        headers: { "x-api-key": key },
+      });
+      const data = (await res.json()) as
+        | { data?: WebhookDelivery[] }
+        | { error?: string };
+      if (res.ok && Array.isArray((data as { data?: WebhookDelivery[] }).data)) {
+        setWebhookDeliveries((data as { data: WebhookDelivery[] }).data);
+      }
+    } catch {
+      setWebhookDeliveries([]);
+    } finally {
+      setWebhookLoading(false);
+    }
+  }
+
+  async function replayWebhookDelivery(deliveryId: number) {
+    const key = testKey.trim() || createdKey;
+    if (!key) {
+      setMessage("Nhập API key ở khu vực test để replay webhook");
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/webhooks/deliveries/${deliveryId}/replay`,
+        {
+          method: "POST",
+          headers: { "x-api-key": key },
+        },
+      );
+      const data = (await res.json()) as { error?: string };
+      setMessage(res.ok ? "Đã replay webhook" : data.error || "Không replay được webhook");
+      await loadWebhookDeliveries();
+    } catch {
+      setMessage("Không kết nối được backend API");
     }
   }
 
@@ -289,6 +350,7 @@ function ApiPage() {
       });
       const data = (await res.json()) as ApiResult;
       setApiResult(data);
+      void loadWebhookDeliveries();
       const jobId = data.jobId ?? data.id;
       if (
         res.ok &&
@@ -340,7 +402,7 @@ function ApiPage() {
 
   const webhookSample = useMemo(
     () =>
-      `import crypto from "node:crypto";\nimport express from "express";\n\nconst app = express();\nconst secret = process.env.VBEE_WEBHOOK_SECRET;\n\napp.post(\n  "/webhooks/vbee",\n  express.raw({ type: "application/json" }),\n  (req, res) => {\n    const expected = "sha256=" + crypto\n      .createHmac("sha256", secret)\n      .update(req.body)\n      .digest("hex");\n    const received = req.header("x-vbee-signature") || "";\n    const expectedBuffer = Buffer.from(expected);\n    const receivedBuffer = Buffer.from(received);\n\n    if (\n      expectedBuffer.length !== receivedBuffer.length ||\n      !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)\n    ) {\n      return res.status(401).send("Invalid signature");\n    }\n\n    const event = req.header("x-vbee-event");\n    const payload = JSON.parse(req.body.toString("utf8"));\n    if (event === "transcription.completed") {\n      console.log(payload.jobId, payload.text, payload.translation?.text);\n    }\n    res.sendStatus(204);\n  },\n);`,
+      `import crypto from "node:crypto";\nimport express from "express";\n\nconst app = express();\nconst secret = process.env.VBEE_WEBHOOK_SECRET;\n\napp.post(\n  "/webhooks/vbee",\n  express.raw({ type: "application/json" }),\n  (req, res) => {\n    const expected = "sha256=" + crypto\n      .createHmac("sha256", secret)\n      .update(req.body)\n      .digest("hex");\n    const received = req.header("x-vbee-signature") || "";\n    const expectedBuffer = Buffer.from(expected);\n    const receivedBuffer = Buffer.from(received);\n\n    if (\n      expectedBuffer.length !== receivedBuffer.length ||\n      !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)\n    ) {\n      return res.status(401).send("Invalid signature");\n    }\n\n    const event = req.header("x-vbee-event");\n    const payload = JSON.parse(req.body.toString("utf8"));\n    if (event === "transcription.completed") {\n      console.log(payload.data.jobId, payload.data.text, payload.data.words);\n    }\n    if (event === "transcription.failed") {\n      console.error(payload.data.jobId, payload.data.error);\n    }\n    res.sendStatus(204);\n  },\n);`,
     [],
   );
 
@@ -352,7 +414,7 @@ function ApiPage() {
 
   if (isLoading || (!user && !token)) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <div className="flex min-h-screen items-center justify-center bg-white text-foreground">
         <Loader2 className="mr-3 h-6 w-6 animate-spin" /> Đang kiểm tra đăng
         nhập...
       </div>
@@ -386,30 +448,30 @@ function ApiPage() {
           <input
             value={keyName}
             onChange={(e) => setKeyName(e.target.value)}
-            className="mt-2 w-full rounded-lg border border-border bg-[#fbf8ef] px-4 py-2.5 font-semibold outline-none focus:border-primary"
+            className="mt-2 w-full rounded-lg border border-border bg-white px-4 py-2.5 font-semibold outline-none focus:border-primary"
             placeholder="VD: Website chính, ứng dụng di động, CRM..."
           />
           <button
             onClick={createKey}
             disabled={creating}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground shadow-glow disabled:opacity-60"
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground disabled:opacity-60"
           >
             {creating ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <Sparkles className="h-5 w-5" />
+              <PlugZap className="h-5 w-5" />
             )}
             Tạo API key mới
           </button>
 
           {message && (
-            <p className="mt-4 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm font-bold text-primary">
+            <p className="mt-4 rounded-lg border border-primary/25 bg-white p-3 text-sm font-bold text-primary">
               {message}
             </p>
           )}
 
           {createdKey && (
-            <div className="mt-5 rounded-lg border border-primary/25 bg-primary/5 p-4">
+            <div className="mt-5 rounded-lg border border-primary/25 bg-white p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="font-black text-foreground">
                   API key vừa tạo
@@ -426,7 +488,7 @@ function ApiPage() {
                   {copied ? "Đã copy" : "Copy"}
                 </button>
               </div>
-              <code className="block break-all rounded-xl border border-border bg-card p-3 text-sm font-bold text-foreground">
+              <code className="block break-all rounded-xl border border-border bg-white p-3 text-sm font-bold text-foreground">
                 {createdKey}
               </code>
             </div>
@@ -443,7 +505,7 @@ function ApiPage() {
             </div>
             <button
               onClick={() => void loadKeys()}
-              className="rounded-full border border-border p-2 hover:bg-primary/10"
+              className="rounded-full border border-border bg-white p-2 hover:border-primary/50"
               title="Tải lại"
             >
               <RefreshCw
@@ -454,7 +516,7 @@ function ApiPage() {
 
           <div className="space-y-3">
             {keys.length === 0 && (
-              <div className="rounded-lg border border-border bg-[#fbf8ef] p-4 text-sm font-bold text-muted-foreground">
+              <div className="rounded-lg border border-border bg-white p-4 text-sm font-bold text-muted-foreground">
                 Chưa có API key. Tạo một key mới để gọi endpoint
                 /api/v1/transcribe.
               </div>
@@ -462,7 +524,7 @@ function ApiPage() {
             {keys.map((item) => (
               <div
                 key={item.id}
-                className="flex flex-col gap-3 rounded-lg border border-border bg-[#fbf8ef] p-4 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div>
                   <div className="font-black">{item.name}</div>
@@ -490,14 +552,14 @@ function ApiPage() {
         <div className="rounded-lg border border-border bg-white p-4">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-black text-primary">
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
                 <BarChart3 className="h-4 w-4" /> Usage analytics
               </div>
               <h2 className="text-xl font-black">Thống kê API key 30 ngày</h2>
             </div>
             <button
               onClick={() => void loadUsage()}
-              className="rounded-full border border-border p-2 hover:bg-primary/10"
+              className="rounded-full border border-border bg-white p-2 hover:border-primary/50"
               title="Tải lại thống kê"
             >
               <RefreshCw className="h-5 w-5" />
@@ -516,7 +578,7 @@ function ApiPage() {
             ].map(([label, value]) => (
               <div
                 key={String(label)}
-                className="rounded-lg border border-border bg-[#fbf8ef] p-4"
+                className="rounded-lg border border-border bg-white p-4"
               >
                 <div className="text-sm font-bold text-muted-foreground">
                   {String(label)}
@@ -530,7 +592,7 @@ function ApiPage() {
 
           <div className="mt-5 overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="bg-[#fbf8ef] text-xs uppercase text-muted-foreground">
+              <thead className="bg-white text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3">API key</th>
                   <th className="px-4 py-3">Request</th>
@@ -621,7 +683,7 @@ function ApiPage() {
       <section className="mx-auto max-w-6xl px-3 pb-6 sm:px-5">
         <div className="grid gap-4 rounded-lg border border-border bg-white p-4 text-foreground md:grid-cols-[.9fr_1.1fr]">
           <div>
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-black text-primary">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
               <UploadCloud className="h-4 w-4" /> Kiểm thử API thật
             </div>
             <h2 className="text-xl font-black">
@@ -634,7 +696,7 @@ function ApiPage() {
             </p>
           </div>
 
-          <div className="min-w-0 rounded-lg border border-border bg-[#fbf8ef] p-4 text-foreground">
+          <div className="min-w-0 rounded-lg border border-border bg-white p-4 text-foreground">
             <label className="text-sm font-black">API key</label>
             <input
               value={testKey}
@@ -718,7 +780,7 @@ function ApiPage() {
             <button
               onClick={testApi}
               disabled={testing}
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground shadow-glow disabled:opacity-60"
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground disabled:opacity-60"
             >
               {testing ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -735,7 +797,7 @@ function ApiPage() {
                   apiResult.status === "failed" ||
                   apiResult.status === "cancelled"
                     ? "bg-destructive/10 text-destructive"
-                    : "bg-primary/5 text-primary"
+                    : "bg-white text-primary"
                 }`}
               >
                 <div className="mb-2 flex items-center gap-2 font-black">
@@ -762,7 +824,7 @@ function ApiPage() {
                     <p className="mb-3 text-sm font-bold">
                       Job #{apiResult.jobId ?? apiResult.id} đang ở trạng thái{" "}
                       {apiResult.status ?? "queued"}. Gọi{" "}
-                      <code className="rounded bg-card px-1 py-0.5">
+                      <code className="rounded bg-white px-1 py-0.5">
                         GET /api/v1/transcribe/jobs/
                         {apiResult.jobId ?? apiResult.id}
                       </code>{" "}
@@ -774,7 +836,7 @@ function ApiPage() {
                     {apiResult.message}
                   </p>
                 )}
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-card p-3 text-xs leading-5">
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-xs leading-5">
                   {JSON.stringify(apiResult, null, 2)}
                 </pre>
               </div>
@@ -803,12 +865,12 @@ function DocCard({
         </div>
         <button
           onClick={() => void onCopy(code)}
-          className="inline-flex items-center gap-2 rounded-full border border-border bg-background/45 px-3 py-2 text-xs font-black hover:bg-primary/10"
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-3 py-2 text-xs font-black hover:border-primary/50"
         >
           <Clipboard className="h-4 w-4" /> Sao chép
         </button>
       </div>
-      <pre className="max-w-full overflow-x-auto rounded-lg bg-[#fbf8ef] p-4 text-xs leading-6 text-primary">
+      <pre className="max-w-full overflow-x-auto rounded-lg bg-white p-4 text-xs leading-6 text-primary">
         <code>{code}</code>
       </pre>
     </div>

@@ -120,6 +120,25 @@ describe("transcript playback helpers", () => {
     expect(clampSeekTime(45, 10, 90)).toBe(55);
   });
 
+  it("normalizes second-based word timestamps to milliseconds", () => {
+    expect(
+      normalizeTimedWordBounds(
+        [
+          { start: 0.5, end: 0.9 },
+          { start: 1, end: 1.45 },
+        ],
+        2,
+      ),
+    ).toEqual([
+      { start: 500, end: 900 },
+      { start: 1_000, end: 1_450 },
+    ]);
+  });
+
+  it("keeps millisecond-based word timestamps unchanged", () => {
+    expect(normalizeTimedWordBounds(words, 3)).toEqual(words);
+  });
+
   it("formats playback time for short and long audio", () => {
     expect(formatPlaybackTime(65)).toBe("1:05");
     expect(formatPlaybackTime(3_661)).toBe("1:01:01");

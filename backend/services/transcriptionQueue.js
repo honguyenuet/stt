@@ -13,7 +13,9 @@ const { createProviderFileUrl } = require("./providerFileAccess");
 const { normalizeFilename } = require("./filenameEncoding");
 const { isInsideStaging } = require("./uploadStorage");
 const { resolveUserFolder } = require("./workspaceFolderService");
-const { deliverCustomerWebhook } = require("./customerWebhookService");
+const {
+  deliverAndRecordCustomerWebhook,
+} = require("./customerWebhookService");
 const { finalizeMultitrackBatch } = require("./multitrackService");
 const { getAdminSettings } = require("./adminSettingsService");
 const {
@@ -238,6 +240,28 @@ async function cleanupManagedStorage({ db = pool } = {}) {
     );
     deletedTranscripts = result.rowCount || result.rows.length;
   }
+  const privacyDeleted = await db.query(
+    `DELETE FROM transcriptions transcript
+     USING user_settings settings
+     WHERE settings.user_id = transcript.user_id
+       AND transcript.status IN ('completed', 'failed', 'cancelled')
+       AND settings.privacy_settings->>'transcriptRetentionPolicy' = 'delete_after_days'
+       AND transcript.created_at < NOW() - (
+         GREATEST(
+           1,
+           LEAST(
+             3650,
+             CASE
+               WHEN settings.privacy_settings->>'transcriptRetentionDays' ~ '^[0-9]+$'
+                 THEN (settings.privacy_settings->>'transcriptRetentionDays')::integer
+               ELSE 365
+             END
+           )
+         ) * INTERVAL '1 day'
+       )
+     RETURNING transcript.id`,
+  );
+  deletedTranscripts += privacyDeleted.rowCount || privacyDeleted.rows.length;
 
   return {
     deletedMedia,
@@ -1050,11 +1074,20 @@ async function notifyCustomerWebhook(job, status, { result = null, error = null 
     duration: result?.duration || null,
     provider: result?.provider || null,
     text: result?.text || null,
+    words: Array.isArray(result?.words) ? result.words : [],
     translation: result?.translation || null,
     error: error ? String(error.message || error).slice(0, 2000) : null,
   };
   try {
-    await deliverCustomerWebhook({ webhook, event, payload });
+    await deliverAndRecordCustomerWebhook({
+      userId: job.user_id,
+      apiKeyId: job.payload?.apiKeyId || null,
+      jobId: job.id,
+      transcriptionId: job.transcription_id,
+      webhook,
+      event,
+      payload,
+    });
   } catch (webhookError) {
     console.error(
       `Customer webhook for transcription job ${job.id} failed:`,

@@ -16,6 +16,10 @@ const {
   verifyWebhook,
 } = require("./payosService");
 const { syncQuotaAlertState } = require("./quotaAlertService");
+const {
+  requireWorkspaceBillingRole,
+  resolveUserWorkspace,
+} = require("./workspaceBillingService");
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:3000").replace(
   /\/$/,
@@ -138,6 +142,7 @@ function serializeOrder(row) {
   return {
     id: row.id,
     userId: row.user_id,
+    workspaceId: row.workspace_id ? Number(row.workspace_id) : null,
     plan: planName,
     productType,
     productCode: row.product_code || planName,
@@ -269,6 +274,7 @@ function listTopUps() {
 
 async function createPendingOrder({
   userId,
+  workspaceId,
   plan,
   productType,
   productCode,
@@ -288,14 +294,15 @@ async function createPendingOrder({
     try {
       const { rows } = await pool.query(
         `INSERT INTO billing_orders (
-           id, user_id, plan, product_type, product_code, billing_cycle, amount, currency, status,
+           id, user_id, workspace_id, plan, product_type, product_code, billing_cycle, amount, currency, status,
            provider, provider_order_id, payment_code, raw_request, expires_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'VND', 'pending', $8, $9, $10, $11::jsonb, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VND', 'pending', $9, $10, $11, $12::jsonb, $13)
          RETURNING *`,
         [
           id,
           userId,
+          workspaceId || null,
           plan,
           productType,
           productCode,
@@ -334,6 +341,7 @@ async function createCheckoutOrder({
   productCode = null,
   frontendUrl = FRONTEND_URL,
 }) {
+  const workspace = await requireWorkspaceBillingRole(userId);
   const checkoutFrontendUrl = String(frontendUrl || FRONTEND_URL).replace(/\/$/, "");
   const normalizedProductType = productType === "top_up" ? "top_up" : "subscription";
   let planName = normalizePlan(plan);
@@ -345,9 +353,7 @@ async function createCheckoutOrder({
       ? await getRuntimePlanConfig(planName)
       : null;
   if (normalizedProductType === "top_up") {
-    const currentPlan = await pool.query("SELECT plan FROM users WHERE id = $1", [userId]);
-    if (!currentPlan.rows[0]) throw createHttpError(404, "Không tìm thấy người dùng");
-    planName = normalizePlan(currentPlan.rows[0].plan);
+    planName = normalizePlan(workspace.plan);
   }
   const amount =
     topUp?.price ?? (await getPlanPrice(planName, cycle));
@@ -371,6 +377,7 @@ async function createCheckoutOrder({
   const provider = getProvider();
   const order = await createPendingOrder({
     userId,
+    workspaceId: workspace.id,
     plan: planName,
     productType: normalizedProductType,
     productCode: topUp?.code || planName,
@@ -631,9 +638,12 @@ function startBillingReconciliationDispatcher() {
 }
 
 async function getOrderForUser(userId, orderId) {
+  const workspace = await resolveUserWorkspace(userId);
   const { rows } = await pool.query(
-    `SELECT * FROM billing_orders WHERE id = $1 AND user_id = $2`,
-    [orderId, userId],
+    `SELECT * FROM billing_orders
+     WHERE id = $1
+       AND (user_id = $2 OR workspace_id = $3)`,
+    [orderId, userId, workspace.id],
   );
   if (!rows[0]) throw createHttpError(404, "Không tìm thấy đơn hàng");
 
@@ -646,33 +656,35 @@ async function getOrderForUser(userId, orderId) {
 }
 
 async function listUserOrders(userId) {
+  const workspace = await resolveUserWorkspace(userId);
   const { rows } = await pool.query(
     `SELECT * FROM billing_orders
-     WHERE user_id = $1
+     WHERE user_id = $1 OR workspace_id = $2
      ORDER BY created_at DESC
      LIMIT 20`,
-    [userId],
+    [userId, workspace.id],
   );
   return rows.map(serializeOrder);
 }
 
 async function cancelPendingOrder({ userId, orderId }) {
+  const workspace = await requireWorkspaceBillingRole(userId);
   const { rows } = await pool.query(
     `UPDATE billing_orders
      SET status = 'cancelled',
          updated_at = NOW()
      WHERE id = $1
-       AND user_id = $2
+       AND workspace_id = $2
        AND status = 'pending'
      RETURNING *`,
-    [orderId, userId],
+    [orderId, workspace.id],
   );
 
   if (rows[0]) return serializeOrder(rows[0]);
 
   const existing = await pool.query(
-    `SELECT * FROM billing_orders WHERE id = $1 AND user_id = $2`,
-    [orderId, userId],
+    `SELECT * FROM billing_orders WHERE id = $1 AND workspace_id = $2`,
+    [orderId, workspace.id],
   );
   if (!existing.rows[0]) throw createHttpError(404, "Không tìm thấy đơn hàng");
   throw createHttpError(
@@ -682,15 +694,17 @@ async function cancelPendingOrder({ userId, orderId }) {
 }
 
 async function cancelActivePlan(userId) {
+  const workspace = await requireWorkspaceBillingRole(userId);
   const { rows } = await pool.query(
-    `UPDATE users
+    `UPDATE workspaces
      SET plan_cancel_at_period_end = TRUE,
-         plan_cancellation_requested_at = NOW()
+         plan_cancellation_requested_at = NOW(),
+         updated_at = NOW()
      WHERE id = $1
        AND plan <> 'free'
        AND (plan_expires_at IS NULL OR plan_expires_at > NOW())
      RETURNING id`,
-    [userId],
+    [workspace.id],
   );
   if (!rows[0]) {
     throw createHttpError(400, "Tài khoản không có gói trả phí đang hoạt động");
@@ -699,16 +713,18 @@ async function cancelActivePlan(userId) {
 }
 
 async function resumeActivePlan(userId) {
+  const workspace = await requireWorkspaceBillingRole(userId);
   const { rows } = await pool.query(
-    `UPDATE users
+    `UPDATE workspaces
      SET plan_cancel_at_period_end = FALSE,
-         plan_cancellation_requested_at = NULL
+         plan_cancellation_requested_at = NULL,
+         updated_at = NOW()
      WHERE id = $1
        AND plan <> 'free'
        AND plan_cancel_at_period_end = TRUE
        AND (plan_expires_at IS NULL OR plan_expires_at > NOW())
      RETURNING id`,
-    [userId],
+    [workspace.id],
   );
   if (!rows[0]) {
     throw createHttpError(400, "Gói cước không có yêu cầu hủy cần hoàn tác");
@@ -746,6 +762,14 @@ async function completePaidOrder({
 
     if (order.status !== "pending") {
       throw createHttpError(400, `Đơn hàng đang ở trạng thái ${order.status}`);
+    }
+    if (!order.workspace_id) {
+      const workspace = await resolveUserWorkspace(order.user_id, client);
+      order.workspace_id = workspace.id;
+      await client.query(
+        `UPDATE billing_orders SET workspace_id = $2 WHERE id = $1`,
+        [order.id, workspace.id],
+      );
     }
 
     const paidAtDate = paidAt ? new Date(paidAt) : null;
@@ -793,13 +817,14 @@ async function completePaidOrder({
         : null;
       await client.query(
         `INSERT INTO top_up_credits (
-           user_id, billing_order_id, product_code, seconds_granted,
+           user_id, workspace_id, billing_order_id, product_code, seconds_granted,
            remaining_seconds, starts_at, expires_at
          )
-         VALUES ($1, $2, $3, $4, $4, $5, $6)
+         VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
          ON CONFLICT (billing_order_id) DO NOTHING`,
         [
           order.user_id,
+          order.workspace_id || null,
           order.id,
           topUp.code,
           topUp.quotaSeconds,
@@ -820,6 +845,18 @@ async function completePaidOrder({
       );
 
       await client.query(
+        `UPDATE workspaces
+         SET plan = $1,
+             quota_seconds = $2,
+             plan_started_at = NOW(),
+             plan_expires_at = $3,
+             plan_cancel_at_period_end = FALSE,
+             plan_cancellation_requested_at = NULL,
+             updated_at = NOW()
+         WHERE id = $4`,
+        [planName, quotaSeconds, planExpiresAt, order.workspace_id],
+      );
+      await client.query(
         `UPDATE users
          SET plan = $1,
              quota_seconds = $2,
@@ -827,8 +864,10 @@ async function completePaidOrder({
              plan_expires_at = $3,
              plan_cancel_at_period_end = FALSE,
              plan_cancellation_requested_at = NULL
-         WHERE id = $4`,
-        [planName, quotaSeconds, planExpiresAt, order.user_id],
+         WHERE id = (
+           SELECT owner_user_id FROM workspaces WHERE id = $4
+         )`,
+        [planName, quotaSeconds, planExpiresAt, order.workspace_id],
       );
     }
 

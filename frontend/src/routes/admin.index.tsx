@@ -1,9 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   Clock3,
   Files,
+  Gauge,
+  Server,
   Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -13,7 +16,10 @@ import {
   PageState,
   StatusBadge,
 } from "@/components/admin/admin-ui";
-import { fetchDashboardSummary } from "@/lib/admin/dashboard-service";
+import {
+  cleanupObservabilityLogs,
+  fetchDashboardSummary,
+} from "@/lib/admin/dashboard-service";
 import { formatDuration, formatMinutes } from "@/lib/admin/formatters";
 import { ADMIN_SUMMARY_REFRESH_MS } from "@/lib/admin/realtime";
 import type { DashboardSummary } from "@/lib/admin/types";
@@ -152,6 +158,10 @@ function AdminDashboardPage() {
             <JobList title="Tác vụ gần nhất" jobs={data.recent_jobs} />
             <JobList title="Tác vụ lỗi gần nhất" jobs={data.recent_failed_jobs} />
           </div>
+
+          {data.observability && (
+            <OperationalPanel observability={data.observability} />
+          )}
         </div>
       )}
     </PageState>
@@ -184,6 +194,270 @@ function Metric({
       <p className="mt-3 text-2xl font-black tracking-tight text-slate-950">
         {value}
       </p>
+    </div>
+  );
+}
+
+function OperationalPanel({
+  observability,
+}: {
+  observability: NonNullable<DashboardSummary["observability"]>;
+}) {
+  const [cleanupMessage, setCleanupMessage] = useState("");
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+
+  async function runCleanup() {
+    setCleanupRunning(true);
+    setCleanupMessage("");
+    try {
+      const result = await cleanupObservabilityLogs(
+        observability.logRetentionDays,
+      );
+      setCleanupMessage(
+        `Đã dọn ${result.deletedRequestLogs} request log, ${result.deletedWebhookDeliveries} webhook delivery, ${result.deletedResolvedAlerts} alert đã resolve.`,
+      );
+    } catch (error) {
+      setCleanupMessage(
+        error instanceof Error ? error.message : "Không dọn được log vận hành",
+      );
+    } finally {
+      setCleanupRunning(false);
+    }
+  }
+
+  return (
+    <AdminPanel>
+      <AdminPanelHeader
+        title="Vận hành hệ thống"
+        description="Request id, metrics queue/provider, cảnh báo lỗi và uptime"
+      />
+      <div className="grid gap-4 p-5 xl:grid-cols-[1fr_1fr]">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 xl:col-span-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm font-black text-slate-950">
+              Cảnh báo vận hành
+            </p>
+            <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600">
+              {observability.alerts.length} active
+            </span>
+          </div>
+          {observability.alerts.length === 0 ? (
+            <p className="mt-3 text-sm font-bold text-emerald-700">
+              Không có cảnh báo lỗi đang vượt ngưỡng.
+            </p>
+          ) : (
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {observability.alerts.map((alert) => (
+                <div
+                  key={`${alert.code}-${alert.message}`}
+                  className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900"
+                >
+                  {alert.message}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+            <p className="text-xs font-bold text-slate-600">
+              Retention log vận hành: {observability.logRetentionDays} ngày
+            </p>
+            <button
+              type="button"
+              onClick={() => void runCleanup()}
+              disabled={cleanupRunning}
+              className="rounded-md bg-slate-950 px-3 py-1.5 text-xs font-black text-white disabled:opacity-50"
+            >
+              {cleanupRunning ? "Đang dọn..." : "Dọn log cũ"}
+            </button>
+          </div>
+          {cleanupMessage && (
+            <p className="mt-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700">
+              {cleanupMessage}
+            </p>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-slate-200 xl:col-span-2">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black">
+            Alert events
+          </div>
+          <div className="divide-y divide-slate-200">
+            {observability.alertEvents.length === 0 ? (
+              <p className="p-4 text-sm text-slate-500">
+                Chưa có lịch sử alert vận hành.
+              </p>
+            ) : (
+              observability.alertEvents.slice(0, 6).map((alert) => (
+                <div
+                  key={alert.id}
+                  className="grid gap-2 p-4 text-xs md:grid-cols-[120px_1fr_auto]"
+                >
+                  <span
+                    className={`w-fit rounded-md px-2 py-1 font-black ${
+                      alert.status === "active"
+                        ? "bg-red-50 text-red-700"
+                        : "bg-emerald-50 text-emerald-700"
+                    }`}
+                  >
+                    {alert.status}
+                  </span>
+                  <div>
+                    <p className="font-black text-slate-950">{alert.code}</p>
+                    <p className="mt-1 text-slate-600">{alert.message}</p>
+                  </div>
+                  <span className="font-bold text-slate-500">
+                    {new Date(alert.lastSeenAt).toLocaleString("vi-VN")}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Metric
+            icon={<Activity className="h-4 w-4" />}
+            label="Request 24h"
+            value={observability.requests24h.total}
+            compact
+          />
+          <Metric
+            icon={<Gauge className="h-4 w-4" />}
+            label="P95 latency"
+            value={`${observability.requests24h.p95DurationMs}ms`}
+            compact
+          />
+          <Metric
+            icon={<AlertTriangle className="h-4 w-4" />}
+            label="HTTP 5xx"
+            value={observability.requests24h.serverErrors}
+            compact
+          />
+          <Metric
+            icon={<Server className="h-4 w-4" />}
+            label="Uptime"
+            value={formatDuration(observability.uptimeSeconds)}
+            compact
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-black text-slate-950">Queue</p>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <MetricLine label="Queued" value={observability.queue.queued} />
+              <MetricLine
+                label="Processing"
+                value={observability.queue.processing}
+              />
+              <MetricLine
+                label="Failed 24h"
+                value={observability.queue.failed24h}
+              />
+              <MetricLine
+                label="Dead letter"
+                value={observability.queue.deadLettered}
+              />
+            </dl>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-black text-slate-950">Process</p>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <MetricLine label="Host" value={observability.process.host} />
+              <MetricLine label="PID" value={observability.process.pid} />
+              <MetricLine
+                label="RSS"
+                value={`${observability.process.memoryRssMb}MB`}
+              />
+              <MetricLine
+                label="Heap"
+                value={`${observability.process.memoryHeapUsedMb}MB`}
+              />
+            </dl>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-slate-200 xl:col-span-2">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black">
+            Provider circuits
+          </div>
+          <div className="divide-y divide-slate-200">
+            {observability.providers.circuits.length === 0 ? (
+              <p className="p-4 text-sm text-slate-500">
+                Chưa có circuit provider nào được ghi nhận.
+              </p>
+            ) : (
+              observability.providers.circuits.map((provider) => (
+                <div
+                  key={provider.provider}
+                  className="grid gap-3 p-4 text-sm md:grid-cols-[1fr_auto_auto]"
+                >
+                  <div>
+                    <p className="font-black text-slate-950">
+                      {provider.provider}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {provider.last_error_message || "Không có lỗi gần đây"}
+                    </p>
+                  </div>
+                  <span className="rounded-md border border-slate-200 px-2 py-1 text-xs font-black">
+                    {provider.state}
+                  </span>
+                  <span className="text-xs font-bold text-slate-500">
+                    OK {provider.total_successes} / lỗi{" "}
+                    {provider.total_failures}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border border-slate-200 xl:col-span-2">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black">
+            Request chậm nhất 24h
+          </div>
+          <div className="divide-y divide-slate-200">
+            {observability.requests24h.slowest.length === 0 ? (
+              <p className="p-4 text-sm text-slate-500">
+                Chưa có request log trong 24 giờ qua.
+              </p>
+            ) : (
+              observability.requests24h.slowest.map((request) => (
+                <div
+                  key={request.requestId}
+                  className="grid gap-2 p-4 text-xs md:grid-cols-[120px_1fr_auto]"
+                >
+                  <code className="font-black text-indigo-700">
+                    {request.requestId.slice(0, 12)}
+                  </code>
+                  <span className="truncate font-bold text-slate-700">
+                    {request.method} {request.path}
+                  </span>
+                  <span className="font-black text-slate-950">
+                    {request.statusCode} · {request.durationMs}ms
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </AdminPanel>
+  );
+}
+
+function MetricLine({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div>
+      <dt className="font-bold text-slate-500">{label}</dt>
+      <dd className="mt-1 truncate font-black text-slate-950">{value}</dd>
     </div>
   );
 }

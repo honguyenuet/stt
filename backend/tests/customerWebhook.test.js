@@ -5,7 +5,9 @@ const crypto = require("crypto");
 const {
   assertPublicWebhookDestination,
   createWebhookSignature,
+  deliverCustomerWebhook,
   normalizeCustomerWebhook,
+  protectCustomerWebhook,
 } = require("../services/customerWebhookService");
 
 test("customer webhook accepts a public HTTPS callback and encrypt-ready secret", () => {
@@ -81,4 +83,45 @@ test("webhook signature is an HMAC SHA-256 over the exact request body", () => {
   const expected = crypto.createHmac("sha256", secret).update(body).digest("hex");
 
   assert.equal(createWebhookSignature(body, secret), `sha256=${expected}`);
+});
+
+test("customer webhook delivery posts signed event data", async () => {
+  const secret = "a-secure-customer-secret";
+  const webhook = protectCustomerWebhook(
+    { url: "https://93.184.216.34/hooks/vbee", secret },
+    { production: true },
+  );
+  let request = null;
+
+  const result = await deliverCustomerWebhook({
+    webhook,
+    event: "transcription.completed",
+    payload: {
+      jobId: 42,
+      transcriptionId: 156,
+      status: "completed",
+      text: "Xin chào",
+      words: [{ text: "Xin", start: 0, end: 300 }],
+    },
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return { ok: true, status: 204 };
+    },
+  });
+
+  assert.deepEqual(result, { delivered: true, status: 204, attempts: 1 });
+  assert.equal(request.url, "https://93.184.216.34/hooks/vbee");
+  assert.equal(request.options.method, "POST");
+  assert.equal(
+    request.options.headers["X-Vbee-Event"],
+    "transcription.completed",
+  );
+  assert.equal(
+    request.options.headers["X-Vbee-Signature"],
+    createWebhookSignature(request.options.body, secret),
+  );
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.event, "transcription.completed");
+  assert.equal(body.data.jobId, 42);
+  assert.equal(body.data.words[0].text, "Xin");
 });

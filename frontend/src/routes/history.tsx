@@ -144,6 +144,9 @@ function HistoryPage() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [batchExporting, setBatchExporting] = useState(false);
+  const [batchExportError, setBatchExportError] = useState("");
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -240,6 +243,9 @@ function HistoryPage() {
             ...item,
             text: String(item.text || ""),
           })),
+        );
+        setSelectedIds((current) =>
+          current.filter((id) => data.items.some((item) => item.id === id)),
         );
         setTotalItems(data.pagination.total);
         setTotalPages(data.pagination.totalPages);
@@ -534,6 +540,7 @@ function HistoryPage() {
       });
       if (res.ok) {
         setItems((prev) => prev.filter((i) => i.id !== id));
+        setSelectedIds((current) => current.filter((item) => item !== id));
         setTotalItems((current) => Math.max(0, current - 1));
         if (expanded === id) {
           setExpanded(null);
@@ -616,6 +623,51 @@ function HistoryPage() {
     a.download = `${baseName}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleBatchExport() {
+    if (!token || selectedIds.length === 0) return;
+    setBatchExporting(true);
+    setBatchExportError("");
+    try {
+      const response = await fetch(`${API_URL}/api/transcribe/export/batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(data.error || "Không export được batch");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `vbee-transcripts-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setBatchExportError(
+        error instanceof Error ? error.message : "Không export được batch",
+      );
+    } finally {
+      setBatchExporting(false);
+    }
+  }
+
+  function toggleSelected(id: number) {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id],
+    );
   }
 
   if (isLoading)
@@ -807,6 +859,50 @@ function HistoryPage() {
           </div>
         )}
 
+        {filtered.length > 0 && (
+          <div className="mb-4 rounded-lg border border-border bg-white px-4 py-3 shadow-soft">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="inline-flex items-center gap-2 text-sm font-bold text-foreground">
+                <input
+                  type="checkbox"
+                  checked={
+                    filtered.length > 0 &&
+                    filtered.every((item) => selectedIds.includes(item.id))
+                  }
+                  onChange={(event) =>
+                    setSelectedIds(
+                      event.target.checked
+                        ? filtered.map((item) => item.id)
+                        : [],
+                    )
+                  }
+                  className="h-4 w-4 accent-primary"
+                />
+                Chọn trang hiện tại
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold text-muted-foreground">
+                  {selectedIds.length} transcript đã chọn
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleBatchExport()}
+                  disabled={selectedIds.length === 0 || batchExporting}
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export ZIP
+                </button>
+              </div>
+            </div>
+            {batchExportError && (
+              <p className="mt-2 text-xs font-bold text-destructive">
+                {batchExportError}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* List */}
         {loading ? (
           <div className="flex justify-center py-12">
@@ -875,6 +971,13 @@ function HistoryPage() {
 
                   {/* Row header */}
                   <div className="relative flex items-center gap-3 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(item.id)}
+                      onChange={() => toggleSelected(item.id)}
+                      className="h-4 w-4 shrink-0 accent-primary"
+                      aria-label={`Chọn ${item.filename}`}
+                    />
                     <button
                       onClick={() =>
                         canOpenEditor
@@ -1108,21 +1211,27 @@ function HistoryPage() {
                           )}
 
                           <div className="rounded-lg border border-border bg-[#fbf8ef] px-4 py-3">
-                            <p className="mb-2 text-xs text-muted-foreground">
-                              Văn bản — có thể chỉnh sửa trực tiếp
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                              <p className="text-xs text-muted-foreground">
+                                Văn bản đã tạo
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void navigate({
+                                    to: "/transcript/$id",
+                                    params: { id: String(item.id) },
+                                  })
+                                }
+                                className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:opacity-90"
+                              >
+                                Chỉnh sửa chi tiết
+                                <ArrowRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <p className="max-h-80 overflow-y-auto whitespace-pre-wrap text-sm leading-7 text-foreground">
+                              {fullItem.text || "Transcript chưa có nội dung."}
                             </p>
-                            <textarea
-                              data-typography="content"
-                              value={editorText}
-                              onChange={(event) => {
-                                const nextText = event.target.value;
-                                setEditorText(nextText);
-                                setLocalChanged(
-                                  nextText !== String(fullItem.text || ""),
-                                );
-                              }}
-                              className="min-h-40 max-h-80 w-full resize-y overflow-y-auto bg-transparent text-sm leading-7 text-foreground outline-none"
-                            />
                           </div>
 
                           {fullItem.translated_text && (
@@ -1140,28 +1249,6 @@ function HistoryPage() {
                           )}
 
                           <div className="flex flex-wrap gap-2 pt-1">
-                            {localChanged && (
-                              <>
-                                <button
-                                  onClick={resetEdit}
-                                  className="flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs font-medium transition hover:bg-card"
-                                >
-                                  <X className="h-3 w-3" /> Hủy
-                                </button>
-                                <button
-                                  onClick={() => void handleSaveEdit(item.id)}
-                                  disabled={isSaving}
-                                  className="flex items-center gap-1.5 rounded-full bg-gradient-primary px-4 py-2 text-xs font-semibold text-[#21104a] shadow-glow transition hover:opacity-90 disabled:opacity-60"
-                                >
-                                  {isSaving ? (
-                                    <span className="h-3 w-3 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />
-                                  ) : (
-                                    <Check className="h-3 w-3" />
-                                  )}
-                                  Lưu
-                                </button>
-                              </>
-                            )}
                             <button
                               onClick={() => void handleCopy(fullItem)}
                               className="flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs font-medium transition hover:border-primary/40 hover:bg-primary/10 hover:text-primary"

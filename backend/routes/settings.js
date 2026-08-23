@@ -12,6 +12,14 @@ const {
   savePrivacySettings,
   saveTranscriptionSettings,
 } = require("../services/userSettingsService");
+const {
+  buildUserDataExport,
+  deleteAllUserTranscriptionData,
+  deleteTranscriptMedia,
+  getPrivacySettings,
+  savePrivacySettings,
+} = require("../services/privacyCenterService");
+const { writeSecurityAudit } = require("../services/securityAuditService");
 
 const router = express.Router();
 
