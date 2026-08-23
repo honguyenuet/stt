@@ -114,6 +114,10 @@ function validateSecurityConfig() {
   const providerSecret = String(
     process.env.PROVIDER_FILE_SIGNING_SECRET || "",
   ).trim();
+  const providerEncryptionSecret = String(
+    process.env.PROVIDER_SECRET_KEY || "",
+  ).trim();
+  const audioUrlSecret = String(process.env.AUDIO_URL_SECRET || "").trim();
   const auditSecret = String(process.env.AUDIT_HASH_SECRET || "").trim();
 
   if (!isStrongSecret(JWT_SECRET)) {
@@ -146,6 +150,23 @@ function validateSecurityConfig() {
   ) {
     errors.push(
       "PROVIDER_FILE_SIGNING_SECRET must be strong and separate from JWT_SECRET.",
+    );
+  }
+  if (
+    IS_PRODUCTION &&
+    (!isStrongSecret(providerEncryptionSecret) ||
+      providerEncryptionSecret === JWT_SECRET)
+  ) {
+    errors.push(
+      "PROVIDER_SECRET_KEY must be strong and separate from JWT_SECRET.",
+    );
+  }
+  if (
+    IS_PRODUCTION &&
+    (!isStrongSecret(audioUrlSecret) || audioUrlSecret === JWT_SECRET)
+  ) {
+    errors.push(
+      "AUDIO_URL_SECRET must be strong and separate from JWT_SECRET.",
     );
   }
   if (
