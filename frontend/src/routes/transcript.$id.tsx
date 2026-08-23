@@ -64,6 +64,7 @@ import {
   editableTimedWordWidthCh,
 } from "@/lib/transcript-typography";
 import { getVirtualLayout, getVirtualWindow } from "@/lib/virtual-window";
+import { getAdaptiveTranscriptEditorHeight } from "@/lib/transcript-editor-layout";
 import { buildTranscriptSavePayload } from "@/lib/transcript-save";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
@@ -613,6 +614,7 @@ function TranscriptEditorPage() {
   const [timelineIsTooLarge, setTimelineIsTooLarge] = useState(false);
   const [syncScrollOffset, setSyncScrollOffset] = useState(0);
   const [syncViewportSize, setSyncViewportSize] = useState(600);
+  const [browserViewportHeight, setBrowserViewportHeight] = useState(800);
   const [transcriptFollowMode, setTranscriptFollowMode] =
     useState<TranscriptFollowMode>("following");
   const [segmentSizes, setSegmentSizes] = useState(
@@ -671,6 +673,14 @@ function TranscriptEditorPage() {
         overscan: VIRTUAL_SEGMENT_OVERSCAN,
       }),
     [syncScrollOffset, syncViewportSize, virtualSegmentLayout],
+  );
+  const syncEditorHeight = useMemo(
+    () =>
+      getAdaptiveTranscriptEditorHeight({
+        contentHeight: virtualSegments.totalSize + 32,
+        viewportHeight: browserViewportHeight,
+      }),
+    [browserViewportHeight, virtualSegments.totalSize],
   );
   const firstVirtualSegment = virtualSegments.items[0]?.index ?? -1;
   const lastVirtualSegment = virtualSegments.items.at(-1)?.index ?? -1;
@@ -779,6 +789,14 @@ function TranscriptEditorPage() {
     setSyncScrollOffset(0);
     if (syncScrollRef.current) syncScrollRef.current.scrollTop = 0;
   }, [activeTranscriptId]);
+
+  useEffect(() => {
+    const updateViewportHeight = () =>
+      setBrowserViewportHeight(Math.max(1, window.innerHeight));
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    return () => window.removeEventListener("resize", updateViewportHeight);
+  }, []);
 
   useEffect(() => {
     if (editorMode !== "sync" || !syncAvailable) return;
@@ -2440,10 +2458,12 @@ function TranscriptEditorPage() {
         )}
 
         <div
-          className={`grid gap-4 lg:min-h-[360px] lg:grid-cols-[minmax(0,1fr)_310px] ${
-            transcript.audio_filename
-              ? "lg:h-[calc(100dvh-345px)]"
-              : "lg:h-[calc(100dvh-290px)]"
+          className={`grid gap-4 lg:grid-cols-[minmax(0,1fr)_310px] ${
+            editorMode === "sync" && syncAvailable
+              ? "items-start"
+              : transcript.audio_filename
+                ? "lg:min-h-[360px] lg:h-[calc(100dvh-345px)]"
+                : "lg:min-h-[360px] lg:h-[calc(100dvh-290px)]"
           }`}
         >
           <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#e1dbea] bg-white shadow-[0_10px_30px_rgba(33,16,74,.05)]">
@@ -2589,7 +2609,9 @@ function TranscriptEditorPage() {
                 data-testid="virtual-transcript-scroll"
                 data-segment-count={segments.length}
                 data-rendered-segment-count={virtualSegments.items.length}
-                className="max-h-[55dvh] min-h-[320px] overflow-y-auto px-3 py-4 sm:min-h-[420px] sm:px-4 sm:py-5 md:px-7 lg:min-h-0 lg:max-h-none lg:flex-1"
+                data-editor-height={syncEditorHeight}
+                style={{ height: `${syncEditorHeight}px` }}
+                className="overflow-y-auto px-3 py-4 sm:px-4 sm:py-5 md:px-7"
               >
                 <div
                   className="relative mx-auto max-w-3xl"
