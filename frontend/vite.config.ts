@@ -37,4 +37,7 @@ export default defineConfig(({ mode }) => ({
       "@tanstack/query-core",
     ],
   },
+  optimizeDeps: {
+    entries: ["src/**/*.{ts,tsx}", "!src/**/*.test.{ts,tsx}"],
+  },
 }));
