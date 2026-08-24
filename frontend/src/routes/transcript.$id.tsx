@@ -681,7 +681,7 @@ function exportSegmentLabel(
 function TranscriptEditorPage() {
   const { id } = Route.useParams();
   const { at: requestedStartMs } = Route.useSearch();
-  const transcriptId = Number.parseInt(id, 10);
+  const transcriptId = Number(id);
   const { user, token, isLoading } = useAuth();
   const navigate = useNavigate();
   const [transcript, setTranscript] = useState<TranscriptDetail | null>(null);
@@ -950,7 +950,18 @@ function TranscriptEditorPage() {
   }, [words]);
 
   const loadTranscript = useCallback(async () => {
-    if (!token || !Number.isFinite(transcriptId)) return;
+    if (!Number.isSafeInteger(transcriptId) || transcriptId < 1) {
+      setLoading(false);
+      setLoadError("ID transcript không hợp lệ.");
+      return;
+    }
+    if (!token) {
+      if (!isLoading) {
+        setLoading(false);
+        setLoadError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+      }
+      return;
+    }
     loadRequestRef.current?.abort();
     const controller = new AbortController();
     loadRequestRef.current = controller;
@@ -1066,7 +1077,7 @@ function TranscriptEditorPage() {
         setLoading(false);
       }
     }
-  }, [token, transcriptId]);
+  }, [isLoading, token, transcriptId]);
 
   useEffect(() => {
     void loadTranscript();
@@ -1708,37 +1719,6 @@ function TranscriptEditorPage() {
     ],
   );
 
-  useEffect(() => {
-    function handleReviewShortcut(event: KeyboardEvent) {
-      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName?.toLowerCase();
-      if (tagName === "input" || tagName === "textarea" || target?.isContentEditable) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (key === "n") {
-        event.preventDefault();
-        selectLowConfidenceByOffset(1);
-      } else if (key === "p") {
-        event.preventDefault();
-        selectLowConfidenceByOffset(-1);
-      } else if (key === "m" && lowConfidenceReviewIndex >= 0) {
-        event.preventDefault();
-        markLowConfidenceReviewed(activeWordIndex, true);
-      }
-    }
-    window.addEventListener("keydown", handleReviewShortcut);
-    return () => window.removeEventListener("keydown", handleReviewShortcut);
-  }, [
-    activeWordIndex,
-    lowConfidenceReviewIndex,
-    markLowConfidenceReviewed,
-    selectLowConfidenceByOffset,
-  ]);
-
   function undoEdit() {
     setUndoStack((current) => {
       const previous = current[current.length - 1];
@@ -1817,7 +1797,10 @@ function TranscriptEditorPage() {
     }
   }
 
-  function markLowConfidenceReviewed(wordIndex: number, advance = false) {
+  const saveWorkflowRef = useRef(saveWorkflow);
+  saveWorkflowRef.current = saveWorkflow;
+
+  const markLowConfidenceReviewed = useCallback((wordIndex: number, advance = false) => {
     const currentWords = wordsRef.current;
     const currentWord = currentWords[wordIndex];
     if (!currentWord) return;
@@ -1835,7 +1818,7 @@ function TranscriptEditorPage() {
     );
     applyEditorChange(editorTextRef.current, nextWords, true);
     if (transcript && !transcript.reviewed_word_indexes.includes(wordIndex)) {
-      void saveWorkflow({
+      void saveWorkflowRef.current({
         reviewedWordIndexes: [...transcript.reviewed_word_indexes, wordIndex].sort(
           (left, right) => left - right,
         ),
@@ -1844,7 +1827,43 @@ function TranscriptEditorPage() {
     if (nextReviewWord && nextReviewWord.index !== wordIndex) {
       window.requestAnimationFrame(() => jumpToLowConfidenceWord(nextReviewWord));
     }
-  }
+  }, [
+    applyEditorChange,
+    jumpToLowConfidenceWord,
+    lowConfidenceWords,
+    transcript,
+  ]);
+
+  useEffect(() => {
+    function handleReviewShortcut(event: KeyboardEvent) {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === "input" || tagName === "textarea" || target?.isContentEditable) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(1);
+      } else if (key === "p") {
+        event.preventDefault();
+        selectLowConfidenceByOffset(-1);
+      } else if (key === "m" && lowConfidenceReviewIndex >= 0) {
+        event.preventDefault();
+        markLowConfidenceReviewed(activeWordIndex, true);
+      }
+    }
+    window.addEventListener("keydown", handleReviewShortcut);
+    return () => window.removeEventListener("keydown", handleReviewShortcut);
+  }, [
+    activeWordIndex,
+    lowConfidenceReviewIndex,
+    markLowConfidenceReviewed,
+    selectLowConfidenceByOffset,
+  ]);
 
   function mergeSpeakers() {
     if (!speakerMergeSource || !speakerMergeTarget || speakerMergeSource === speakerMergeTarget) return;
