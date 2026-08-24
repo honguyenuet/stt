@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const pool = require("../db");
 const { getReservedSeconds } = require("../services/quotaService");
 
+test.after(() => pool.end());
+
 test("a multitrack batch reserves only its longest track", async () => {
   const client = await pool.connect();
   try {

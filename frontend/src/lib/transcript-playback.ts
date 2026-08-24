@@ -7,9 +7,113 @@ type EditableTimedWord = TimedWord & {
   text: string;
 };
 
+const ESTIMATED_WORDS_PER_SECOND = 2.5;
+const AUDIO_ACCESS_REFRESH_MARGIN_MS = 15_000;
+const MAX_AUTOMATIC_AUDIO_RECOVERY_ATTEMPTS = 1;
+const AUDIO_RECOVERY_PROGRESS_SECONDS = 2;
+export const MAX_EDITABLE_TIMED_WORDS = 100_000;
+
+export type TranscriptFollowMode = "following" | "manual";
+export type TranscriptFollowEvent =
+  | "playback-position"
+  | "user-scroll"
+  | "resume";
+
+export function audioAccessNeedsRefresh(
+  expiresAtMilliseconds: number | null,
+  nowMilliseconds = Date.now(),
+) {
+  return (
+    expiresAtMilliseconds !== null &&
+    Number.isFinite(expiresAtMilliseconds) &&
+    expiresAtMilliseconds <= nowMilliseconds + AUDIO_ACCESS_REFRESH_MARGIN_MS
+  );
+}
+
+export function createAudioRecoveryPlan(
+  currentTimeSeconds: number,
+  playbackWasRequested: boolean,
+  recoveryAttempts: number,
+) {
+  if (recoveryAttempts >= MAX_AUTOMATIC_AUDIO_RECOVERY_ATTEMPTS) return null;
+  const safeCurrentTimeSeconds =
+    Number.isFinite(currentTimeSeconds) && currentTimeSeconds > 0
+      ? currentTimeSeconds
+      : 0;
+  return {
+    playWhenReady: playbackWasRequested,
+    seekMilliseconds: Math.round(safeCurrentTimeSeconds * 1_000),
+  };
+}
+
+export function audioRecoveryMadeProgress(
+  recoveryStartSeconds: number | null,
+  currentTimeSeconds: number,
+) {
+  return (
+    recoveryStartSeconds !== null &&
+    Number.isFinite(recoveryStartSeconds) &&
+    Number.isFinite(currentTimeSeconds) &&
+    currentTimeSeconds >=
+      recoveryStartSeconds + AUDIO_RECOVERY_PROGRESS_SECONDS
+  );
+}
+
+export function nextTranscriptFollowMode(
+  currentMode: TranscriptFollowMode,
+  event: TranscriptFollowEvent,
+): TranscriptFollowMode {
+  if (event === "user-scroll") return "manual";
+  if (event === "resume") return "following";
+  return currentMode;
+}
+
+export function canUseSyncEditor(wordCount: number) {
+  return (
+    Number.isFinite(wordCount) &&
+    wordCount > 0 &&
+    wordCount <= MAX_EDITABLE_TIMED_WORDS
+  );
+}
+
+export function createApproximateTimedWords(
+  transcriptText: string,
+  durationSeconds: number | null | undefined,
+  maxWords = Number.POSITIVE_INFINITY,
+) {
+  const source = String(transcriptText || "").trim();
+  const safeMaxWords =
+    Number.isSafeInteger(maxWords) && maxWords > 0
+      ? maxWords
+      : Number.POSITIVE_INFINITY;
+  const tokens: string[] = [];
+  for (const match of source.matchAll(/\S+/g)) {
+    if (tokens.length >= safeMaxWords) return [];
+    tokens.push(match[0]);
+  }
+  if (!tokens.length) return [];
+
+  const providedDuration = Number(durationSeconds);
+  const timelineDurationSeconds =
+    Number.isFinite(providedDuration) && providedDuration > 0
+      ? providedDuration
+      : Math.max(1, tokens.length / ESTIMATED_WORDS_PER_SECOND);
+  const wordDurationMilliseconds =
+    (timelineDurationSeconds * 1_000) / tokens.length;
+
+  return tokens.map((text, index) => ({
+    text,
+    start: Math.round(wordDurationMilliseconds * index),
+    end: Math.round(wordDurationMilliseconds * (index + 1)),
+    speaker: null,
+  }));
+}
+
 export type ConfidenceLevel = "high" | "medium" | "low" | "unknown";
 
-export function confidenceLevel(value: number | null | undefined): ConfidenceLevel {
+export function confidenceLevel(
+  value: number | null | undefined,
+): ConfidenceLevel {
   if (value === null || value === undefined) return "unknown";
   const confidence = Number(value);
   if (!Number.isFinite(confidence)) return "unknown";
@@ -22,9 +126,7 @@ export function summarizeConfidence(
   words: Array<{ confidence?: number | null }>,
 ) {
   const values = words
-    .filter(
-      (word) => word.confidence !== null && word.confidence !== undefined,
-    )
+    .filter((word) => word.confidence !== null && word.confidence !== undefined)
     .map((word) => Number(word.confidence))
     .filter((value) => Number.isFinite(value));
   if (!values.length) {
@@ -37,10 +139,7 @@ export function summarizeConfidence(
   };
 }
 
-export function findActiveWordIndex(
-  words: TimedWord[],
-  milliseconds: number,
-) {
+export function findActiveWordIndex(words: TimedWord[], milliseconds: number) {
   if (!Number.isFinite(milliseconds)) return -1;
 
   const toleranceMilliseconds = 80;
@@ -155,10 +254,7 @@ export function findTimedWordTextRange(
   let cursor = 0;
   for (let index = 0; index <= wordIndex; index += 1) {
     const wordText = String(words[index]?.text || "");
-    const foundAt = sourceLower.indexOf(
-      wordText.toLocaleLowerCase(),
-      cursor,
-    );
+    const foundAt = sourceLower.indexOf(wordText.toLocaleLowerCase(), cursor);
     if (foundAt < 0) return null;
     if (index === wordIndex) {
       return { start: foundAt, end: foundAt + wordText.length };
@@ -166,4 +262,22 @@ export function findTimedWordTextRange(
     cursor = foundAt + wordText.length;
   }
   return null;
+}
+
+export function indexTimedWordTextRanges(
+  transcriptText: string,
+  words: EditableTimedWord[],
+) {
+  const source = String(transcriptText || "");
+  const sourceLower = source.toLocaleLowerCase();
+  let cursor = 0;
+  return words.map((word) => {
+    const wordText = String(word?.text || "");
+    if (!wordText) return null;
+    const start = sourceLower.indexOf(wordText.toLocaleLowerCase(), cursor);
+    if (start < 0) return null;
+    const end = start + wordText.length;
+    cursor = end;
+    return { start, end };
+  });
 }

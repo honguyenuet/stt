@@ -69,6 +69,10 @@ test("audio retention cleanup keeps the old filename and skips invalid paths", a
 
   assert.equal(cleaned, 3);
   assert.match(queries[0], /WITH expired_audio AS/i);
+  assert.match(queries[0], /WHEN account\.plan = 'business' THEN \$4::integer/i);
+  assert.match(queries[0], /mediaRetentionPolicy' = 'delete_after_transcription'/i);
+  assert.match(queries[0], /mediaRetentionPolicy' = 'delete_after_days'/i);
+  assert.match(queries[0], /keepAudioAfterTranscription' = 'false'/i);
   assert.match(queries[0], /RETURNING expired_audio\.audio_filename/i);
   assert.deepEqual(deletedPaths, ["C:\\uploads\\queue-valid.mp3"]);
   assert.equal(warnings.length, 2);

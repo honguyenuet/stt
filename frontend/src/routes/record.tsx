@@ -208,7 +208,7 @@ function RecordPage() {
     async function loadJob() {
       try {
         const res = await fetch(`${API_URL}/api/transcribe/jobs/${queuedJobId}`, {
-          headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok || cancelled) return;
         const job = (await res.json()) as {
@@ -1087,6 +1087,15 @@ function RecorderReadinessPanel({
       : micStatus === "blocked" || micStatus === "unsupported"
         ? "text-destructive"
         : "text-muted-foreground";
+  const waveformHeights = Array.from({ length: 18 }, (_, index) => {
+    if (!isLive) return 8;
+    const centerEnvelope = 1 - Math.abs(index - 8.5) / 13;
+    const alternatingEnergy = 0.58 + (index % 4) * 0.11;
+    return Math.max(
+      10,
+      Math.min(100, Math.round(audioLevel * centerEnvelope * alternatingEnergy)),
+    );
+  });
 
   return (
     <div className="rounded-lg border border-border bg-white p-2.5 shadow-soft">
@@ -1131,13 +1140,24 @@ function RecorderReadinessPanel({
           <p className="text-[11px] font-black uppercase text-muted-foreground">
             Âm lượng realtime
           </p>
-          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-            <div
-              className={`h-full rounded-full ${
-                audioWarning && isLive ? "bg-destructive" : "bg-primary"
-              }`}
-              style={{ width: `${isLive ? Math.max(audioLevel, 2) : 0}%` }}
-            />
+          <div
+            role="meter"
+            aria-label="Mức âm micrô"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={isLive ? audioLevel : 0}
+            className="mt-1.5 flex h-8 items-center justify-center gap-0.5 rounded-md bg-muted/70 px-1.5"
+          >
+            {waveformHeights.map((height, index) => (
+              <span
+                key={index}
+                aria-hidden="true"
+                className={`w-1 rounded-full transition-[height] duration-100 ${
+                  audioWarning && isLive ? "bg-destructive" : "bg-primary"
+                }`}
+                style={{ height: `${height}%` }}
+              />
+            ))}
           </div>
           <p className="mt-1 text-[11px] font-semibold leading-4 text-muted-foreground">
             {isLive
@@ -1602,7 +1622,7 @@ function HelpHome({
           onClick={() => setView("chat")}
           className="flex w-full items-center justify-between rounded-xl border border-border bg-secondary px-5 py-4 text-left shadow-soft transition hover:border-primary/50"
         >
-            <span>
+          <span>
             <span className="block font-black">Gửi tin nhắn hỗ trợ</span>
             <span className="mt-1 block text-sm text-secondary-foreground/65">
               Vbee sẽ phản hồi trong thời gian sớm nhất
@@ -1833,7 +1853,7 @@ function HelpBottomNav({
   );
 }
 
-function VbeeStyleFooter() {
+export function VbeeStyleFooter() {
   return (
     <footer className="mt-10 border-t border-border bg-white px-4 py-6 text-center text-sm text-muted-foreground">
       <p>© 2026 Vbee Voice. Đã đăng ký bản quyền.</p>

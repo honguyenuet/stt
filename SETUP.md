@@ -125,21 +125,19 @@ hoặc chọn **Trung tâm quản trị** trong menu tài khoản.
 
 ### Chọn provider Speech to Text
 
-Để dùng Vbee STT UAT bằng một API key, cấu hình:
+Chế độ `auto` chọn provider đã có khóa hợp lệ và tự chuyển provider khi có lỗi.
+Cấu hình lựa chọn chung trước, sau đó khai báo endpoint/key của từng provider ở
+các mục bên dưới:
 
 ```env
 TRANSCRIPTION_PROVIDER=auto
 TRANSCRIPTION_PROVIDER_CHAIN=vbee,assemblyai,deepgram,sonix
-VBEE_API_KEY=your_vbee_api_key
-VBEE_API_KEY_HEADER=X-API-Key
-VBEE_API_KEY_SCHEME=
-VBEE_STT_API_BASE_URL=https://uat-api.vbeelabs.ai
 ```
 
-Giữ `VBEE_API_KEY_SCHEME` trống khi dùng header `X-API-Key`. Chế độ `auto` xếp
-hạng các provider có khóa hợp lệ theo yêu cầu của file, năng lực và health;
-thứ tự chain dùng để phân xử khi bằng điểm. Khi chọn provider thủ công, provider
-đó luôn đứng đầu và các provider còn lại giữ nguyên thứ tự chain để failover.
+Chế độ `auto` xếp hạng các provider có khóa hợp lệ theo yêu cầu của file, năng
+lực và health; thứ tự chain dùng để phân xử khi bằng điểm. Khi chọn provider thủ
+công, provider đó luôn đứng đầu và các provider còn lại giữ nguyên thứ tự chain
+để failover.
 
 Chế độ **Multitrack** nhận từ 2 đến 5 file micro đồng bộ, nhận dạng từng track
 trong hàng đợi rồi ghép thành một transcript. Quota chỉ giữ và trừ theo track
@@ -176,7 +174,10 @@ Nếu muốn dùng Vbee STT:
 ```env
 TRANSCRIPTION_PROVIDER=vbee
 VBEE_API_KEY=your_vbee_stt_api_key_here
+VBEE_API_KEY_HEADER=Authorization
+VBEE_API_KEY_SCHEME=Bearer
 VBEE_API_BASE_URL=https://api-voice-uat.vbeelabs.ai
+VBEE_STT_API_BASE_URL=
 VBEE_TRANSCRIBE_PATH=/v1/audio/transcriptions
 VBEE_MODEL=chunkformer
 VBEE_RESPONSE_FORMAT=json
@@ -184,7 +185,7 @@ VBEE_RESULT_PATH_TEMPLATE=/v1/transcribe/{id}
 VBEE_LANGUAGE=vi
 ```
 
-Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định theo tài liệu Vbee Voice API: field `file`, `model=chunkformer`, `language=vi`, `response_format=json`, header `Authorization: Bearer <apiKey>`. Endpoint submit UAT là `https://api-voice-uat.vbeelabs.ai/v1/audio/transcriptions`. Bạn có thể cấu hình bằng base/path như trên, hoặc nhập full URL này vào Admin CMS > Nhà cung cấp API. Nếu response path khác mặc định, cấu hình thêm `VBEE_ID_PATH`, `VBEE_STATUS_PATH`, `VBEE_TEXT_PATH`, `VBEE_WORDS_PATH`.
+Vbee STT adapter gửi file dạng `multipart/form-data`, mặc định theo tài liệu Vbee Voice API: field `file`, `model=chunkformer`, `language=vi`, `response_format=json`, header `Authorization: Bearer <apiKey>`. Endpoint submit UAT là `https://api-voice-uat.vbeelabs.ai/v1/audio/transcriptions`. Giữ `VBEE_STT_API_BASE_URL` trống khi dùng `VBEE_API_BASE_URL`; biến `VBEE_STT_API_BASE_URL` chỉ dành cho endpoint cũ dùng host riêng. Bạn có thể cấu hình bằng base/path như trên, hoặc nhập full URL này vào Admin CMS > Nhà cung cấp API. Nếu response path khác mặc định, cấu hình thêm `VBEE_ID_PATH`, `VBEE_STATUS_PATH`, `VBEE_TEXT_PATH`, `VBEE_WORDS_PATH`.
 
 ### Tách vocal cho bài hát
 
@@ -352,15 +353,6 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | PROVIDER_CIRCUIT_MAX_OPEN_SECONDS | Thời gian tạm ngắt tối đa khi API tiếp tục lỗi | 1800 |
 | PROVIDER_CIRCUIT_PROBE_SECONDS | Thời gian khóa một job thăm dò ở trạng thái half-open | 90 |
 | MIN_TRANSCRIPT_CONFIDENCE | Ngưỡng confidence tối thiểu; kết quả có điểm dưới ngưỡng sẽ bị từ chối | 0.9 |
-| VBEE_API_KEY | API key Vbee, chỉ lưu ở backend | ... |
-| VBEE_API_KEY_HEADER | Tên header chứa API key | X-API-Key |
-| VBEE_API_KEY_SCHEME | Tiền tố key; để trống với X-API-Key |  |
-| VBEE_STT_API_BASE_URL | Endpoint Vbee STT UAT | https://uat-api.vbeelabs.ai |
-| VBEE_TRANSCRIBE_PATH | Path gửi file; đổi theo tài liệu API Vbee đang dùng | /stt |
-| VBEE_RESULT_PATH_TEMPLATE | Path polling, dùng `{id}` cho mã job | /stt/transcripts/{id} |
-| VBEE_ID_PATH | Dot path tới mã job nếu response không dùng trường mặc định | data.id |
-| VBEE_STATUS_PATH | Dot path tới trạng thái job | data.status |
-| VBEE_TEXT_PATH | Dot path tới văn bản kết quả | data.text |
 | PROVIDER_SECRET_KEY | Khóa riêng để mã hóa API key lưu trong CMS | random_long_string |
 | SONIX_API_KEY | API key Sonix.ai | your_sonix_api_key |
 | SONIX_LANGUAGE | Mã ngôn ngữ Sonix | vi |
@@ -368,11 +360,16 @@ Trang chủ → Bấm nút → Chuyển đến /login
 | DEEPGRAM_MODEL | Model Deepgram | nova-3 |
 | DEEPGRAM_LANGUAGE | Mã ngôn ngữ Deepgram | vi |
 | VBEE_API_KEY | API key Vbee STT | your_vbee_stt_api_key |
+| VBEE_API_KEY_HEADER | Tên header chứa API key | Authorization |
+| VBEE_API_KEY_SCHEME | Tiền tố API key | Bearer |
 | VBEE_API_BASE_URL | Endpoint gốc Vbee STT | https://api-voice-uat.vbeelabs.ai |
+| VBEE_STT_API_BASE_URL | Host riêng của endpoint Vbee cũ; để trống khi dùng `VBEE_API_BASE_URL` |  |
 | VBEE_TRANSCRIBE_PATH | Path submit file STT Vbee | /v1/audio/transcriptions |
 | VBEE_MODEL | Model STT gửi lên Vbee | chunkformer |
 | VBEE_RESPONSE_FORMAT | Định dạng response Vbee | json |
 | VBEE_RESULT_PATH_TEMPLATE | Path poll kết quả, dùng `{id}` cho job id | /v1/transcribe/{id} |
+| VBEE_ID_PATH | Dot path tới mã job nếu response không dùng trường mặc định | data.id |
+| VBEE_STATUS_PATH | Dot path tới trạng thái job | data.status |
 | VBEE_TEXT_PATH | Dot path tới transcript nếu response Vbee không dùng `text`/`transcript` mặc định | data.text |
 | YOUTUBE_IMPORT_ENABLED | Bật nhập một video YouTube từ URL | true |
 | MEDIA_IMPORT_EGRESS_PROXY_URL | Proxy lọc SSRF bắt buộc cho nhập media ở production | http://media-egress-proxy.internal:3128 |

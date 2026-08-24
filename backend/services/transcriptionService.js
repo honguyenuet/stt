@@ -2719,6 +2719,7 @@ async function transcribeAudio({
     speakerLabels,
     speakerCount,
     translateTo,
+    hasCustomVocabulary: dictionaryKeywords.length > 0,
     filename: providerFilename,
     fileSizeBytes: Number(file?.size || file?.buffer?.length || 0),
     durationSeconds: providerMetadata.audioProfile?.durationSeconds,

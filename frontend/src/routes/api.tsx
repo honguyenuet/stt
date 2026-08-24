@@ -2,19 +2,17 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-base-url";
 import {
-  ArrowRight,
   BarChart3,
   Check,
   Clipboard,
   Code2,
   Copy,
-  FileAudio,
   KeyRound,
   Loader2,
   LockKeyhole,
   PlugZap,
   RefreshCw,
-  ShieldCheck,
+  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -427,94 +425,20 @@ function ApiPage() {
   if (!user) return null;
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-white text-foreground">
+    <main className="min-h-screen overflow-x-hidden bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
-
-      <section className="relative overflow-hidden bg-white text-foreground">
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 md:grid-cols-[1fr_.85fr] md:px-6 md:py-12">
-          <div className="relative z-10 min-w-0">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-bold text-primary">
-              <PlugZap className="h-4 w-4" /> API chuyển giọng nói thành văn bản của Vbee
-            </div>
-            <h1 className="max-w-3xl text-2xl font-black leading-tight md:text-3xl">
-              Tích hợp chuyển âm thanh thành văn bản vào sản phẩm của bạn.
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-              Tạo và thu hồi API key, kiểm thử endpoint và tham khảo ví dụ tích
-              hợp ngay tại đây. Đội kỹ thuật cấu hình nhà cung cấp nhận dạng
-              giọng nói phù hợp trong môi trường máy chủ để bắt đầu xử lý file.
-            </p>
-            <div className="mt-7 flex flex-wrap gap-3">
-              <a
-                href="#keys"
-                className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 font-black text-primary-foreground"
-              >
-                Tạo API key <ArrowRight className="h-4 w-4" />
-              </a>
-              <a
-                href="#docs"
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-5 py-2.5 font-black text-foreground hover:border-primary/50"
-              >
-                Xem tài liệu <Code2 className="h-4 w-4" />
-              </a>
-            </div>
-          </div>
-
-          <div className="relative z-10 min-w-0 rounded-lg border border-border bg-white p-4 text-foreground shadow-soft">
-            <div className="min-w-0 rounded-lg bg-white p-4">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-white text-primary">
-                    <KeyRound className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <div className="font-black">API endpoint</div>
-                    <div className="text-sm text-muted-foreground">
-                      POST /api/v1/transcribe
-                    </div>
-                  </div>
-                </div>
-                <span className="rounded-full bg-[#dcfce7] px-3 py-1 text-xs font-black text-[#166534]">
-                  Sẵn sàng
-                </span>
-              </div>
-              <pre className="max-w-full overflow-x-auto rounded-lg bg-white p-4 text-xs leading-6 text-primary">
-                <code>{curlSample}</code>
-              </pre>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                {[
-                  [ShieldCheck, "Key bảo mật", "Lưu hash SHA-256"],
-                  [FileAudio, "Tải âm thanh lên", "MP3, WAV, M4A, MP4"],
-                  [Zap, "Nhà cung cấp linh hoạt", "Deepgram, AssemblyAI, Google STT"],
-                ].map(([Icon, title, desc]) => (
-                  <div
-                    key={String(title)}
-                    className="rounded-lg border border-border bg-white p-3 shadow-sm"
-                  >
-                    <Icon className="mb-2 h-5 w-5 text-primary" />
-                    <div className="font-black">{String(title)}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {String(desc)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       <section
         id="keys"
-        className="mx-auto grid max-w-7xl gap-5 px-4 py-10 md:grid-cols-[.9fr_1.1fr] md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 py-4 sm:px-5 sm:py-5 md:grid-cols-[.9fr_1.1fr]"
       >
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center gap-3">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
               <KeyRound className="h-6 w-6" />
             </span>
             <div>
-              <h2 className="text-xl font-black">Tạo API key</h2>
+              <h1 className="text-xl font-black">Tạo API key</h1>
               <p className="text-sm text-muted-foreground">
                 Key đầy đủ chỉ hiện một lần sau khi tạo.
               </p>
@@ -572,7 +496,7 @@ function ApiPage() {
           )}
         </div>
 
-        <div className="min-w-0 rounded-lg border border-border bg-white p-5 shadow-soft">
+        <div className="min-w-0 rounded-lg border border-border bg-white p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black">Danh sách API key</h2>
@@ -625,8 +549,8 @@ function ApiPage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-10 md:px-6">
-        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
+      <section className="mx-auto max-w-6xl px-3 pb-4 sm:px-5">
+        <div className="rounded-lg border border-border bg-white p-4">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
@@ -749,7 +673,7 @@ function ApiPage() {
 
       <section
         id="docs"
-        className="mx-auto grid max-w-7xl gap-5 px-4 pb-10 md:grid-cols-2 md:px-6"
+        className="mx-auto grid max-w-6xl gap-4 px-3 pb-4 sm:px-5 md:grid-cols-2"
       >
         <DocCard title="cURL" code={curlSample} onCopy={copyText} />
         <DocCard title="JavaScript SDK mẫu" code={jsSample} onCopy={copyText} />
@@ -757,96 +681,8 @@ function ApiPage() {
         <DocCard title="Async polling" code={pollingSample} onCopy={copyText} />
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-10 md:px-6">
-        <div className="rounded-lg border border-border bg-white p-5 shadow-soft">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
-                <PlugZap className="h-4 w-4" /> Webhook deliveries
-              </div>
-              <h2 className="text-xl font-black">Callback gần đây</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Dùng API key ở khu vực test để xem delivery log và replay callback lỗi.
-              </p>
-            </div>
-            <button
-              onClick={() => void loadWebhookDeliveries()}
-              className="rounded-full border border-border bg-white p-2 hover:border-primary/50"
-              title="Tải lại webhook deliveries"
-            >
-              <RefreshCw className={`h-5 w-5 ${webhookLoading ? "animate-spin" : ""}`} />
-            </button>
-          </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-white text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3">Event</th>
-                  <th className="px-4 py-3">Job</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Attempts</th>
-                  <th className="px-4 py-3">Callback</th>
-                  <th className="px-4 py-3">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {webhookDeliveries.map((delivery) => (
-                  <tr key={delivery.id} className="border-t border-border">
-                    <td className="px-4 py-3 font-black">{delivery.event}</td>
-                    <td className="px-4 py-3 font-bold">
-                      #{delivery.jobId || delivery.transcriptionId || delivery.id}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-black ${
-                          delivery.status === "delivered"
-                            ? "bg-emerald-50 text-emerald-700"
-                            : delivery.status === "failed"
-                              ? "bg-red-50 text-red-700"
-                              : "bg-amber-50 text-amber-800"
-                        }`}
-                      >
-                        {delivery.status}
-                        {delivery.responseStatus ? ` · ${delivery.responseStatus}` : ""}
-                      </span>
-                      {delivery.errorMessage && (
-                        <p className="mt-1 max-w-xs truncate text-xs text-red-600">
-                          {delivery.errorMessage}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-bold">{delivery.attempts}</td>
-                    <td className="max-w-xs truncate px-4 py-3 text-muted-foreground">
-                      {delivery.callbackUrl}
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => void replayWebhookDelivery(delivery.id)}
-                        className="rounded-full border border-border bg-white px-3 py-1.5 text-xs font-black hover:border-primary/50"
-                      >
-                        Replay
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!webhookDeliveries.length && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-4 py-6 text-center font-bold text-muted-foreground"
-                    >
-                      Chưa có webhook delivery. Gửi request có callbackUrl để bắt đầu ghi log.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-4 pb-12 md:px-6">
-        <div className="grid gap-5 rounded-lg border border-border bg-white p-5 text-foreground shadow-soft md:grid-cols-[.9fr_1.1fr] md:p-6">
+      <section className="mx-auto max-w-6xl px-3 pb-6 sm:px-5">
+        <div className="grid gap-4 rounded-lg border border-border bg-white p-4 text-foreground md:grid-cols-[.9fr_1.1fr]">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2 text-sm font-black text-primary">
               <UploadCloud className="h-4 w-4" /> Kiểm thử API thật

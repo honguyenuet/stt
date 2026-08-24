@@ -8,7 +8,6 @@ import {
   Languages,
   Mic,
   Pause,
-  Radio,
   RotateCcw,
   Save,
   Sparkles,
@@ -16,8 +15,11 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { AuthenticatedHeader } from "@/components/auth-app-header";
-import { VbeeAccountUsageCard } from "@/components/vbee-preferences-layout";
-import { formatQuotaTime, type QuotaStatus } from "@/lib/quota";
+import {
+  fetchQuota,
+  formatQuotaTime,
+  type QuotaStatus,
+} from "@/lib/quota";
 import {
   SPEECH_LANGUAGE_OPTIONS,
   TRANSLATION_LANGUAGE_OPTIONS,
@@ -25,6 +27,7 @@ import {
   type TranslationResult,
 } from "@/lib/language-options";
 import { getApiBaseUrl } from "@/lib/api-base-url";
+import { getRealtimeRecoveryPlan } from "@/lib/realtime-recovery";
 
 const API_URL = getApiBaseUrl();
 
@@ -101,9 +104,17 @@ function RealtimePage() {
   const [translationError, setTranslationError] = useState("");
   const [quota, setQuota] = useState<QuotaStatus | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
+  const [connectionState, setConnectionState] = useState<
+    "idle" | "live" | "reconnecting" | "offline"
+  >("idle");
+  const [connectionNotice, setConnectionNotice] = useState("");
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldRestartRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const lastRecognitionErrorRef = useRef<string | null>(null);
+  const retryRecognitionRef = useRef<() => void>(() => {});
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeSessionRef = useRef<string | null>(null);
   const tokenRef = useRef<string | null>(token);
@@ -119,10 +130,36 @@ function RealtimePage() {
   }, [user, isLoading, navigate]);
 
   useEffect(() => {
+    if (!token) {
+      setQuota(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchQuota(token)
+      .then((nextQuota) => {
+        if (!cancelled) setQuota(nextQuota);
+      })
+      .catch(() => {
+        if (!cancelled) setQuota(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quotaRefreshKey, token]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      if (shouldRestartRef.current) retryRecognitionRef.current();
+    };
+    window.addEventListener("online", handleOnline);
     return () => {
       shouldRestartRef.current = false;
       recognitionRef.current?.abort();
       if (timerRef.current) clearInterval(timerRef.current);
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      window.removeEventListener("online", handleOnline);
       const sessionId = realtimeSessionRef.current;
       const activeToken = tokenRef.current;
       if (sessionId && activeToken) {
@@ -174,6 +211,7 @@ function RealtimePage() {
 
   async function startListening() {
     setError("");
+    setConnectionNotice("");
     setSavedId(null);
     setTranslation(null);
     setTranslationError("");
@@ -185,6 +223,22 @@ function RealtimePage() {
     if (!token) {
       setError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
       return;
+    }
+
+    try {
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({
+          name: "microphone" as PermissionName,
+        });
+        if (permission.state === "denied") {
+          setError(
+            "Micrô đang bị chặn. Hãy cấp quyền micrô trong trình duyệt rồi thử lại.",
+          );
+          return;
+        }
+      }
+    } catch {
+      // Một số trình duyệt không hỗ trợ truy vấn quyền micrô; SpeechRecognition sẽ tự xin quyền.
     }
 
     const SpeechRecognitionApi = getSpeechRecognition();
@@ -230,13 +284,69 @@ function RealtimePage() {
     }
 
     shouldRestartRef.current = true;
+    reconnectAttemptRef.current = 0;
+    lastRecognitionErrorRef.current = null;
     const recognition = new SpeechRecognitionApi();
     recognitionRef.current = recognition;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = getSpeechLang(language);
 
+    const scheduleRestart = () => {
+      if (!shouldRestartRef.current) return;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const plan = getRealtimeRecoveryPlan({
+        attempt: reconnectAttemptRef.current,
+        error: lastRecognitionErrorRef.current,
+        isOnline: navigator.onLine,
+      });
+      if (plan.action === "stop") {
+        shouldRestartRef.current = false;
+        setListening(false);
+        setConnectionState("idle");
+        stopTimer();
+        return;
+      }
+      if (plan.action === "wait-online") {
+        stopTimer();
+        setConnectionState("offline");
+        setConnectionNotice(
+          "Mất kết nối mạng. Realtime sẽ tự tiếp tục khi thiết bị online.",
+        );
+        return;
+      }
+      stopTimer();
+      setConnectionState("reconnecting");
+      setConnectionNotice(
+        `Đang kết nối lại${reconnectAttemptRef.current ? ` lần ${reconnectAttemptRef.current + 1}` : ""}…`,
+      );
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        reconnectTimeoutRef.current = null;
+        if (!shouldRestartRef.current) return;
+        try {
+          recognition.start();
+          reconnectAttemptRef.current += 1;
+          startTimer(serverMaxSeconds);
+        } catch {
+          shouldRestartRef.current = false;
+          setListening(false);
+          setConnectionState("idle");
+          setConnectionNotice("");
+          setError("Không thể kết nối lại realtime. Hãy bấm Bắt đầu để thử lại.");
+          stopTimer();
+        }
+      }, plan.delayMs);
+    };
+    retryRecognitionRef.current = scheduleRestart;
+
     recognition.onresult = (event) => {
+      reconnectAttemptRef.current = 0;
+      lastRecognitionErrorRef.current = null;
+      setConnectionState("live");
+      setConnectionNotice("");
       let finalText = "";
       let interimText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -255,24 +365,33 @@ function RealtimePage() {
 
     recognition.onerror = (event) => {
       if (event.error === "no-speech") return;
-      setError(`Realtime lỗi: ${event.error}`);
+      lastRecognitionErrorRef.current = event.error;
+      const plan = getRealtimeRecoveryPlan({
+        attempt: reconnectAttemptRef.current,
+        error: event.error,
+        isOnline: navigator.onLine,
+      });
+      if (plan.action === "stop") {
+        shouldRestartRef.current = false;
+        setListening(false);
+        setConnectionState("idle");
+        stopTimer();
+        setError(
+          event.error === "not-allowed" || event.error === "service-not-allowed"
+            ? "Trình duyệt chưa cấp quyền micrô cho Realtime."
+            : `Realtime không thể tiếp tục: ${event.error}`,
+        );
+      }
     };
 
     recognition.onend = () => {
-      if (shouldRestartRef.current) {
-        try {
-          recognition.start();
-        } catch {
-          shouldRestartRef.current = false;
-          setListening(false);
-          stopTimer();
-        }
-      }
+      if (shouldRestartRef.current) scheduleRestart();
     };
 
     try {
       recognition.start();
       setListening(true);
+      setConnectionState("live");
       startTimer(serverMaxSeconds);
     } catch {
       await cancelRealtimeSession();
@@ -284,8 +403,14 @@ function RealtimePage() {
 
   function stopListening() {
     shouldRestartRef.current = false;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     recognitionRef.current?.stop();
     setListening(false);
+    setConnectionState("idle");
+    setConnectionNotice("");
     setInterim("");
     stopTimer();
   }
@@ -398,35 +523,30 @@ function RealtimePage() {
   const liveText = `${transcript} ${interim}`.trim();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[#f7f7fb] text-foreground">
       <AuthenticatedHeader />
 
-      <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
-        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-5 sm:py-5">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-primary">
-              <Radio className="h-3.5 w-3.5" />
-              Realtime phiên bản 2
-            </div>
-            <h1 className="text-2xl font-black tracking-tight md:text-3xl">
+            <h1 className="text-xl font-black tracking-tight sm:text-2xl">
               Realtime
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Nói vào micrô, chữ sẽ hiện gần như tức thì. Khi hoàn tất, bấm lưu
-              để đưa văn bản vào lịch sử và trừ thời lượng theo thời gian nói.
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+              Nói vào micrô, xem chữ tức thì rồi lưu vào lịch sử.
             </p>
           </div>
           <Link
             to="/history"
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-border bg-white px-4 py-2.5 text-sm font-black transition hover:border-primary/50 hover:text-primary"
+            className="hidden items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-black transition hover:border-primary/50 hover:text-primary sm:inline-flex"
           >
             <History className="h-4 w-4" />
             Mở lịch sử
           </Link>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          <section className="rounded-lg border border-border bg-white p-4 shadow-soft">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+          <section className="rounded-lg border border-border bg-white p-4">
             <div className="flex flex-col gap-4 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">
@@ -445,7 +565,13 @@ function RealtimePage() {
                   <div>
                     <p className="text-xl font-black">{formatClock(elapsed)}</p>
                     <p className="text-sm font-semibold text-muted-foreground">
-                      {listening ? "Đang nghe..." : "Sẵn sàng nghe"}
+                      {connectionState === "reconnecting"
+                        ? "Đang kết nối lại…"
+                        : connectionState === "offline"
+                          ? "Đang chờ có mạng…"
+                          : listening
+                            ? "Đang nghe..."
+                            : "Sẵn sàng nghe"}
                     </p>
                   </div>
                 </div>
@@ -487,7 +613,17 @@ function RealtimePage() {
               </div>
             )}
 
-            <div className="mt-4 min-h-[260px] rounded-lg border border-border bg-[#fbf8ef] p-4">
+            {connectionNotice && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900"
+              >
+                {connectionNotice}
+              </div>
+            )}
+
+            <div className="mt-4 min-h-[220px] rounded-lg border border-border bg-[#fbf8ef] p-4">
               {liveText ? (
                 <p
                   data-typography="content"
@@ -499,9 +635,9 @@ function RealtimePage() {
                   )}
                 </p>
               ) : (
-                <div className="flex min-h-[220px] flex-col items-center justify-center text-center">
-                  <Sparkles className="h-12 w-12 text-primary/60" />
-                  <h2 className="mt-4 text-xl font-black">
+                <div className="flex min-h-[180px] flex-col items-center justify-center text-center">
+                  <Sparkles className="h-9 w-9 text-primary/60" />
+                  <h2 className="mt-3 text-lg font-black">
                     Bấm “Bắt đầu nói” để tạo văn bản Realtime
                   </h2>
                   <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
@@ -574,13 +710,7 @@ function RealtimePage() {
           </section>
 
           <aside className="self-start space-y-4">
-            <VbeeAccountUsageCard
-              firstName={user.firstName}
-              refreshKey={quotaRefreshKey}
-              onQuotaChange={setQuota}
-            />
-
-            <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
+            <div className="rounded-lg border border-border bg-white p-4">
               <h2 className="flex items-center gap-2 text-lg font-black">
                 <Languages className="h-5 w-5 text-primary" />
                 Cấu hình realtime
@@ -619,7 +749,7 @@ function RealtimePage() {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border bg-white p-4 shadow-soft">
+            <div className="rounded-lg border border-border bg-white p-4">
               <p className="text-xs font-black uppercase tracking-[0.14em] text-primary">
                 Giới hạn phiên
               </p>
@@ -629,11 +759,6 @@ function RealtimePage() {
                   {formatQuotaTime(quota?.remainingSeconds ?? 0)}
                 </span>
                 .
-              </p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Lưu ý: bản realtime dùng Web Speech API của trình duyệt ở V2
-                cục bộ. Khi vận hành thật nên nâng cấp thành máy chủ trung gian WebSocket
-                tới Deepgram Streaming.
               </p>
             </div>
           </aside>

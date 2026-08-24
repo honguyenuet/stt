@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   AdminPanel,
@@ -26,7 +26,7 @@ function AdminReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  function load(showLoading = true) {
+  const load = useCallback((showLoading = true) => {
     if (showLoading) setLoading(true);
     if (showLoading) setError("");
     void Promise.all([fetchReportSummary({ dateFrom, dateTo }), fetchSystemStatus()])
@@ -40,7 +40,7 @@ function AdminReportsPage() {
       .finally(() => {
         if (showLoading) setLoading(false);
       });
-  }
+  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     load();
@@ -49,7 +49,7 @@ function AdminReportsPage() {
       ADMIN_SUMMARY_REFRESH_MS,
     );
     return () => window.clearInterval(timer);
-  }, [dateFrom, dateTo]);
+  }, [load]);
 
   async function download() {
     try {

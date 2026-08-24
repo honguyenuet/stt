@@ -195,10 +195,27 @@ describe("automatic transcription provider selection", () => {
         speakerLabels: true,
         speakerCount: null,
         hasTranslation: false,
+        hasCustomVocabulary: false,
         durationSeconds: null,
         fileSizeBytes: null,
         extension: "mp3",
       },
     );
   });
+});
+
+test("custom vocabulary prefers a provider that can send key terms", () => {
+  const ranking = createProviderRanking({
+    providerPreference: "auto",
+    configuredProviders: ["vbee", "assemblyai", "deepgram"],
+    autoProviders: ["vbee", "assemblyai", "deepgram"],
+    profile: {
+      language: "vi",
+      audioMode: "speech",
+      hasCustomVocabulary: true,
+    },
+  });
+
+  assert.notEqual(ranking[0].provider, "vbee");
+  assert.match(ranking[0].reasons.join(" "), /custom_vocabulary/);
 });

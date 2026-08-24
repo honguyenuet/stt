@@ -21,8 +21,10 @@ import {
   UploadCloud,
   Zap,
 } from "lucide-react";
-import vbeeLogo from "@/assets/vbee-logo.png";
-import { VbeePublicHeader } from "@/components/vbee-public-chrome";
+import {
+  VbeePublicFooter,
+  VbeePublicHeader,
+} from "@/components/vbee-public-chrome";
 import { useAuth } from "@/context/AuthContext";
 import {
   createCheckout,
@@ -602,27 +604,27 @@ function PricingPage() {
       );
       const cycle = catalogPlan?.[billing];
       return cycle
-          ? {
-              ...plan,
-              name: catalogPlan.label,
-              enabled: catalogPlan.enabled,
-              quotaSeconds: cycle.quotaSeconds,
-              maxUploadMb: catalogPlan.limits.maxUploadMb,
-              maxRecordSeconds: catalogPlan.limits.maxRecordSeconds,
-              maxFileSeconds: catalogPlan.limits.maxFileSeconds,
-              price: formatVnd(cycle.price),
+        ? {
+            ...plan,
+            name: catalogPlan.label,
+            enabled: catalogPlan.enabled,
+            quotaSeconds: cycle.quotaSeconds,
+            maxUploadMb: catalogPlan.limits.maxUploadMb,
+            maxRecordSeconds: catalogPlan.limits.maxRecordSeconds,
+            maxFileSeconds: catalogPlan.limits.maxFileSeconds,
+            price: formatVnd(cycle.price),
               minutes: formatQuotaHours(
                 cycle.quotaSeconds,
                 billing === "yearly",
               ),
-              features: [
-                `${formatQuotaHours(cycle.quotaSeconds, billing === "yearly")} xử lý${billing === "monthly" ? " mỗi tháng" : ""}`,
-                `Tải tệp tối đa ${formatUploadLimit(catalogPlan.limits.maxUploadMb)}`,
-                `Tệp dài tối đa ${formatLimitSeconds(catalogPlan.limits.maxFileSeconds)}`,
-                `Ghi âm tối đa ${formatLimitSeconds(catalogPlan.limits.maxRecordSeconds)}`,
-                ...plan.features.slice(4),
-              ],
-            }
+            features: [
+              `${formatQuotaHours(cycle.quotaSeconds, billing === "yearly")} xử lý${billing === "monthly" ? " mỗi tháng" : ""}`,
+              `Tải tệp tối đa ${formatUploadLimit(catalogPlan.limits.maxUploadMb)}`,
+              `Tệp dài tối đa ${formatLimitSeconds(catalogPlan.limits.maxFileSeconds)}`,
+              `Ghi âm tối đa ${formatLimitSeconds(catalogPlan.limits.maxRecordSeconds)}`,
+              ...plan.features.slice(4),
+            ],
+          }
         : plan;
     });
   }, [billing, catalog]);
@@ -829,7 +831,7 @@ function PricingPage() {
       />
       <PricingFaq />
       <EnterpriseCta onStart={handleStart} />
-      <PricingFooter />
+      <VbeePublicFooter />
     </main>
   );
 }
@@ -1658,62 +1660,14 @@ function EnterpriseCta({ onStart }: { onStart: () => void }) {
               Gửi yêu cầu tư vấn <ArrowRight className="h-4 w-4" />
             </button>
             <a
-              href="mailto:vbee@gmail.com"
+              href="mailto:contact@vbee.ai"
               className="mt-4 flex items-center justify-center gap-2 text-sm font-bold text-[#6a5a8f] hover:text-[#21104a]"
             >
-              <Mail className="h-4 w-4" /> vbee@gmail.com
+              <Mail className="h-4 w-4" /> contact@vbee.ai
             </a>
           </div>
         </div>
       </div>
     </section>
-  );
-}
-
-function PricingFooter() {
-  return (
-    <footer className="bg-[#21104a] px-4 py-12 text-white md:px-6">
-      <div className="mx-auto grid max-w-7xl gap-10 md:grid-cols-[1.1fr_.9fr_.9fr_.9fr]">
-        <div>
-          <img
-            src={vbeeLogo}
-            alt="Vbee"
-            className="h-14 w-auto rounded-xl bg-white/95 p-1"
-          />
-          <p className="mt-5 max-w-sm text-sm leading-7 text-white/65">
-            Vbee AIVoice — bảng giá theo tháng và theo năm cho nền tảng chuyển
-            giọng nói thành văn bản.
-          </p>
-        </div>
-        {[
-          [
-            "Sản phẩm",
-            [
-              "Chuyển giọng nói thành văn bản",
-              "Ghi âm",
-              "Lịch sử",
-              "Xuất DOCX",
-            ],
-          ],
-          ["Bảng giá", ["Miễn phí", "Tiêu chuẩn", "Đặc biệt", "Doanh nghiệp"]],
-          [
-            "Liên hệ",
-            ["vbee@gmail.com", "0916 168 475", "Đại học Vinh", "Việt Nam"],
-          ],
-        ].map(([title, links]) => (
-          <div key={String(title)}>
-            <h3 className="font-black text-[#ffcb05]">{title}</h3>
-            <div className="mt-4 space-y-3 text-sm text-white/65">
-              {(links as string[]).map((link) => (
-                <p key={link}>{link}</p>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="mx-auto mt-10 max-w-7xl border-t border-white/10 pt-6 text-sm text-white/50">
-        © 2026 Vbee AIVoice. Đã đăng ký bản quyền.
-      </div>
-    </footer>
   );
 }

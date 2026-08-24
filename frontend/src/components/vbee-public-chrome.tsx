@@ -299,16 +299,16 @@ const FOOTER_COLUMNS = [
       ["Tải tệp lên", "/upload"],
       ["Ghi âm", "/record"],
       ["Realtime", "/realtime"],
-      ["Vbee API", "/api"],
+      ["Lịch sử", "/history"],
     ],
   },
   {
-    title: "Công ty",
+    title: "Hệ thống",
     links: [
-      ["Về Vbee", "/about"],
-      ["Liên hệ", "/contact"],
-      ["Trung tâm hỗ trợ", "/support"],
-      ["Bảng giá", "/pricing"],
+      ["API", "/api"],
+      ["Thời lượng", "/pricing"],
+      ["Thanh toán", "/pricing"],
+      ["Hỗ trợ", "/support"],
     ],
   },
   {
@@ -323,21 +323,24 @@ const FOOTER_COLUMNS = [
 
 export function VbeePublicFooter() {
   return (
-    <footer className="bg-[#21104a] px-4 py-10 text-white md:px-6">
-      <div className="mx-auto grid max-w-7xl gap-8 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
-        <div>
-          <VbeeBrandLogo size="compact" className="rounded-lg bg-white p-1.5" />
-          <p className="mt-4 max-w-sm text-[13px] font-semibold leading-6 text-white/68">
-            Không gian giọng nói Vbee giúp đội ngũ biến âm thanh, cuộc họp và nội dung nghe nhìn
-            thành dữ liệu văn bản có thể tìm kiếm, dịch và chia sẻ.
+    <footer
+      aria-label="Chân trang Vbee AI"
+      className="bg-[#21104a] px-4 py-12 text-white md:px-6"
+    >
+      <div className="mx-auto grid max-w-[1500px] grid-cols-2 gap-8 lg:grid-cols-[1.35fr_1fr_1fr_1fr] lg:gap-10">
+        <div className="col-span-2 lg:col-span-1">
+          <VbeeBrandLogo className="h-16 rounded-xl bg-white p-2" />
+          <p className="mt-4 max-w-md text-sm font-semibold leading-7 text-white/70">
+            Không gian giọng nói Vbee AI tập trung vào chuyển giọng nói thành văn
+            bản, Realtime, thời lượng và gói cước trong một giao diện thống nhất.
           </p>
         </div>
         {FOOTER_COLUMNS.map((column) => (
           <div key={column.title}>
-            <h2 className="text-[13px] font-black text-[#ffcb05]">
+            <h2 className="text-sm font-black text-[#ffcb05]">
               {column.title}
             </h2>
-            <div className="mt-3 grid gap-2 text-[13px] font-semibold text-white/68">
+            <div className="mt-3 grid gap-2 text-sm font-semibold text-white/70">
               {column.links.map(([label, href]) => (
                 <a
                   key={label}
@@ -351,16 +354,11 @@ export function VbeePublicFooter() {
           </div>
         ))}
       </div>
-      <div className="mx-auto mt-8 flex max-w-7xl flex-col gap-2 border-t border-white/12 pt-5 text-xs font-semibold text-white/45 md:flex-row md:items-center md:justify-between">
-        <p>© 2026 Không gian giọng nói Vbee. Bảo lưu mọi quyền.</p>
-        <div className="flex gap-4">
-          <a href="/" className="transition hover:text-white">
-            Điều khoản dịch vụ
-          </a>
-          <a href="/" className="transition hover:text-white">
-            Chính sách bảo mật
-          </a>
-        </div>
+      <div className="mx-auto mt-10 max-w-[1500px] border-t border-white/15 pt-6 text-sm font-semibold text-white/50">
+        <p>
+          © 2026 Không gian giọng nói Vbee AI. Điều khoản dịch vụ · Chính sách
+          bảo mật.
+        </p>
       </div>
     </footer>
   );

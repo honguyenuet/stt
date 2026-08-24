@@ -293,6 +293,15 @@ function isYoutubeVerificationError(error) {
   );
 }
 
+function isYoutubeDownloadAccessError(error) {
+  const detail = youtubeErrorDetail(error);
+  return (
+    detail.includes("http error 403") ||
+    (detail.includes("forbidden") &&
+      (detail.includes("download") || detail.includes("video data")))
+  );
+}
+
 function getYoutubeAttemptProfiles(isYoutube = true) {
   if (!isYoutube) return [null];
   if (String(process.env.YOUTUBE_COOKIES_FILE || "").trim()) {
@@ -342,28 +351,30 @@ async function runYoutubeDlWithFallback(
   { beforeRetry, isYoutube = true } = {},
 ) {
   const profiles = getYoutubeAttemptProfiles(isYoutube);
-  let verificationError = null;
+  let fallbackError = null;
 
   for (let index = 0; index < profiles.length; index += 1) {
     const playerClient = profiles[index];
     try {
       return await operation(youtubeRuntimeFlags(playerClient, { isYoutube }));
     } catch (error) {
-      if (index === 0 && !isYoutubeVerificationError(error)) {
+      const verificationRequired = isYoutubeVerificationError(error);
+      const downloadAccessDenied = isYoutubeDownloadAccessError(error);
+      if (!isYoutube || (!verificationRequired && !downloadAccessDenied)) {
         throw error;
       }
-      verificationError ||= error;
+      fallbackError ||= error;
       if (index >= profiles.length - 1) {
-        throw verificationError;
+        throw fallbackError;
       }
       await beforeRetry?.();
       console.warn(
-        `YouTube yêu cầu xác minh; thử lại bằng client công khai ${profiles[index + 1]}.`,
+        `YouTube ${verificationRequired ? "yêu cầu xác minh" : "từ chối luồng tải"}; thử lại bằng client công khai ${profiles[index + 1]}.`,
       );
     }
   }
 
-  throw verificationError || new Error("Không thể kết nối nền tảng media.");
+  throw fallbackError || new Error("Không thể kết nối nền tảng media.");
 }
 
 function sanitizeTitle(value) {

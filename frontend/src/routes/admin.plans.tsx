@@ -10,6 +10,7 @@ import {
 } from "@/components/admin/admin-ui";
 import { canManageSettings } from "@/lib/admin/admin-auth";
 import { formatDateTime, formatMinutes } from "@/lib/admin/formatters";
+import { ADMIN_PLAN_COLUMNS } from "@/lib/admin/plan-columns";
 import { listServicePlans, saveServicePlan } from "@/lib/admin/plans-service";
 import type { ServicePlan } from "@/lib/admin/types";
 import { useAdminSession } from "@/lib/admin/use-admin-session";
@@ -70,19 +71,9 @@ function AdminPlansPage() {
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-[#fbf8ef] text-xs uppercase text-[#756894]">
                 <tr>
-                  {[
-                    "Mã",
-                    "Tên",
-                    "Thời lượng",
-                    "Giá",
-                    "Tải lên",
-                    "Thời lượng",
-                    "Trạng thái",
-                    "Cập nhật",
-                    "",
-                  ].map((h) => (
-                    <th key={h} className="px-4 py-3">
-                      {h}
+                  {ADMIN_PLAN_COLUMNS.map((column) => (
+                    <th key={column.key} className="px-4 py-3">
+                      {column.label}
                     </th>
                   ))}
                 </tr>

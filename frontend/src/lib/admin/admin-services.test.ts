@@ -18,6 +18,7 @@ import {
 import {
   adjustUserQuota,
   deleteUserAccount,
+  getUserDetail,
   listUsers,
   updateUserPlan,
 } from "./users-service";
@@ -219,6 +220,29 @@ describe("admin services", () => {
     );
   });
 
+  it("looks up an exact CMS user by id", async () => {
+    const fetchMock = vi.fn(
+      (..._args: Parameters<typeof fetch>): ReturnType<typeof fetch> =>
+        Promise.resolve(
+          jsonResponse({
+            data: [{ id: "42", email: "user@example.com" }],
+            page: 1,
+            limit: 1,
+            total: 1,
+            total_pages: 1,
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getUserDetail("42");
+
+    expect(result?.id).toBe("42");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/admin/users?search=42&page=1&limit=1",
+    );
+  });
+
   it("sends user quota, plan and delete mutations to the admin API", async () => {
     const fetchMock = vi.fn(
       (
@@ -253,7 +277,7 @@ describe("admin services", () => {
     );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      quotaMinutes: 45,
+      deltaMinutes: 45,
       reason: "Bù quota cho khách hàng",
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(

@@ -12,9 +12,14 @@ const {
   saveAdminSettings,
 } = require("../services/adminSettingsService");
 const {
+  deleteManagedUserAccount,
+  normalizeManagedUser,
   updateManagedUserRole,
   updateManagedUserStatus,
 } = require("../services/adminUserService");
+const {
+  updateAdminSupportTicketStatus,
+} = require("../services/adminSupportService");
 const {
   normalizeBillingCycle,
   normalizePlan: normalizeQuotaPlan,
@@ -53,6 +58,11 @@ function createAdminError(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function asyncHandler(handler) {
+  return (req, res, next) =>
+    Promise.resolve(handler(req, res, next)).catch(next);
 }
 
 function generateToken(user) {
@@ -101,11 +111,7 @@ async function requireAdmin(req, res, next) {
       [decoded.id],
     );
     const user = rows[0];
-    if (
-      !user ||
-      !isAdminAccountActive(user) ||
-      !getEffectiveAdminRole(user)
-    ) {
+    if (!user || !isAdminAccountActive(user) || !getEffectiveAdminRole(user)) {
       return res.status(403).json({ error: "Tài khoản admin không hợp lệ" });
     }
 
@@ -226,28 +232,6 @@ function userSelectSql() {
   `;
 }
 
-function normalizeManagedUser(row) {
-  return {
-    id: String(row.id),
-    name: `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.email,
-    email: row.email,
-    role: getEffectiveAdminRole(row) || "user",
-    status:
-      row.status === "deleted"
-        ? "deleted"
-        : isAdminAccountActive(row)
-          ? "active"
-          : "suspended",
-    plan: normalizeQuotaPlan(row.plan),
-    quota_minutes: Math.ceil(Number(row.quota_seconds || 0) / 60),
-    used_minutes: Math.ceil(Number(row.used_seconds || 0) / 60),
-    plan_started_at: row.plan_started_at || null,
-    plan_expires_at: row.plan_expires_at || null,
-    created_at: row.created_at,
-    last_login_at: row.last_login_at,
-  };
-}
-
 function createAdminSession(user) {
   const adminRole = getEffectiveAdminRole(user);
   if (!adminRole) return null;
@@ -271,7 +255,9 @@ async function getManagedUserById(userId) {
 }
 
 function normalizeJob(row) {
-  const status = normalizeTranscriptionStatus(row.queue_status || row.status || "completed");
+  const status = normalizeTranscriptionStatus(
+    row.queue_status || row.status || "completed",
+  );
   return {
     job_id: `job_${row.id}`,
     user_id: String(row.user_id),
@@ -329,7 +315,9 @@ function normalizeFile(row) {
     file_size: Number(row.file_size || 0),
     duration_seconds: Math.round(Number(row.duration || 0)),
     storage_status: storageStatus,
-    transcription_status: normalizeTranscriptionStatus(row.status || "completed"),
+    transcription_status: normalizeTranscriptionStatus(
+      row.status || "completed",
+    ),
     created_at: row.created_at,
     media_url: row.audio_filename
       ? `/api/admin/files/file_${row.id}/media`
@@ -547,9 +535,9 @@ router.get("/dashboard", requireAdmin, async (_req, res) => {
     const completed = jobsByStatus.completed;
     const failed = jobsByStatus.failed;
     const terminal = completed + failed + jobsByStatus.cancelled;
-    const jobs = recentResult.rows.map(normalizeJob).sort(
-      (a, b) => new Date(b.created_at) - new Date(a.created_at),
-    );
+    const jobs = recentResult.rows
+      .map(normalizeJob)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     return res.json({
       total_users: usersResult.rows[0].count,
@@ -612,7 +600,7 @@ router.get("/users", requireAdmin, async (req, res) => {
     if (search) {
       params.push(`%${search.toLowerCase()}%`);
       filters.push(
-        `(LOWER(u.first_name || ' ' || u.last_name) LIKE $${params.length} OR LOWER(u.email) LIKE $${params.length})`,
+        `(u.id::text LIKE $${params.length} OR LOWER(u.first_name || ' ' || u.last_name) LIKE $${params.length} OR LOWER(u.email) LIKE $${params.length})`,
       );
     }
     if (role !== "all") {
@@ -855,20 +843,30 @@ router.post(
         `UPDATE users
          SET quota_seconds = quota_seconds + $1
          WHERE id = $2
+           AND status <> 'deleted'
            AND quota_seconds + $1 >= 0
          RETURNING id, first_name, last_name, email, admin_role, status,
            quota_seconds, created_at, last_login_at`,
         [Math.round(deltaMinutes * 60), req.params.id],
       );
       if (!rows[0]) {
-        const exists = await pool.query("SELECT id FROM users WHERE id = $1", [
-          req.params.id,
-        ]);
-        return res.status(exists.rows[0] ? 400 : 404).json({
-          error: exists.rows[0]
-            ? "Quota không được âm"
-            : "Không tìm thấy user",
-        });
+        const exists = await pool.query(
+          "SELECT id, status FROM users WHERE id = $1",
+          [req.params.id],
+        );
+        const existingUser = exists.rows[0];
+        return res
+          .status(
+            existingUser?.status === "deleted" ? 409 : existingUser ? 400 : 404,
+          )
+          .json({
+            error:
+              existingUser?.status === "deleted"
+                ? "Không thể đổi thời lượng cho tài khoản đã xóa"
+                : existingUser
+                  ? "Quota không được âm"
+                  : "Không tìm thấy user",
+          });
       }
       await writeAudit({
         actorRow: req.admin,
@@ -925,55 +923,60 @@ router.delete(
   requireAdmin,
   requireCmsAdmin,
   async (req, res) => {
+    if (String(req.params.id) === String(req.admin.id)) {
+      return res
+        .status(400)
+        .json({ error: "Bạn không thể xóa tài khoản đang đăng nhập" });
+    }
+    const client = await pool.connect();
     try {
-      if (String(req.params.id) === String(req.admin.id)) {
-        return res
-          .status(400)
-          .json({ error: "Bạn không thể xóa chính tài khoản đang đăng nhập" });
-      }
-      const before = await getManagedUserById(req.params.id);
-      if (!before) {
+      await client.query("BEGIN");
+      const targetResult = await client.query(
+        `SELECT id, admin_role, role, status, account_status
+         FROM users WHERE id = $1 FOR UPDATE`,
+        [req.params.id],
+      );
+      const target = targetResult.rows[0];
+      if (!target) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ error: "Không tìm thấy user" });
       }
-      if (before.role === "admin") {
-        const admins = await pool.query(
+      if (
+        getEffectiveAdminRole(target) === "admin" &&
+        target.status === "active" &&
+        target.account_status === "active"
+      ) {
+        const activeAdmins = await client.query(
           `SELECT COUNT(*)::integer AS count
            FROM users
-           WHERE admin_role IN ('admin', 'super_admin')
+           WHERE (admin_role IN ('admin', 'super_admin')
+                  OR role IN ('admin', 'super_admin'))
              AND status = 'active'
              AND account_status = 'active'`,
         );
-        if (Number(admins.rows[0]?.count || 0) <= 1) {
+        if (Number(activeAdmins.rows[0]?.count || 0) <= 1) {
+          await client.query("ROLLBACK");
           return res.status(400).json({
             error: "Hệ thống phải còn ít nhất một admin",
           });
         }
       }
-      await pool.query(
-        `UPDATE users
-         SET status = 'deleted',
-             account_status = 'blocked',
-             admin_role = 'none',
-             role = 'user',
-             auth_version = auth_version + 1
-         WHERE id = $1`,
-        [req.params.id],
-      );
+      await deleteManagedUserAccount(client, req.params.id);
+      await client.query("COMMIT");
       await writeAudit({
         actorRow: req.admin,
         action: "user.delete",
         targetType: "user",
         targetId: req.params.id,
-        details: {
-          email: before.email,
-          name: before.name,
-          plan: before.plan,
-        },
+        details: { deleted: true },
       });
-      return res.json({ ...before, status: "deleted" });
+      return res.json(await getManagedUserById(req.params.id));
     } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
       console.error("Admin delete user error:", error);
       return res.status(500).json({ error: "Không xóa được user" });
+    } finally {
+      client.release();
     }
   },
 );
@@ -1003,7 +1006,9 @@ router.get("/jobs", requireAdmin, async (req, res) => {
           ? WAITING_JOB_STATUSES
           : [status];
       params.push(statuses);
-      filters.push(`COALESCE(q.status, t.status) = ANY($${params.length}::text[])`);
+      filters.push(
+        `COALESCE(q.status, t.status) = ANY($${params.length}::text[])`,
+      );
     }
     if (language !== "all") {
       params.push(language);
@@ -1040,9 +1045,9 @@ router.get("/jobs", requireAdmin, async (req, res) => {
        LIMIT 500`,
       params,
     );
-    const combined = rows.map(normalizeJob).sort(
-      (a, b) => new Date(b.created_at) - new Date(a.created_at),
-    );
+    const combined = rows
+      .map(normalizeJob)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const start = (page - 1) * limit;
     return res.json(
       paginate(
@@ -1383,9 +1388,10 @@ router.get("/support/tickets/:id/messages", requireAdmin, async (req, res) => {
   }
 
   try {
-    const ticket = await pool.query("SELECT id FROM support_tickets WHERE id = $1", [
-      ticketId,
-    ]);
+    const ticket = await pool.query(
+      "SELECT id FROM support_tickets WHERE id = $1",
+      [ticketId],
+    );
     if (ticket.rows.length === 0) {
       return res.status(404).json({ error: "Không tìm thấy ticket" });
     }
@@ -1487,16 +1493,12 @@ router.patch(
       return res.status(400).json({ error: "Trạng thái hỗ trợ không hợp lệ" });
     }
     try {
-      const { rows } = await pool.query(
-        `UPDATE support_tickets
-         SET status = $1,
-             updated_at = NOW(),
-             resolved_at = CASE WHEN $1 IN ('resolved', 'closed') THEN NOW() ELSE NULL END
-         WHERE id = $2
-         RETURNING *`,
-        [status, ticketId],
+      const updatedTicket = await updateAdminSupportTicketStatus(
+        pool,
+        ticketId,
+        status,
       );
-      if (!rows[0]) {
+      if (!updatedTicket) {
         return res.status(404).json({ error: "Không tìm thấy ticket" });
       }
       await writeAudit({
@@ -1506,7 +1508,7 @@ router.patch(
         targetId: ticketId,
         details: { status },
       });
-      return res.json(normalizeSupportTicket(rows[0]));
+      return res.json(normalizeSupportTicket(updatedTicket));
     } catch (error) {
       console.error("Admin support status error:", error);
       return res.status(500).json({ error: "Không cập nhật được trạng thái" });
@@ -1574,17 +1576,22 @@ router.get("/settings", requireAdmin, async (_req, res) => {
   return res.json(await getAdminSettings());
 });
 
-router.put("/settings", requireAdmin, requireCmsAdmin, async (req, res) => {
-  const settings = await saveAdminSettings(req.body || {}, req.admin.id);
-  await writeAudit({
-    actorRow: req.admin,
-    action: "settings.update",
-    targetType: "settings",
-    targetId: "global",
-    details: settings,
-  });
-  return res.json(settings);
-});
+router.put(
+  "/settings",
+  requireAdmin,
+  requireCmsAdmin,
+  asyncHandler(async (req, res) => {
+    const settings = await saveAdminSettings(req.body || {}, req.admin.id);
+    await writeAudit({
+      actorRow: req.admin,
+      action: "settings.update",
+      targetType: "settings",
+      targetId: "global",
+      details: settings,
+    });
+    return res.json(settings);
+  }),
+);
 
 function normalizePlan(row) {
   return {
@@ -1624,8 +1631,7 @@ function normalizePlanUpdate(body, currentPlan) {
   if (!name || name.length > 120) {
     throw createAdminError(400, "Tên gói phải có từ 1 đến 120 ký tự");
   }
-  const enabled =
-    currentPlan.code === "free" ? true : Boolean(body.enabled);
+  const enabled = currentPlan.code === "free" ? true : Boolean(body.enabled);
   const price = planInteger(
     body.price_vnd,
     "Giá gói",
@@ -1637,20 +1643,10 @@ function normalizePlanUpdate(body, currentPlan) {
   }
   return {
     name,
-    quotaMinutes: planInteger(
-      body.quota_minutes,
-      "Quota",
-      1,
-      10_000_000,
-    ),
+    quotaMinutes: planInteger(body.quota_minutes, "Quota", 1, 10_000_000),
     priceVnd: price,
     billingCycle,
-    maxUploadMb: planInteger(
-      body.max_upload_mb,
-      "Dung lượng tải lên",
-      1,
-      2048,
-    ),
+    maxUploadMb: planInteger(body.max_upload_mb, "Dung lượng tải lên", 1, 2048),
     maxFileDurationMinutes: planInteger(
       body.max_file_duration_minutes,
       "Thời lượng file",
@@ -1724,47 +1720,52 @@ router.get("/plans", requireAdmin, async (_req, res) => {
   return res.json(rows.map(normalizePlan));
 });
 
-router.put("/plans/:id", requireAdmin, requireCmsAdmin, async (req, res) => {
-  const current = await pool.query(
-    "SELECT * FROM service_plans WHERE id = $1",
-    [req.params.id],
-  );
-  if (!current.rows[0]) {
-    return res.status(404).json({ error: "Không tìm thấy gói" });
-  }
-  const body = normalizePlanUpdate(req.body || {}, current.rows[0]);
-  const { rows } = await pool.query(
-    `UPDATE service_plans
-     SET name = $1,
-         quota_minutes = $2,
-         price_vnd = $3,
-         billing_cycle = $4,
-         max_upload_mb = $5,
-         max_file_duration_minutes = $6,
-         enabled = $7,
-         updated_at = NOW()
-     WHERE id = $8
-     RETURNING *`,
-    [
-      body.name,
-      body.quotaMinutes,
-      body.priceVnd,
-      body.billingCycle,
-      body.maxUploadMb,
-      body.maxFileDurationMinutes,
-      body.enabled,
-      req.params.id,
-    ],
-  );
-  await writeAudit({
-    actorRow: req.admin,
-    action: "plan.update",
-    targetType: "settings",
-    targetId: rows[0].code,
-    details: normalizePlan(rows[0]),
-  });
-  return res.json(normalizePlan(rows[0]));
-});
+router.put(
+  "/plans/:id",
+  requireAdmin,
+  requireCmsAdmin,
+  asyncHandler(async (req, res) => {
+    const current = await pool.query(
+      "SELECT * FROM service_plans WHERE id = $1",
+      [req.params.id],
+    );
+    if (!current.rows[0]) {
+      return res.status(404).json({ error: "Không tìm thấy gói" });
+    }
+    const body = normalizePlanUpdate(req.body || {}, current.rows[0]);
+    const { rows } = await pool.query(
+      `UPDATE service_plans
+       SET name = $1,
+           quota_minutes = $2,
+           price_vnd = $3,
+           billing_cycle = $4,
+           max_upload_mb = $5,
+           max_file_duration_minutes = $6,
+           enabled = $7,
+           updated_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        body.name,
+        body.quotaMinutes,
+        body.priceVnd,
+        body.billingCycle,
+        body.maxUploadMb,
+        body.maxFileDurationMinutes,
+        body.enabled,
+        req.params.id,
+      ],
+    );
+    await writeAudit({
+      actorRow: req.admin,
+      action: "plan.update",
+      targetType: "settings",
+      targetId: rows[0].code,
+      details: normalizePlan(rows[0]),
+    });
+    return res.json(normalizePlan(rows[0]));
+  }),
+);
 
 router.get("/providers", requireAdmin, async (_req, res) => {
   const { rows } = await pool.query(
@@ -1794,7 +1795,7 @@ router.put(
   "/providers/:id",
   requireAdmin,
   requireCmsAdmin,
-  async (req, res) => {
+  asyncHandler(async (req, res) => {
     const body = req.body || {};
     const providerId = Number.parseInt(req.params.id, 10);
     if (!Number.isSafeInteger(providerId) || providerId <= 0) {
@@ -1849,10 +1850,7 @@ router.put(
         ? Number.parseInt(body.failover_provider_id, 10)
         : null;
       if (failoverId === providerId) {
-        throw createAdminError(
-          400,
-          "Provider không thể dự phòng cho chính nó",
-        );
+        throw createAdminError(400, "Provider không thể dự phòng cho chính nó");
       }
       if (failoverId) {
         const failover = await client.query(
@@ -1937,7 +1935,7 @@ router.put(
       details: normalizeProvider(updated),
     });
     return res.json(normalizeProvider(updated));
-  },
+  }),
 );
 
 router.post(
@@ -1948,9 +1946,7 @@ router.post(
     try {
       const providerId = Number.parseInt(req.params.id, 10);
       if (!Number.isFinite(providerId) || providerId <= 0) {
-        return res
-          .status(400)
-          .json({ error: "ID nhà cung cấp không hợp lệ" });
+        return res.status(400).json({ error: "ID nhà cung cấp không hợp lệ" });
       }
 
       const providerResult = await pool.query(

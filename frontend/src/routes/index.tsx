@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import vbeeLogo from "@/assets/vbee-logo.png";
 import { VbeeBrandLogo } from "@/components/vbee-brand-logo";
+import { VbeePublicFooter } from "@/components/vbee-public-chrome";
 import { useAuth } from "@/context/AuthContext";
 
 export const Route = createFileRoute("/")({
@@ -255,7 +256,7 @@ function LandingPage() {
       <Workflow onStart={startApp} />
       <Plans onStart={startApp} />
       <FinalCta onStart={startApp} />
-      <Footer />
+      <VbeePublicFooter />
     </main>
   );
 }
@@ -838,44 +839,6 @@ function FinalCta({ onStart }: { onStart: () => void }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="bg-[#21104a] px-4 py-10 text-white md:px-6">
-      <div className="mx-auto grid max-w-7xl gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
-        <div>
-          <img
-            src={vbeeLogo}
-            alt="Vbee"
-            className="h-14 w-auto rounded-xl bg-white p-2"
-          />
-          <p className="mt-4 max-w-sm text-sm font-semibold leading-7 text-white/65">
-            Không gian giọng nói Vbee AI tập trung vào chuyển giọng nói thành văn
-            bản, Realtime, thời lượng và gói cước trong một giao diện thống nhất.
-          </p>
-        </div>
-        {[
-          ["Sản phẩm", ["Tải tệp lên", "Ghi âm", "Realtime", "Lịch sử"]],
-          ["Hệ thống", ["API", "Thời lượng", "Thanh toán", "Hỗ trợ"]],
-          ["Liên hệ", ["contact@vbee.ai", "(+84) 249 999 3399", "Hà Nội, Việt Nam"]],
-        ].map(([title, links]) => (
-          <div key={String(title)}>
-            <h3 className="text-sm font-black text-[#ffcb05]">{title}</h3>
-            <div className="mt-3 space-y-2 text-sm font-semibold text-white/68">
-              {(links as string[]).map((link) => (
-                <p key={link}>{link}</p>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="mx-auto mt-8 max-w-7xl border-t border-white/12 pt-5 text-sm font-semibold text-white/45">
-        © 2026 Không gian giọng nói Vbee AI. Điều khoản dịch vụ · Chính sách bảo
-        mật.
-      </div>
-    </footer>
   );
 }
 
