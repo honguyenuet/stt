@@ -32,6 +32,87 @@ function normalizeTranscriptTemplate(value) {
   return TRANSCRIPT_TEMPLATES.has(template) ? template : "meeting";
 }
 
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStringArray(value, limit) {
+  return Array.isArray(value)
+    ? value
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, limit)
+    : [];
+}
+
+function normalizeStoredTranscriptInsights(value, fallbackTemplate = "meeting") {
+  if (!isRecord(value)) return null;
+
+  const hasInsightContent =
+    typeof value.summary === "string" ||
+    typeof value.generatedAt === "string" ||
+    typeof value.generator === "string" ||
+    [
+      value.keyPoints,
+      value.actionItems,
+      value.decisions,
+      value.chapters,
+      value.keywords,
+      value.questions,
+    ].some(Array.isArray);
+  if (!hasInsightContent) return null;
+
+  const actionItems = Array.isArray(value.actionItems)
+    ? value.actionItems
+        .filter(isRecord)
+        .map((item) => ({
+          text: typeof item.text === "string" ? item.text.trim() : "",
+          owner: typeof item.owner === "string" ? item.owner.trim() || null : null,
+          deadline:
+            typeof item.deadline === "string"
+              ? item.deadline.trim() || null
+              : null,
+        }))
+        .filter((item) => item.text)
+        .slice(0, 20)
+    : [];
+  const chapters = Array.isArray(value.chapters)
+    ? value.chapters
+        .filter(isRecord)
+        .map((chapter) => {
+          const startMs = Number(chapter.startMs);
+          const endMs = Number(chapter.endMs);
+          return {
+            title:
+              typeof chapter.title === "string" ? chapter.title.trim() : "",
+            startMs: Number.isFinite(startMs) && startMs >= 0 ? startMs : 0,
+            endMs: Number.isFinite(endMs) && endMs >= 0 ? endMs : 0,
+            summary:
+              typeof chapter.summary === "string"
+                ? chapter.summary.trim()
+                : "",
+          };
+        })
+        .filter((chapter) => chapter.title)
+        .slice(0, 24)
+    : [];
+
+  return {
+    template: normalizeTranscriptTemplate(value.template || fallbackTemplate),
+    summary: typeof value.summary === "string" ? value.summary.trim() : "",
+    keyPoints: normalizeStringArray(value.keyPoints, 12),
+    actionItems,
+    decisions: normalizeStringArray(value.decisions, 20),
+    chapters,
+    keywords: normalizeStringArray(value.keywords, 24),
+    questions: normalizeStringArray(value.questions, 20),
+    generatedAt:
+      typeof value.generatedAt === "string" ? value.generatedAt : "",
+    generator: typeof value.generator === "string" ? value.generator : "",
+  };
+}
+
 function normalizeText(value, maxLength = 2_000_000) {
   return String(value || "")
     .replace(/\r\n?/g, "\n")
@@ -193,5 +274,6 @@ function generateTranscriptInsights({
 
 module.exports = {
   generateTranscriptInsights,
+  normalizeStoredTranscriptInsights,
   normalizeTranscriptTemplate,
 };

@@ -68,6 +68,7 @@ const {
 const { writeSecurityAudit } = require("../services/securityAuditService");
 const {
   generateTranscriptInsights,
+  normalizeStoredTranscriptInsights,
   normalizeTranscriptTemplate,
 } = require("../services/transcriptInsightsService");
 const {
@@ -1292,12 +1293,10 @@ router.get("/history/:id", requireAuth, async (req, res) => {
       transcript_template: normalizeTranscriptTemplate(
         rows[0].transcript_template,
       ),
-      insights:
-        rows[0].insights &&
-        typeof rows[0].insights === "object" &&
-        !Array.isArray(rows[0].insights)
-          ? rows[0].insights
-          : {},
+      insights: normalizeStoredTranscriptInsights(
+        rows[0].insights,
+        rows[0].transcript_template,
+      ),
       reviewed_word_indexes: Array.isArray(rows[0].reviewed_word_indexes)
         ? rows[0].reviewed_word_indexes
         : [],

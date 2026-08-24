@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   generateTranscriptInsights,
+  normalizeStoredTranscriptInsights,
   normalizeTranscriptTemplate,
 } = require("../services/transcriptInsightsService");
 
@@ -51,4 +52,27 @@ test("meeting insights extract summary, actions, decisions, chapters and keyword
 test("transcript template falls back to meeting for unsupported values", () => {
   assert.equal(normalizeTranscriptTemplate("podcast"), "podcast");
   assert.equal(normalizeTranscriptTemplate("unknown"), "meeting");
+});
+
+test("stored transcript insights preserve the nullable API contract", () => {
+  assert.equal(normalizeStoredTranscriptInsights(null), null);
+  assert.equal(normalizeStoredTranscriptInsights({}), null);
+  assert.deepEqual(
+    normalizeStoredTranscriptInsights(
+      { summary: "Tóm tắt cũ" },
+      "interview",
+    ),
+    {
+      template: "interview",
+      summary: "Tóm tắt cũ",
+      keyPoints: [],
+      actionItems: [],
+      decisions: [],
+      chapters: [],
+      keywords: [],
+      questions: [],
+      generatedAt: "",
+      generator: "",
+    },
+  );
 });

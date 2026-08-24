@@ -88,6 +88,11 @@ import {
   renameRememberedSpeakerLabel,
 } from "@/lib/speaker-memory";
 import { buildTemplateFrontMatter } from "@/lib/transcript-template-export";
+import {
+  normalizeTranscriptInsights,
+  type TranscriptInsights,
+  type TranscriptTemplate,
+} from "@/lib/transcript-insights";
 
 const API_URL = getApiBaseUrl();
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -142,30 +147,6 @@ interface TranscriptDetail {
   created_at: string;
   owner_user_id: number;
   can_edit: boolean;
-}
-
-type TranscriptTemplate = "meeting" | "interview" | "podcast" | "lecture";
-
-interface TranscriptInsights {
-  template: TranscriptTemplate;
-  summary: string;
-  keyPoints: string[];
-  actionItems: Array<{
-    text: string;
-    owner: string | null;
-    deadline: string | null;
-  }>;
-  decisions: string[];
-  chapters: Array<{
-    title: string;
-    startMs: number;
-    endMs: number;
-    summary: string;
-  }>;
-  keywords: string[];
-  questions: string[];
-  generatedAt: string;
-  generator: string;
 }
 
 interface IndexedWord extends TranscriptWord {
@@ -1092,10 +1073,10 @@ function TranscriptEditorPage() {
       ].includes(detail.transcript_template)
         ? detail.transcript_template
         : "meeting";
-      detail.insights =
-        detail.insights && typeof detail.insights === "object"
-          ? detail.insights
-          : null;
+      detail.insights = normalizeTranscriptInsights(
+        detail.insights,
+        detail.transcript_template,
+      );
       detail.reviewed_word_indexes = Array.isArray(detail.reviewed_word_indexes)
         ? detail.reviewed_word_indexes.filter(
             (value) => Number.isSafeInteger(value) && value >= 0,
