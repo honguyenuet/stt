@@ -54,7 +54,6 @@ import {
   findActiveWordIndex,
   formatPlaybackTime,
   normalizeTimedWordBounds,
-  indexTimedWordTextRanges,
   MAX_EDITABLE_TIMED_WORDS,
   nextTranscriptFollowMode,
   replaceTimedWordInText,
@@ -233,11 +232,12 @@ const EditableTimedWord = memo(function EditableTimedWord({
 
   function commit() {
     const nextValue = value.trim();
-    if (!nextValue) {
-      setValue(word.text);
-      return;
+    const currentWord = wordRef.current;
+    if (nextValue !== currentWord.text) {
+      wordRef.current = { ...currentWord, text: nextValue };
+      valueRef.current = nextValue;
+      onCommit(word.index, nextValue);
     }
-    if (nextValue !== word.text) onCommit(word.index, nextValue);
   }
 
   return (
@@ -249,8 +249,15 @@ const EditableTimedWord = memo(function EditableTimedWord({
       aria-current={active ? "true" : undefined}
       aria-label={`Chỉnh sửa từ ${word.text}`}
       onChange={(event) => {
-        valueRef.current = event.target.value;
-        setValue(event.target.value);
+        const nextValue = event.target.value;
+        const nextText = nextValue.trim();
+        const currentWord = wordRef.current;
+        valueRef.current = nextValue;
+        setValue(nextValue);
+        if (nextText !== currentWord.text) {
+          wordRef.current = { ...currentWord, text: nextText };
+          onCommit(word.index, nextText);
+        }
       }}
       onClick={() => onSeek(word.start)}
       onBlur={commit}
@@ -260,8 +267,9 @@ const EditableTimedWord = memo(function EditableTimedWord({
           event.currentTarget.blur();
         }
         if (event.key === "Escape") {
-          valueRef.current = word.text;
-          setValue(word.text);
+          const currentText = wordRef.current.text;
+          valueRef.current = currentText;
+          setValue(currentText);
           event.currentTarget.blur();
         }
       }}
@@ -318,17 +326,17 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
       ref={articleRef}
       data-segment-index={segmentIndex}
       style={{ transform: `translateY(${start}px)` }}
-      className="absolute inset-x-0 top-0 grid gap-2 sm:grid-cols-[112px_minmax(0,1fr)]"
+      className="absolute inset-x-0 top-0 grid gap-2 sm:grid-cols-[84px_minmax(0,1fr)]"
     >
       <div className="flex items-center gap-2 sm:block">
         <button
           type="button"
           onClick={() => onSeek(segment.start)}
-          className="text-xs font-black text-[#5f4c82] hover:text-[#21104a]"
+          className="font-mono text-[11px] font-bold leading-none text-[#5f4c82] tabular-nums hover:text-[#21104a]"
         >
           {formatClock(segment.start)}
         </button>
-        <p className="mt-1 truncate text-xs font-bold text-[#9a8eac]">
+        <p className="mt-1 truncate text-[11px] font-semibold leading-tight text-[#9a8eac]">
           {speakerLabel(segment.speaker)}
         </p>
       </div>
@@ -346,31 +354,6 @@ const VirtualTranscriptSegment = memo(function VirtualTranscriptSegment({
     </article>
   );
 });
-
-function HighlightedPlainText({
-  text,
-  range,
-}: {
-  text: string;
-  range: { start: number; end: number } | null;
-}) {
-  if (!range) {
-    return <>{text || " "}</>;
-  }
-
-  return (
-    <>
-      {text.slice(0, range.start)}
-      <mark
-        data-active-plain-word="true"
-        className="rounded bg-[#ffcb05] px-0.5 font-black text-[#21104a]"
-      >
-        {text.slice(range.start, range.end)}
-      </mark>
-      {text.slice(range.end) || " "}
-    </>
-  );
-}
 
 export const Route = createFileRoute("/transcript/$id")({
   validateSearch: (search: Record<string, unknown>) => {
@@ -744,7 +727,6 @@ function TranscriptEditorPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncScrollRef = useRef<HTMLDivElement>(null);
   const plainTextAreaRef = useRef<HTMLTextAreaElement>(null);
-  const plainTextMirrorRef = useRef<HTMLDivElement>(null);
   const playWhenReadyRef = useRef(false);
   const playbackRequestedRef = useRef(false);
   const pendingSeekMillisecondsRef = useRef<number | null>(null);
@@ -803,17 +785,6 @@ function TranscriptEditorPage() {
     () => splitTranslationIntoSegments(transcript?.translated_text, segments.length),
     [segments.length, transcript?.translated_text],
   );
-  const plainTextWordRanges = useMemo(
-    () =>
-      editorMode === "edit" && syncAvailable
-        ? indexTimedWordTextRanges(editorText, words)
-        : [],
-    [editorMode, editorText, syncAvailable, words],
-  );
-  const plainTextActiveRange =
-    activeWordIndex >= 0
-      ? (plainTextWordRanges[activeWordIndex] ?? null)
-      : null;
   const speakers = useMemo(
     () =>
       Array.from(
@@ -1194,36 +1165,6 @@ function TranscriptEditorPage() {
     lastVirtualSegment,
     transcriptFollowMode,
   ]);
-
-  useEffect(() => {
-    if (
-      editorMode !== "edit" ||
-      transcriptFollowMode !== "following" ||
-      !plainTextActiveRange
-    ) {
-      return;
-    }
-    const textarea = plainTextAreaRef.current;
-    const mirror = plainTextMirrorRef.current;
-    const activeWord = mirror?.querySelector<HTMLElement>(
-      '[data-active-plain-word="true"]',
-    );
-    if (!textarea || !mirror || !activeWord) return;
-
-    const wordTop = activeWord.offsetTop;
-    const wordBottom = wordTop + activeWord.offsetHeight;
-    const visibleTop = textarea.scrollTop + 64;
-    const visibleBottom = textarea.scrollTop + textarea.clientHeight - 64;
-
-    if (wordTop < visibleTop || wordBottom > visibleBottom) {
-      const nextScrollTop = Math.max(
-        0,
-        wordTop - Math.round(textarea.clientHeight / 2),
-      );
-      textarea.scrollTop = nextScrollTop;
-      mirror.style.transform = `translateY(-${nextScrollTop}px)`;
-    }
-  }, [editorMode, plainTextActiveRange, transcriptFollowMode]);
 
   const loadAudio = useCallback(
     async (playWhenReady = false, seekMilliseconds: number | null = null) => {
@@ -1669,21 +1610,22 @@ function TranscriptEditorPage() {
   const seekTo = useCallback(
     (milliseconds: number) => {
       resumeTranscriptFollow();
+      const nextSeconds = Math.max(0, milliseconds / 1000);
+      playbackRequestedRef.current = false;
+      setIsPlaying(false);
+      setPlaybackSeconds(nextSeconds);
+      setActiveWordIndex(findActiveWordIndex(wordsRef.current, milliseconds));
       if (
         !audioRef.current ||
         !audioUrl ||
         audioAccessNeedsRefresh(audioAccessExpiresAt)
       ) {
         pendingSeekMillisecondsRef.current = milliseconds;
-        void loadAudio(true, milliseconds);
+        void loadAudio(false, milliseconds);
         return;
       }
-      playbackRequestedRef.current = true;
-      audioRef.current.currentTime = milliseconds / 1000;
-      void audioRef.current.play().catch(() => {
-        playbackRequestedRef.current = false;
-        setAudioError("Không thể phát audio. Hãy nhấn Phát để thử lại.");
-      });
+      audioRef.current.pause();
+      audioRef.current.currentTime = nextSeconds;
     },
     [audioAccessExpiresAt, audioUrl, loadAudio, resumeTranscriptFollow],
   );
@@ -2827,19 +2769,6 @@ function TranscriptEditorPage() {
             ) : (
               <div className="flex min-h-[420px] flex-col p-3 sm:min-h-[520px] sm:p-4 md:p-6 lg:min-h-0 lg:flex-1">
                 <div className="relative min-h-[360px] sm:min-h-[460px] lg:min-h-0 lg:flex-1">
-                  {syncAvailable && (
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg border border-transparent bg-[#fbfaf7] px-5 py-4 text-[15px] leading-8 break-words whitespace-pre-wrap text-[#342752]"
-                    >
-                      <div ref={plainTextMirrorRef}>
-                        <HighlightedPlainText
-                          text={editorText}
-                          range={plainTextActiveRange}
-                        />
-                      </div>
-                    </div>
-                  )}
                   <textarea
                     ref={plainTextAreaRef}
                     value={editorText}
@@ -2847,20 +2776,11 @@ function TranscriptEditorPage() {
                     onTouchStart={pauseTranscriptFollow}
                     onPointerDown={pauseTranscriptFollow}
                     onChange={(event) =>
-                      applyEditorChange(event.target.value, wordsRef.current, true)
+                      applyPlainTextChange(event.target.value)
                     }
-                    onScroll={(event) => {
-                      if (plainTextMirrorRef.current) {
-                        plainTextMirrorRef.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
-                      }
-                    }}
                     aria-label="Nội dung transcript"
                     spellCheck
-                    className={`relative h-full min-h-[360px] w-full resize-y rounded-lg border border-[#ded5e9] px-4 py-3 text-[15px] leading-7 outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:min-h-[460px] sm:px-5 sm:py-4 sm:leading-8 lg:min-h-0 lg:resize-none ${
-                      syncAvailable
-                        ? "bg-transparent text-transparent caret-[#21104a] selection:bg-[#8067aa]/20"
-                        : "bg-[#fbfaf7] text-[#342752]"
-                    }`}
+                    className="font-content relative h-full min-h-[360px] w-full resize-y rounded-lg border border-[#ded5e9] bg-[#fbfaf7] px-4 py-3 text-[15px] leading-7 text-[#342752] outline-none transition focus:border-[#ffcb05] focus:ring-2 focus:ring-[#ffcb05]/20 sm:min-h-[460px] sm:px-5 sm:py-4 sm:leading-8 lg:min-h-0 lg:resize-none"
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-[#8a7da1]">

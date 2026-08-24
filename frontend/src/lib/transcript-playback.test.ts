@@ -91,6 +91,20 @@ describe("transcript playback helpers", () => {
     );
   });
 
+  it("allows deleting a timed word without leaving extra spacing", () => {
+    const timeline = createApproximateTimedWords("Xin chào bạn", 3);
+
+    expect(replaceTimedWordInText("Xin chào bạn", timeline, 0, "")).toBe(
+      "chào bạn",
+    );
+    expect(replaceTimedWordInText("Xin chào bạn", timeline, 1, "")).toBe(
+      "Xin bạn",
+    );
+    expect(replaceTimedWordInText("Xin chào bạn", timeline, 2, "")).toBe(
+      "Xin chào",
+    );
+  });
+
   it("does not build an oversized fallback timeline in the browser", () => {
     expect(createApproximateTimedWords("một hai ba", 3, 2)).toEqual([]);
   });

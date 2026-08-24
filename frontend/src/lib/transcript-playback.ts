@@ -233,10 +233,20 @@ export function replaceTimedWordInText(
 ) {
   const range = findTimedWordTextRange(transcriptText, words, wordIndex);
   if (!range) return null;
+  const source = String(transcriptText || "");
 
-  return `${String(transcriptText || "").slice(0, range.start)}${replacement}${String(
-    transcriptText || "",
-  ).slice(range.end)}`;
+  if (!replacement.trim()) {
+    let start = range.start;
+    let end = range.end;
+    if (end < source.length && /\s/.test(source[end] || "")) {
+      while (end < source.length && /\s/.test(source[end] || "")) end += 1;
+    } else {
+      while (start > 0 && /\s/.test(source[start - 1] || "")) start -= 1;
+    }
+    return `${source.slice(0, start)}${source.slice(end)}`;
+  }
+
+  return `${source.slice(0, range.start)}${replacement}${source.slice(range.end)}`;
 }
 
 export function findTimedWordTextRange(
